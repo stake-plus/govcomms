@@ -8,16 +8,12 @@ import (
 	"gorm.io/gorm"
 )
 
-// MustMySQL opens a MySQL connection with sane defaults.
-//
-//   - Ensures `parseTime=true` so TIMESTAMP / DATETIME columns map to
-//     go time.Time without scan errors.
-//   - Adds a Unicode‑safe charset if the caller did not specify one
-//     (utf8mb4 + utf8mb4_unicode_ci) so emoji / smart‑quotes, etc. store OK.
+// MustMySQL opens a connection and panics on error.
+// * Forces parseTime=true so TIMESTAMP ↔ time.Time works.
+// * Ensures utf8mb4 charset / collation unless user already set one.
 func MustMySQL(dsn string) *gorm.DB {
 	dsn = ensureParam(dsn, "parseTime", "true")
 
-	// default to a UTF‑8‑mb4 connection if the user did not provide charset
 	if !strings.Contains(dsn, "charset=") {
 		dsn = ensureParam(dsn, "charset", "utf8mb4")
 		dsn = ensureParam(dsn, "collation", "utf8mb4_unicode_ci")
@@ -30,9 +26,7 @@ func MustMySQL(dsn string) *gorm.DB {
 	return db
 }
 
-// ensureParam appends ?key=value or &key=value as appropriate when the key
-// is not already present in the DSN.
-func ensureParam(dsn, key, value string) string {
+func ensureParam(dsn, key, val string) string {
 	if strings.Contains(dsn, key+"=") {
 		return dsn
 	}
@@ -40,5 +34,5 @@ func ensureParam(dsn, key, value string) string {
 	if strings.Contains(dsn, "?") {
 		sep = "&"
 	}
-	return dsn + sep + key + "=" + value
+	return dsn + sep + key + "=" + val
 }

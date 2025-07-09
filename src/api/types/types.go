@@ -2,10 +2,16 @@ package types
 
 import "time"
 
+//
+// ─── NETWORKS / RPC ENDPOINTS ────────────────────────────────────────────────
+//
+
 type Network struct {
-	ID   uint8  `gorm:"primaryKey"`
-	Name string `gorm:"size:32;unique;not null"`
-	RPCs []RPC
+	ID     uint8  `gorm:"primaryKey"`
+	Name   string `gorm:"size:32;unique;not null"`
+	Symbol string `gorm:"size:8;not null"`
+	URL    string `gorm:"size:256;not null"`
+	RPCs   []RPC  `gorm:"foreignKey:NetworkID"`
 }
 
 type RPC struct {
@@ -15,6 +21,10 @@ type RPC struct {
 	Active    bool   `gorm:"default:true"`
 }
 
+//
+// ─── GOVERNANCE ──────────────────────────────────────────────────────────────
+//
+
 type Proposal struct {
 	ID        uint64 `gorm:"primaryKey"`
 	NetworkID uint8  `gorm:"index;not null"`
@@ -22,7 +32,13 @@ type Proposal struct {
 	Submitter string `gorm:"size:64;not null"`
 	Title     string `gorm:"size:255"`
 	Status    string `gorm:"size:32"`
+	EndBlock  uint64
 	CreatedAt time.Time
+}
+
+type ProposalParticipant struct {
+	ProposalID uint64 `gorm:"primaryKey"`
+	Address    string `gorm:"primaryKey;size:64"`
 }
 
 type Message struct {

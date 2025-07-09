@@ -1,23 +1,4 @@
 // Minimal end‑to‑end integration test for the GovComms API.
-//
-// Run from repo root:
-//
-//	go run ./docs/scripts/test_api.go
-//
-// Environment:
-//
-//	API_URL   – base URL (default http://localhost:8080/v1)
-//	REDIS_URL – redis URL (default redis://127.0.0.1:6379/0)
-//
-// Flow:
-//
-//  1. POST /auth/challenge   → nonce
-//  2. SET  nonce=CONFIRMED   → simulate remark
-//  3. POST /auth/verify      → JWT
-//  4. POST /messages         → create message
-//  5. GET  /messages/...     → assert message visible
-//  6. POST /votes            → cast vote
-//  7. GET  /votes/...        → assert tally
 package main
 
 import (
@@ -52,9 +33,9 @@ func main() {
 	rdb := mustRedis()
 	defer rdb.Close()
 
-	//nonce := challenge()
-	confirmNonce(ctx, rdb)
-	token := verify()
+	_ = challenge()        // obtain nonce but we don't need the value after confirming
+	confirmNonce(ctx, rdb) // mark as CONFIRMED in Redis
+	token := verify()      // get JWT
 
 	proposal := "polkadot/1"
 	msgID := createMessage(token, proposal)

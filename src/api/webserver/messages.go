@@ -40,26 +40,44 @@ func (m Messages) Create(c *gin.Context) {
 	}
 	refID, _ := strconv.ParseUint(parts[1], 10, 64)
 
-	var netID uint8
-	switch parts[0] {
-	case "polkadot":
-		netID = 1
-	case "kusama":
+	netID := uint8(1)
+	if parts[0] == "kusama" {
 		netID = 2
-	default:
-		c.JSON(http.StatusBadRequest, gin.H{"err": "unknown network"})
-		return
 	}
 
+	// -------------------------------------------------------------------- ensure proposal exists
 	var prop types.Proposal
-	if err := m.db.FirstOrCreate(&prop, types.Proposal{
-		NetworkID: netID,
-		RefID:     refID,
-	}).Error; err != nil {
+	err := m.db.First(&prop, "network_id = ? AND ref_id = ?", netID, refID).Error
+	if err != nil && err == gorm.ErrRecordNotFound {
+		// create a placeholder so testing / early posting works even before indexer sync
+		prop = types.Proposal{
+			NetworkID: netID,
+			RefID:     refID,
+			Submitter: c.GetString("addr"),
+			Status:    "Unknown",
+		}
+		if err = m.db.Create(&prop).Error; err == nil {
+			// register caller as participant
+			_ = m.db.FirstOrCreate(&types.DaoMember{Address: prop.Submitter}).Error
+			_ = m.db.FirstOrCreate(&types.ProposalParticipant{
+				ProposalID: prop.ID, Address: prop.Submitter,
+			}).Error
+		}
+	}
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
 
+	// -------------------------------------------------------------------- authorisation
+	var auth types.ProposalParticipant
+	if err := m.db.First(&auth,
+		"proposal_id = ? AND address = ?", prop.ID, c.GetString("addr")).Error; err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"err": "not authorised for this proposal"})
+		return
+	}
+
+	// -------------------------------------------------------------------- store message
 	msg := types.Message{
 		ProposalID: prop.ID,
 		Author:     c.GetString("addr"),
@@ -75,7 +93,7 @@ func (m Messages) Create(c *gin.Context) {
 		_ = m.db.Create(&types.EmailSubscription{MessageID: msg.ID, Email: e}).Error
 	}
 
-	_ = data.PublishMessage(context.Background(), m.rdb, map[string]interface{}{
+	_ = data.PublishMessage(context.Background(), m.rdb, map[string]any{
 		"proposal": req.Proposal,
 		"author":   msg.Author,
 		"body":     msg.Body,
