@@ -12,7 +12,7 @@ type Config struct {
 	JWTSecret    string
 	RPCURL       string
 	Port         string
-	PollInterval int // seconds
+	PollInterval int
 }
 
 func getenv(key, def string) string {
