@@ -16,7 +16,7 @@ func decodeSS58(addr string) ([]byte, error) {
 	if err != nil || len(raw) < 35 {
 		return nil, fmt.Errorf("invalid ss58 address")
 	}
-	return raw[1:33], nil // strip prefix & checksum
+	return raw[1:33], nil // drop 1‑byte prefix & 2‑byte checksum
 }
 
 func strip0x(s string) string {
@@ -60,7 +60,10 @@ func verifySignature(addr, sigHex, nonce string) error {
 	}
 
 	ctx := schnorrkel.NewSigningContext([]byte("substrate"), []byte(nonce))
-	valid := pk.Verify(&sig, ctx)
+	valid, err := pk.Verify(&sig, ctx)
+	if err != nil {
+		return err
+	}
 	if !valid {
 		return fmt.Errorf("signature verification failed")
 	}
