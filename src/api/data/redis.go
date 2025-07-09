@@ -22,11 +22,11 @@ func MustRedis(url string) *redis.Client {
 }
 
 func SetNonce(ctx context.Context, rdb *redis.Client, addr, nonce string) error {
-	return rdb.Set(ctx, noncePrefix+addr, nonce, 5*time.Minute).Err()
+	return rdb.Set(ctx, noncePrefix+addr, nonce, 30*time.Minute).Err()
 }
 
 func ConfirmNonce(ctx context.Context, rdb *redis.Client, addr string) error {
-	return rdb.Set(ctx, noncePrefix+addr, "CONFIRMED", 5*time.Minute).Err()
+	return rdb.Set(ctx, noncePrefix+addr, "CONFIRMED", 30*time.Minute).Err()
 }
 
 func GetAndDelNonce(ctx context.Context, rdb *redis.Client, addr string) (string, error) {
