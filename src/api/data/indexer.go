@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	sar "github.com/itering/substrate-api-rpc"
+	"github.com/itering/substrate-api-rpc/client"
 	"github.com/itering/substrate-api-rpc/expand"
 	"github.com/itering/substrate-api-rpc/model"
 	"gorm.io/gorm"
@@ -21,15 +21,15 @@ func StartIndexer(ctx context.Context, db *gorm.DB, cfg config.Config) {
 	for {
 		select {
 		case <-tick.C:
-			indexPolkadot(ctx, db, cfg.RPCURL)
+			indexPolkadot(db, cfg.RPCURL)
 		case <-ctx.Done():
 			return
 		}
 	}
 }
 
-func indexPolkadot(ctx context.Context, db *gorm.DB, rpcURL string) {
-	api, err := sar.NewSubstrateAPI(rpcURL)
+func indexPolkadot(db *gorm.DB, rpcURL string) {
+	api, err := client.ConnectSub(rpcURL)
 	if err != nil {
 		log.Printf("indexer connect: %v", err)
 		return
@@ -41,13 +41,14 @@ func indexPolkadot(ctx context.Context, db *gorm.DB, rpcURL string) {
 		return
 	}
 
-	networkID := uint8(1)
+	const networkID uint8 = 1 // Polkadot
 
 	for i := uint32(0); i < lastIdx; i++ {
 		var raw model.StorageDataRaw
 		if err := api.RPC.State.GetStorageLatest(expand.RefInfoKey(i), &raw); err != nil || raw.IsEmpty() {
 			continue
 		}
+
 		info, err := expand.ParseReferendumInfo(raw)
 		if err != nil || info.Status != "Ongoing" {
 			continue
@@ -60,7 +61,8 @@ func indexPolkadot(ctx context.Context, db *gorm.DB, rpcURL string) {
 		}).Error; err != nil {
 			continue
 		}
-		if info.Submitter != "" {
+
+		if info.Submitter != "" && prop.Submitter == "" {
 			_ = db.Model(&prop).Update("submitter", info.Submitter).Error
 		}
 	}

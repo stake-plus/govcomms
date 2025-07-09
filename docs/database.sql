@@ -1,3 +1,4 @@
+-- networks & RPCs
 CREATE TABLE IF NOT EXISTS networks (
   id TINYINT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(32) UNIQUE NOT NULL
@@ -11,6 +12,7 @@ CREATE TABLE IF NOT EXISTS rpcs (
   FOREIGN KEY (network_id) REFERENCES networks(id)
 );
 
+-- governance data
 CREATE TABLE IF NOT EXISTS proposals (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   network_id TINYINT NOT NULL,

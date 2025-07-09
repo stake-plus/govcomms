@@ -5,14 +5,13 @@ import (
 	"log"
 	"strings"
 
-	scaleTypes "github.com/itering/scale.go/types"
-	sar "github.com/itering/substrate-api-rpc"
+	"github.com/itering/substrate-api-rpc/client"
 	"github.com/itering/substrate-api-rpc/expand"
 	"github.com/redis/go-redis/v9"
 )
 
 func StartRemarkWatcher(ctx context.Context, rpcURL string, rdb *redis.Client) {
-	api, err := sar.NewSubstrateAPI(rpcURL)
+	api, err := client.ConnectSub(rpcURL)
 	if err != nil {
 		log.Printf("remark watcher connect: %v", err)
 		return
@@ -33,19 +32,23 @@ func StartRemarkWatcher(ctx context.Context, rpcURL string, rdb *redis.Client) {
 				if err != nil {
 					continue
 				}
+
 				for _, ext := range block.Block.Extrinsics {
-					if ext.Method.CallIndex != (scaleTypes.CallIndex{SectionIndex: 0x00, MethodIndex: 0x01}) {
+					// system.remark detection is handled by expand.DecodeRemark
+					remarkBytes, err := expand.DecodeRemark(ext.Method.Args)
+					if err != nil || len(remarkBytes) == 0 {
 						continue
 					}
-					remarkBytes, _ := expand.DecodeRemark(ext.Method.Args)
 					nonce := strings.TrimSpace(string(remarkBytes))
 					if len(nonce) < 8 {
 						continue
 					}
+
 					signer := ext.Signature.Signer.AsID
 					addr := signer.ToHexString()
 					_ = ConfirmNonce(ctx, rdb, addr)
 				}
+
 			case <-ctx.Done():
 				sub.Unsubscribe()
 				return

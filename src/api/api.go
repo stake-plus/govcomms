@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -34,10 +35,14 @@ func main() {
 	go data.StartRemarkWatcher(ctx, cfg.RPCURL, rdb)
 	go data.StartIndexer(ctx, db, cfg)
 
-	server := webserver.New(cfg, db, rdb)
+	router := webserver.New(cfg, db, rdb)
+	httpSrv := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: router,
+	}
 
 	go func() {
-		if err := server.Run(":" + cfg.Port); err != nil {
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http: %v", err)
 		}
 	}()
@@ -47,7 +52,8 @@ func main() {
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 	cancel()
+
 	shutCtx, cancelShut := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShut()
-	_ = server.Shutdown(shutCtx)
+	_ = httpSrv.Shutdown(shutCtx)
 }
