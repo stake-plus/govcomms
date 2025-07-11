@@ -1,8 +1,8 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import Home from 'pages/Home';
-import Auth from 'pages/Auth';
-import Proposal from 'pages/Proposal';
+import Home from './pages/Home';
+import Auth from './pages/Auth';
+import Proposal from './pages/Proposal';
 
 function App() {
   return (
