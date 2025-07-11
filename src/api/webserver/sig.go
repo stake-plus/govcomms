@@ -31,8 +31,8 @@ func strip0x(s string) string {
 }
 
 // verifySignature matches polkadot-extension `signRaw`:
-// * polkadot.js extension signs the hex string wrapped as <Bytes>0x...</Bytes>
-// * WalletConnect signs the raw hex bytes
+// * polkadot.js extension signs the TEXT string wrapped as <Bytes>NONCE</Bytes>
+// * The nonce IS the message - as a string, not decoded hex!
 func verifySignature(addr, sigHex, nonce string) error {
 	// Decode public key from address
 	pub, err := decodeSS58(addr)
@@ -71,7 +71,7 @@ func verifySignature(addr, sigHex, nonce string) error {
 	}
 
 	// Try wrapped format first (polkadot.js extension style)
-	// The extension signs <Bytes>NONCE</Bytes> where NONCE is exactly what we sent (including 0x)
+	// The extension signs the TEXT: <Bytes>NONCE</Bytes>
 	wrappedMsg := []byte(fmt.Sprintf("<Bytes>%s</Bytes>", nonce))
 	ctxWrapped := schnorrkel.NewSigningContext([]byte("substrate"), wrappedMsg)
 	ok, err := pk.Verify(&sig, ctxWrapped)
@@ -79,12 +79,8 @@ func verifySignature(addr, sigHex, nonce string) error {
 		return nil
 	}
 
-	// Try unwrapped hex bytes (WalletConnect style)
-	msgBytes, err := hex.DecodeString(strip0x(nonce))
-	if err != nil {
-		// If hex decode fails, try as raw string
-		msgBytes = []byte(nonce)
-	}
+	// Try unwrapped format - just the nonce string itself
+	msgBytes := []byte(nonce)
 	ctx := schnorrkel.NewSigningContext([]byte("substrate"), msgBytes)
 	ok, err = pk.Verify(&sig, ctx)
 	if err == nil && ok {

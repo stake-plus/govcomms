@@ -13,6 +13,7 @@ import (
 	"github.com/itering/scale.go/types"
 	"github.com/itering/scale.go/types/scaleBytes"
 	"github.com/itering/substrate-api-rpc/rpc"
+	"github.com/itering/substrate-api-rpc/storage"
 	"github.com/itering/substrate-api-rpc/websocket"
 	"gorm.io/gorm"
 
@@ -123,33 +124,37 @@ func getReferendumCount(conn websocket.WsConn, netName string) (uint32, error) {
 	log.Printf("indexer %s: checking Referenda pallet (OpenGov)", netName)
 
 	// The correct storage key for Polkadot OpenGov is Referenda.ReferendumCount
-	resp, err := rpc.ReadStorage(conn, "Referenda", "ReferendumCount", "")
+	var resp storage.StateStorage
+	var err error
+
+	// According to the docs, for storage without parameters we just pass module, storage name, and empty block hash
+	resp, err = rpc.ReadStorage(conn, "Referenda", "ReferendumCount", "")
 	if err != nil {
 		return 0, fmt.Errorf("failed to get referendum count: %w", err)
 	}
 
-	// Log the raw response
-	respStr := resp.ToString()
-	log.Printf("indexer %s: ReferendumCount raw response: %s", netName, respStr)
+	// Use the ToU32FromCodec method as per documentation
+	count := resp.ToU32FromCodec()
+	log.Printf("indexer %s: found %d referenda (using ToU32FromCodec)", netName, count)
 
-	// Decode manually since ToU32FromCodec seems to be failing
-	hexStr := strings.TrimPrefix(respStr, "0x")
-	if hexStr == "" {
-		return 0, fmt.Errorf("empty response")
+	// If that returns 0, try manual decoding to debug
+	if count == 0 {
+		respStr := resp.ToString()
+		log.Printf("indexer %s: ReferendumCount raw response: %s", netName, respStr)
+
+		if respStr != "" && respStr != "0x" {
+			hexStr := strings.TrimPrefix(respStr, "0x")
+			data, err := hex.DecodeString(hexStr)
+			if err == nil && len(data) >= 4 {
+				manualCount := uint32(data[0]) | uint32(data[1])<<8 | uint32(data[2])<<16 | uint32(data[3])<<24
+				log.Printf("indexer %s: manual decode shows %d referenda", netName, manualCount)
+				if manualCount > 0 {
+					return manualCount, nil
+				}
+			}
+		}
 	}
 
-	data, err := hex.DecodeString(hexStr)
-	if err != nil {
-		return 0, fmt.Errorf("failed to decode hex: %w", err)
-	}
-
-	if len(data) < 4 {
-		return 0, fmt.Errorf("invalid data length for u32: %d", len(data))
-	}
-
-	// U32 is 4 bytes little-endian
-	count := uint32(data[0]) | uint32(data[1])<<8 | uint32(data[2])<<16 | uint32(data[3])<<24
-	log.Printf("indexer %s: found %d referenda", netName, count)
 	return count, nil
 }
 
@@ -158,7 +163,7 @@ func getReferendumCount(conn websocket.WsConn, netName string) (uint32, error) {
 // ────────────────────────────────────────────────────────────────────────────
 
 func fetchAndStoreProposal(db *gorm.DB, conn websocket.WsConn, netID uint8, idx uint32) error {
-	// The correct storage key is Referenda.ReferendumInfoFor with the index as parameter
+	// For parameterized storage, pass the parameter after the block hash
 	resp, err := rpc.ReadStorage(conn, "Referenda", "ReferendumInfoFor", "", strconv.FormatUint(uint64(idx), 10))
 	if err != nil {
 		return fmt.Errorf("failed to get referendum info: %w", err)
