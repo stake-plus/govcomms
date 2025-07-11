@@ -1,15 +1,40 @@
-import { ApiPromise, WsProvider } from '@polkadot/api';
+import { ofetch } from 'ofetch';
 
-/**
- * Load a Polkadot‐JS API instance once, cache & reuse.
- */
-export const getPolkadotApi = (() => {
-  let api: ApiPromise | null = null;
-  return async function (endpoint = 'wss://rpc.polkadot.io') {
-    if (!api) {
-      api = await ApiPromise.create({ provider: new WsProvider(endpoint) });
-      await api.isReady;
-    }
-    return api;
-  };
-})();
+export const api = ofetch.create({
+  baseURL: import.meta.env.VITE_API ?? 'https://api.gcs.example.com/v1',
+  retry: 0
+});
+
+export async function challenge(address: string, method: string) {
+  return api('/auth/challenge', { method: 'POST', body: { address, method } });
+}
+
+export async function verify(
+  address: string,
+  method: string,
+  signature?: string
+) {
+  return api<{ token: string }>('/auth/verify', {
+    method: 'POST',
+    body: { address, method, signature }
+  });
+}
+
+export async function listMessages(net: string, ref: number, jwt?: string) {
+  return api(`/messages/${net}/${ref}`, {
+    headers: jwt ? { Authorization: `Bearer ${jwt}` } : undefined
+  });
+}
+
+export async function postMessage(
+  jwt: string,
+  proposalRef: string,
+  body: string,
+  emails: string[] = []
+) {
+  return api('/messages', {
+    method: 'POST',
+    body: { proposalRef, body, emails },
+    headers: { Authorization: `Bearer ${jwt}` }
+  });
+}
