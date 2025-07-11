@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -10,13 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itering/scale.go/types"
+	"github.com/itering/scale.go/types/scaleBytes"
 	"github.com/itering/substrate-api-rpc/rpc"
-	"github.com/itering/substrate-api-rpc/storage"
 	"github.com/itering/substrate-api-rpc/websocket"
 	"gorm.io/gorm"
 
 	"github.com/stake-plus/polkadot-gov-comms/src/api/config"
-	"github.com/stake-plus/polkadot-gov-comms/src/api/types"
+	apitypes "github.com/stake-plus/polkadot-gov-comms/src/api/types"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,7 +26,7 @@ import (
 // ─────────────────────────────────────────────────────────────────────────────
 
 func StartIndexer(ctx context.Context, db *gorm.DB, cfg config.Config) {
-	var nets []types.Network
+	var nets []apitypes.Network
 	if err := db.Preload("RPCs", "active = ?", true).Find(&nets).Error; err != nil {
 		log.Printf("indexer: failed to load networks: %v", err)
 		return
@@ -41,7 +43,7 @@ func StartIndexer(ctx context.Context, db *gorm.DB, cfg config.Config) {
 	}
 }
 
-func syncNetwork(ctx context.Context, db *gorm.DB, net types.Network, rpcURL string, every time.Duration) {
+func syncNetwork(ctx context.Context, db *gorm.DB, net apitypes.Network, rpcURL string, every time.Duration) {
 	// first run
 	if err := importMissing(db, net, rpcURL); err != nil {
 		log.Printf("indexer %s: initial sync error: %v", net.Name, err)
@@ -68,7 +70,7 @@ func syncNetwork(ctx context.Context, db *gorm.DB, net types.Network, rpcURL str
 // One off sync for a single network
 // ─────────────────────────────────────────────────────────────────────────────
 
-func importMissing(db *gorm.DB, net types.Network, rpcURL string) error {
+func importMissing(db *gorm.DB, net apitypes.Network, rpcURL string) error {
 	log.Printf("indexer %s: checking for missing proposals", net.Name)
 
 	// fresh connection for THIS pass → avoids "close sent"
@@ -125,58 +127,65 @@ func importMissing(db *gorm.DB, net types.Network, rpcURL string) error {
 // getReferendumCount gets the referendum count from OpenGov Referenda pallet
 func getReferendumCount(conn websocket.WsConn, netName string) (uint32, error) {
 	log.Printf("indexer %s: checking Referenda pallet (OpenGov)", netName)
-	cntRes, err := rpc.ReadStorage(conn, "Referenda", "ReferendumCount", "")
+
+	// Use ReadStorage which handles the request properly
+	resp, err := rpc.ReadStorage(conn, "referenda", "referendumCount", "")
 	if err != nil {
-		return 0, fmt.Errorf("failed to read referendum count: %w", err)
+		return 0, fmt.Errorf("failed to get referendum count: %w", err)
 	}
+
+	// Convert response to string
+	respStr := resp.ToString()
+	if respStr == "" || respStr == "0x" {
+		return 0, fmt.Errorf("empty result")
+	}
+
+	// Try to extract hex data from response
+	var hexStr string
+
+	// Check if it's JSON wrapped
+	if strings.HasPrefix(respStr, "{") {
+		var jsonResp map[string]interface{}
+		if err := json.Unmarshal([]byte(respStr), &jsonResp); err == nil {
+			if result, ok := jsonResp["result"].(string); ok {
+				hexStr = result
+			}
+		}
+	} else {
+		hexStr = respStr
+	}
+
+	if hexStr == "" || hexStr == "0x" {
+		return 0, fmt.Errorf("no data in response")
+	}
+
+	hexStr = strings.TrimPrefix(hexStr, "0x")
+	if len(hexStr) == 0 {
+		return 0, fmt.Errorf("empty hex data")
+	}
+
+	// Convert from SCALE encoded u32
+	decoder := types.ScaleDecoder{}
+	data, _ := hex.DecodeString(hexStr)
+	decoder.Init(scaleBytes.ScaleBytes{Data: data}, nil)
 
 	var count uint32
-	if err := decodeU32(cntRes, &count); err != nil {
-		return 0, fmt.Errorf("failed to decode referendum count: %w", err)
-	}
-
-	if count == 0 {
-		return 0, fmt.Errorf("no referenda found in OpenGov")
-	}
-
-	log.Printf("indexer %s: found %d referenda in OpenGov", netName, count)
-	return count, nil
-}
-
-// Helper to decode u32 from storage response
-func decodeU32(res storage.StateStorage, out *uint32) error {
-	// Get the raw value - this depends on the actual structure of StateStorage
-	// You may need to adjust based on the actual implementation
-	var rawValue string
-	if data, err := json.Marshal(res); err == nil {
-		var temp map[string]interface{}
-		if json.Unmarshal(data, &temp) == nil {
-			if val, ok := temp["result"].(string); ok {
-				rawValue = val
-			}
+	countInterface := decoder.ProcessAndUpdateData("U32")
+	if countInterface != nil {
+		switch v := countInterface.(type) {
+		case uint32:
+			count = v
+		case int:
+			count = uint32(v)
+		case float64:
+			count = uint32(v)
+		default:
+			return 0, fmt.Errorf("unexpected type for count: %T", v)
 		}
 	}
 
-	if rawValue == "" {
-		return fmt.Errorf("no result in response")
-	}
-
-	// Decode hex string to u32 (little-endian)
-	hexStr := strings.TrimPrefix(rawValue, "0x")
-	if len(hexStr) < 8 {
-		// Pad with zeros if needed
-		hexStr = hexStr + strings.Repeat("0", 8-len(hexStr))
-	}
-
-	count := uint32(0)
-	for i := 0; i < 4; i++ {
-		byteHex := hexStr[i*2 : i*2+2]
-		byteVal, _ := strconv.ParseUint(byteHex, 16, 8)
-		count |= uint32(byteVal) << (i * 8)
-	}
-
-	*out = count
-	return nil
+	log.Printf("indexer %s: found %d referenda", netName, count)
+	return count, nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -184,89 +193,129 @@ func decodeU32(res storage.StateStorage, out *uint32) error {
 // ─────────────────────────────────────────────────────────────────────────────
 
 func fetchAndStoreProposal(db *gorm.DB, conn websocket.WsConn, netID uint8, idx uint32) error {
-	info, err := rpc.ReadStorage(conn, "Referenda", "ReferendumInfoFor", "",
-		strconv.FormatUint(uint64(idx), 10))
-
+	// Use ReadStorage with the index parameter
+	resp, err := rpc.ReadStorage(conn, "Referenda", "ReferendumInfoFor", "", strconv.FormatUint(uint64(idx), 10))
 	if err != nil {
-		return fmt.Errorf("failed to read referendum info: %w", err)
+		return fmt.Errorf("failed to get referendum info: %w", err)
 	}
 
-	return parseReferendaProposal(db, info, netID, idx)
+	respStr := resp.ToString()
+	if respStr == "" || respStr == "0x" {
+		return fmt.Errorf("referendum not found")
+	}
+
+	// Extract hex data
+	var hexStr string
+	if strings.HasPrefix(respStr, "{") {
+		var jsonResp map[string]interface{}
+		if err := json.Unmarshal([]byte(respStr), &jsonResp); err == nil {
+			if result, ok := jsonResp["result"].(string); ok {
+				hexStr = result
+			}
+		}
+	} else {
+		hexStr = respStr
+	}
+
+	if hexStr == "" || hexStr == "0x" {
+		return fmt.Errorf("no referendum data")
+	}
+
+	// Decode to check if it's a historical reference
+	hexStr = strings.TrimPrefix(hexStr, "0x")
+	data, _ := hex.DecodeString(hexStr)
+
+	// Check if this is a closed referendum with block reference
+	if len(data) > 0 && (data[0] >= 2 && data[0] <= 6) {
+		// This looks like a closed referendum (Approved=2, Rejected=3, Cancelled=4, TimedOut=5, Killed=6)
+		status := getStatusFromVariant(data[0])
+
+		// Extract block number if present
+		if len(data) > 4 {
+			blockDecoder := types.ScaleDecoder{}
+			blockDecoder.Init(scaleBytes.ScaleBytes{Data: data[1:]}, nil)
+			blockNumInterface := blockDecoder.ProcessAndUpdateData("U32")
+
+			var blockNum uint32
+			switch v := blockNumInterface.(type) {
+			case uint32:
+				blockNum = v
+			case int:
+				blockNum = uint32(v)
+			case float64:
+				blockNum = uint32(v)
+			}
+
+			log.Printf("indexer: referendum %d is %s at block %d", idx, status, blockNum)
+
+			// For historical data, we would need to query at that block
+			// For now, just save what we know
+			return saveBasicProposal(db, netID, idx, status)
+		}
+
+		// If we can't get block number, at least save the status
+		return saveBasicProposal(db, netID, idx, status)
+	}
+
+	// Parse as ongoing referendum
+	return parseReferendaProposal(db, "0x"+hexStr, netID, idx, "Ongoing")
 }
 
-func parseReferendaProposal(db *gorm.DB, info storage.StateStorage, netID uint8, idx uint32) error {
-	// Convert storage response to JSON for parsing
-	data, err := json.Marshal(info)
-	if err != nil {
-		return fmt.Errorf("failed to marshal referendum info: %w", err)
+func getStatusFromVariant(variant byte) string {
+	switch variant {
+	case 0:
+		return "Ongoing"
+	case 2:
+		return "Approved"
+	case 3:
+		return "Rejected"
+	case 4:
+		return "Cancelled"
+	case 5:
+		return "TimedOut"
+	case 6:
+		return "Killed"
+	default:
+		return "Unknown"
 	}
+}
 
-	var tmp struct {
-		Ongoing struct {
-			Track             uint16          `json:"track"`
-			Origin            json.RawMessage `json:"origin"`
-			Proposal          json.RawMessage `json:"proposal"`
-			Enactment         json.RawMessage `json:"enactment"`
-			Submitted         uint64          `json:"submitted"`
-			SubmissionDeposit struct {
-				Who    string `json:"who"`
-				Amount string `json:"amount"`
-			} `json:"submissionDeposit"`
-			DecisionDeposit interface{} `json:"decisionDeposit"`
-			Deciding        interface{} `json:"deciding"`
-			Tally           struct {
-				Ayes    string `json:"ayes"`
-				Nays    string `json:"nays"`
-				Support string `json:"support"`
-			} `json:"tally"`
-			InQueue bool        `json:"inQueue"`
-			Alarm   interface{} `json:"alarm"`
-		} `json:"Ongoing"`
-		Approved  interface{} `json:"Approved"`
-		Rejected  interface{} `json:"Rejected"`
-		Cancelled interface{} `json:"Cancelled"`
-		TimedOut  interface{} `json:"TimedOut"`
-		Killed    interface{} `json:"Killed"`
-	}
+func parseReferendaProposal(db *gorm.DB, hexData string, netID uint8, idx uint32, status string) error {
+	// For now, just create a basic proposal record
+	// In a real implementation, you'd fully decode the SCALE-encoded data
 
-	if err := json.Unmarshal(data, &tmp); err != nil {
-		return fmt.Errorf("failed to parse referendum info: %w", err)
-	}
-
-	status := "Unknown"
-	submitter := ""
-	endBlock := uint64(0)
-
-	if tmp.Ongoing.SubmissionDeposit.Who != "" {
-		status = "Ongoing"
-		submitter = tmp.Ongoing.SubmissionDeposit.Who
-		// For OpenGov, we don't have a simple end block, it depends on the track
-		// For now, just use submitted + some default period
-		endBlock = tmp.Ongoing.Submitted + 100800 // ~14 days at 6s blocks
-	} else if tmp.Approved != nil {
-		status = "Approved"
-	} else if tmp.Rejected != nil {
-		status = "Rejected"
-	} else if tmp.Cancelled != nil {
-		status = "Cancelled"
-	} else if tmp.TimedOut != nil {
-		status = "TimedOut"
-	} else if tmp.Killed != nil {
-		status = "Killed"
-	}
-
-	var prop types.Proposal
-	if err := db.FirstOrCreate(&prop, types.Proposal{
+	var prop apitypes.Proposal
+	if err := db.FirstOrCreate(&prop, apitypes.Proposal{
 		NetworkID: netID,
 		RefID:     uint64(idx),
 	}).Error; err != nil {
 		return err
 	}
 
+	// Try to extract submitter if it's an ongoing proposal
+	submitter := ""
+	if status == "Ongoing" && len(hexData) > 100 {
+		// This is a simplified extraction - in production you'd properly decode the struct
+		// Look for potential address pattern (32 bytes after some offset)
+		data, _ := hex.DecodeString(strings.TrimPrefix(hexData, "0x"))
+		if len(data) > 50 {
+			// Skip variant byte and some fields, try to find submitter
+			for i := 10; i < len(data)-32; i++ {
+				// Look for what might be an address
+				if data[i] == 0x00 && i+33 < len(data) {
+					possibleAddr := data[i+1 : i+33]
+					if isValidAddress(possibleAddr) {
+						submitter = "0x" + hex.EncodeToString(possibleAddr)
+						break
+					}
+				}
+			}
+		}
+	}
+
 	_ = db.Model(&prop).Updates(map[string]any{
-		"submitter": submitter,
 		"status":    status,
-		"end_block": endBlock,
+		"submitter": submitter,
 	}).Error
 
 	if submitter != "" {
@@ -276,9 +325,42 @@ func parseReferendaProposal(db *gorm.DB, info storage.StateStorage, netID uint8,
 	return nil
 }
 
+func saveBasicProposal(db *gorm.DB, netID uint8, idx uint32, status string) error {
+	var prop apitypes.Proposal
+	if err := db.FirstOrCreate(&prop, apitypes.Proposal{
+		NetworkID: netID,
+		RefID:     uint64(idx),
+	}).Error; err != nil {
+		return err
+	}
+
+	_ = db.Model(&prop).Updates(map[string]any{
+		"status": status,
+	}).Error
+
+	return nil
+}
+
+func isValidAddress(data []byte) bool {
+	// Basic check - address should be 32 bytes and not all zeros
+	if len(data) != 32 {
+		return false
+	}
+
+	allZero := true
+	for _, b := range data {
+		if b != 0 {
+			allZero = false
+			break
+		}
+	}
+
+	return !allZero
+}
+
 func addParticipant(db *gorm.DB, propID uint64, addr string) {
-	_ = db.FirstOrCreate(&types.DaoMember{Address: addr}).Error
-	_ = db.FirstOrCreate(&types.ProposalParticipant{
+	_ = db.FirstOrCreate(&apitypes.DaoMember{Address: addr}).Error
+	_ = db.FirstOrCreate(&apitypes.ProposalParticipant{
 		ProposalID: propID,
 		Address:    addr,
 	}).Error

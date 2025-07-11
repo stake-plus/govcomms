@@ -15,7 +15,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	// Substrate stack
-	github.com/itering/scale.go v1.9.23 // indirect
+	github.com/itering/scale.go v1.9.23
 	github.com/itering/substrate-api-rpc v0.8.2
 	github.com/mr-tron/base58 v1.2.0
 	// Cache
