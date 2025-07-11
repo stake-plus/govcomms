@@ -17,7 +17,7 @@ function Home() {
     <div className="home-container">
       <div className="home-card">
         <h1>GovComms</h1>
-        <p className="tagline">Connect with ChaosDAO on governance proposals</p>
+        <p className="tagline">Connect with REEEEEEEEEE DAO</p>
         
         <form className="home-form" onSubmit={handleSubmit}>
           <div className="form-group">
