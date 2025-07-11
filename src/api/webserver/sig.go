@@ -31,8 +31,6 @@ func strip0x(s string) string {
 }
 
 // verifySignature matches polkadot-extension `signRaw`:
-// * polkadot.js extension signs the TEXT string wrapped as <Bytes>NONCE</Bytes>
-// * The nonce IS the message - as a string, not decoded hex!
 func verifySignature(addr, sigHex, nonce string) error {
 	// Decode public key from address
 	pub, err := decodeSS58(addr)
@@ -54,40 +52,42 @@ func verifySignature(addr, sigHex, nonce string) error {
 		return fmt.Errorf("invalid signature length: %d", len(rawSig))
 	}
 
-	// Convert to schnorrkel types
-	var pkArr [32]byte
-	copy(pkArr[:], pub)
-	var sigArr [64]byte
-	copy(sigArr[:], rawSig)
+	// Convert public key bytes to PublicKey
+	var pubKeyBytes [32]byte
+	copy(pubKeyBytes[:], pub)
 
-	var pk schnorrkel.PublicKey
-	if err = pk.Decode(pkArr); err != nil {
+	pubKey := &schnorrkel.PublicKey{}
+	err = pubKey.Decode(pubKeyBytes)
+	if err != nil {
 		return fmt.Errorf("failed to decode public key: %w", err)
 	}
 
-	var sig schnorrkel.Signature
-	if err = sig.Decode(sigArr); err != nil {
+	// Convert signature bytes to Signature
+	var sigBytes [64]byte
+	copy(sigBytes[:], rawSig)
+
+	sig := &schnorrkel.Signature{}
+	err = sig.Decode(sigBytes)
+	if err != nil {
 		return fmt.Errorf("failed to decode signature: %w", err)
 	}
 
-	// Try wrapped format first (polkadot.js extension style)
-	// The extension signs the TEXT: <Bytes>NONCE</Bytes>
-	wrappedMsg := []byte(fmt.Sprintf("<Bytes>%s</Bytes>", nonce))
-	ctxWrapped := schnorrkel.NewSigningContext([]byte("substrate"), wrappedMsg)
-	ok, err := pk.Verify(&sig, ctxWrapped)
-	if err == nil && ok {
-		return nil
+	// Polkadot.js signs: <Bytes>NONCE</Bytes> where NONCE includes 0x prefix
+	message := []byte(fmt.Sprintf("<Bytes>%s</Bytes>", nonce))
+
+	// Create signing context
+	transcript := schnorrkel.NewSigningContext([]byte("substrate"), message)
+
+	// Verify
+	ok, err := pubKey.Verify(sig, transcript)
+	if err != nil {
+		return fmt.Errorf("verification error: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("signature verification failed")
 	}
 
-	// Try unwrapped format - just the nonce string itself
-	msgBytes := []byte(nonce)
-	ctx := schnorrkel.NewSigningContext([]byte("substrate"), msgBytes)
-	ok, err = pk.Verify(&sig, ctx)
-	if err == nil && ok {
-		return nil
-	}
-
-	return fmt.Errorf("signature verification failed")
+	return nil
 }
 
 func issueJWT(addr string, secret []byte) (string, error) {
