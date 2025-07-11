@@ -28,3 +28,6 @@ go.sum
 
 /src/frontend/node_modules/*
 /src/frontend/node_modules
+
+/src/frontend/package-lock.json
+src/frontend/package-lock.json
