@@ -10,6 +10,7 @@ import (
 	schnorrkel "github.com/ChainSafe/go-schnorrkel"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/mr-tron/base58"
+	"golang.org/x/crypto/blake2b"
 )
 
 // decodeSS58 converts an SS58‑formatted address to the raw 32‑byte public key.
@@ -18,7 +19,6 @@ func decodeSS58(addr string) ([]byte, error) {
 	if strings.HasPrefix(addr, "0x") {
 		return hex.DecodeString(addr[2:])
 	}
-
 	raw, err := base58.Decode(addr)
 	if err != nil || len(raw) < 35 {
 		return nil, fmt.Errorf("invalid ss58 address")
@@ -54,6 +54,7 @@ func verifySignature(addr, sigHex, nonce string) error {
 		return fmt.Errorf("invalid signature length: %d", len(sigBytes))
 	}
 
+	// Prepare keys
 	var pkRaw [32]byte
 	copy(pkRaw[:], pubKeyBytes)
 	var sigRaw [64]byte
@@ -64,14 +65,17 @@ func verifySignature(addr, sigHex, nonce string) error {
 		log.Printf("Failed to decode public key: %v", err)
 		return err
 	}
-
 	var sig schnorrkel.Signature
 	if err = sig.Decode(sigRaw); err != nil {
 		log.Printf("Failed to decode signature: %v", err)
 		return err
 	}
 
-	ctx := schnorrkel.NewSigningContext([]byte("substrate"), []byte(nonce))
+	// The polkadot{.js} signRaw implementation hashes the payload (BLAKE2‑256)
+	// before signing. Re‑hash the nonce here to verify correctly.
+	msgHash := blake2b.Sum256([]byte(nonce))
+	ctx := schnorrkel.NewSigningContext([]byte("substrate"), msgHash[:])
+
 	valid, err := pk.Verify(&sig, ctx)
 	if err != nil {
 		log.Printf("Signature verification error: %v", err)
