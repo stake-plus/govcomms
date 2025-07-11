@@ -21,7 +21,6 @@ import (
 // posted via `system.remark`.
 func StartRemarkWatcher(ctx context.Context, rpcURL string, rdb *redis.Client) {
 	websocket.SetEndpoint(rpcURL)
-
 	pooled, err := websocket.Init()
 	if err != nil {
 		log.Printf("remark watcher: connect: %v", err)
@@ -36,7 +35,7 @@ func StartRemarkWatcher(ctx context.Context, rpcURL string, rdb *redis.Client) {
 		return
 	}
 
-	// Subscribe to new‑head events.
+	// Subscribe to new-head events.
 	subReq := rpc.ChainSubscribeNewHead(rand.Int())
 	var subResp model.JsonRpcResult
 	if err = websocket.SendWsRequest(conn, &subResp, subReq); err != nil || subResp.Error != nil {
@@ -68,6 +67,7 @@ func StartRemarkWatcher(ctx context.Context, rpcURL string, rdb *redis.Client) {
 			if err := websocket.SendWsRequest(conn, &hashRes, rpc.ChainGetBlockHash(rand.Int(), int(num))); err != nil {
 				continue
 			}
+
 			blockHash, _ := hashRes.ToString()
 			if blockHash == "" {
 				continue
@@ -77,6 +77,7 @@ func StartRemarkWatcher(ctx context.Context, rpcURL string, rdb *redis.Client) {
 			if err := websocket.SendWsRequest(conn, &blkRes, rpc.ChainGetBlock(rand.Int(), blockHash)); err != nil {
 				continue
 			}
+
 			blk := blkRes.ToBlock()
 			if blk == nil {
 				continue
@@ -100,6 +101,7 @@ func loadMetadata(c websocket.WsConn) (*metadata.Instant, int, error) {
 	if err := websocket.SendWsRequest(c, &ver, rpc.ChainGetRuntimeVersion(rand.Int())); err != nil {
 		return nil, 0, err
 	}
+
 	rv := ver.ToRuntimeVersion()
 	if rv == nil {
 		return nil, 0, fmt.Errorf("nil runtime version")
@@ -109,10 +111,12 @@ func loadMetadata(c websocket.WsConn) (*metadata.Instant, int, error) {
 	if err := websocket.SendWsRequest(c, &metaRes, rpc.StateGetMetadata(rand.Int())); err != nil {
 		return nil, 0, err
 	}
+
 	metaHex, err := metaRes.ToString()
 	if err != nil {
 		return nil, 0, err
 	}
+
 	raw := metadata.RuntimeRaw{Spec: rv.SpecVersion, Raw: metaHex}
 	return metadata.Process(&raw), rv.SpecVersion, nil
 }
@@ -123,12 +127,13 @@ func parseRemark(extHex string, meta *metadata.Instant, spec int) string {
 	if err != nil || len(decoded) == 0 {
 		return ""
 	}
-	ext := decoded[0]
 
+	ext := decoded[0]
 	mod, _ := ext["module"].(string)
 	if !strings.EqualFold(mod, "System") {
 		return ""
 	}
+
 	call, _ := ext["call"].(string)
 	if !strings.EqualFold(call, "remark") {
 		return ""
@@ -138,11 +143,13 @@ func parseRemark(extHex string, meta *metadata.Instant, spec int) string {
 	if !ok || len(params) == 0 {
 		return ""
 	}
+
 	first := params[0].(map[string]interface{})
 	valHex, _ := first["value"].(string)
 	if valHex == "" {
 		return ""
 	}
+
 	b, _ := hex.DecodeString(strings.TrimPrefix(valHex, "0x"))
 	if len(b) < 8 {
 		return ""
@@ -156,10 +163,12 @@ func extractSigner(extHex string) (string, error) {
 	if err != nil || len(raw) < 38 {
 		return "", fmt.Errorf("bad extrinsic")
 	}
+
 	i := 1
 	if raw[0] >= 0x80 {
-		i = 2 // compact‑u32 len > 1 byte
+		i = 2 // compact-u32 len > 1 byte
 	}
-	addr := raw[i+1 : i+35] // 32‑byte pubkey + prefix/checksum
+
+	addr := raw[i+1 : i+35] // 32-byte pubkey + prefix/checksum
 	return "0x" + hex.EncodeToString(addr), nil
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log"
 	"strconv"
@@ -21,9 +20,9 @@ import (
 	apitypes "github.com/stake-plus/polkadot-gov-comms/src/api/types"
 )
 
-// ────────────────────────────────────────────────────────────────────────────────
-// Indexer entry‑point
-// ────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────
+// Indexer entry-point
+// ────────────────────────────────────────────────────────────────────────────
 
 func StartIndexer(ctx context.Context, db *gorm.DB, cfg config.Config) {
 	var nets []apitypes.Network
@@ -32,14 +31,18 @@ func StartIndexer(ctx context.Context, db *gorm.DB, cfg config.Config) {
 		return
 	}
 	log.Printf("indexer: found %d networks", len(nets))
-
 	for _, n := range nets {
 		if len(n.RPCs) == 0 {
 			log.Printf("indexer: no active RPCs for network %s", n.Name)
 			continue
 		}
-		log.Printf("indexer: starting sync for %s using RPC %s", n.Name, n.RPCs[0].URL)
-		go syncNetwork(ctx, db, n, n.RPCs[0].URL, time.Duration(cfg.PollInterval)*time.Second)
+		// Use configured RPC URL if available, otherwise use network's RPC
+		rpcURL := cfg.RPCURL
+		if rpcURL == "" || !strings.Contains(strings.ToLower(rpcURL), strings.ToLower(n.Name)) {
+			rpcURL = n.RPCs[0].URL
+		}
+		log.Printf("indexer: starting sync for %s using RPC %s", n.Name, rpcURL)
+		go syncNetwork(ctx, db, n, rpcURL, time.Duration(cfg.PollInterval)*time.Second)
 	}
 }
 
@@ -51,7 +54,6 @@ func syncNetwork(ctx context.Context, db *gorm.DB, net apitypes.Network, rpcURL 
 	// then poll
 	tick := time.NewTicker(every)
 	defer tick.Stop()
-
 	for {
 		select {
 		case <-tick.C:
@@ -65,13 +67,12 @@ func syncNetwork(ctx context.Context, db *gorm.DB, net apitypes.Network, rpcURL 
 	}
 }
 
-// ────────────────────────────────────────────────────────────────────────────────
-// One off sync for a single network
-// ────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────
+// One-off sync for a single network
+// ────────────────────────────────────────────────────────────────────────────
 
 func importMissing(db *gorm.DB, net apitypes.Network, rpcURL string) error {
 	log.Printf("indexer %s: checking for missing proposals", net.Name)
-
 	// fresh connection for THIS pass → avoids "close sent"
 	websocket.SetEndpoint(rpcURL)
 	pooled, err := websocket.Init()
@@ -106,7 +107,6 @@ func importMissing(db *gorm.DB, net apitypes.Network, rpcURL string) error {
 		log.Printf("indexer %s: up to date (local: %d, remote: %d)", net.Name, start-1, remoteMax)
 		return nil
 	}
-
 	log.Printf("indexer %s: syncing referenda %d to %d", net.Name, start, remoteMax)
 	for i := start; i <= remoteMax; i++ {
 		if err := fetchAndStoreProposal(db, conn, net.ID, i); err != nil {
@@ -122,133 +122,79 @@ func importMissing(db *gorm.DB, net apitypes.Network, rpcURL string) error {
 func getReferendumCount(conn websocket.WsConn, netName string) (uint32, error) {
 	log.Printf("indexer %s: checking Referenda pallet (OpenGov)", netName)
 
-	// Correct storage prefix & item names (case‑sensitive)
+	// The correct storage key for Polkadot OpenGov is Referenda.ReferendumCount
 	resp, err := rpc.ReadStorage(conn, "Referenda", "ReferendumCount", "")
 	if err != nil {
 		return 0, fmt.Errorf("failed to get referendum count: %w", err)
 	}
 
-	// Convert response to string
+	// Log the raw response
 	respStr := resp.ToString()
-	if respStr == "" || respStr == "0x" {
-		return 0, fmt.Errorf("empty result")
+	log.Printf("indexer %s: ReferendumCount raw response: %s", netName, respStr)
+
+	// Decode manually since ToU32FromCodec seems to be failing
+	hexStr := strings.TrimPrefix(respStr, "0x")
+	if hexStr == "" {
+		return 0, fmt.Errorf("empty response")
 	}
 
-	// Try to extract hex data from response
-	var hexStr string
-	if strings.HasPrefix(respStr, "{") {
-		var jsonResp map[string]interface{}
-		if err := json.Unmarshal([]byte(respStr), &jsonResp); err == nil {
-			if result, ok := jsonResp["result"].(string); ok {
-				hexStr = result
-			}
-		}
-	} else {
-		hexStr = respStr
-	}
-	if hexStr == "" || hexStr == "0x" {
-		return 0, fmt.Errorf("no data in response")
-	}
-	hexStr = strings.TrimPrefix(hexStr, "0x")
-	if len(hexStr) == 0 {
-		return 0, fmt.Errorf("empty hex data")
+	data, err := hex.DecodeString(hexStr)
+	if err != nil {
+		return 0, fmt.Errorf("failed to decode hex: %w", err)
 	}
 
-	// Convert from SCALE encoded u32
-	decoder := types.ScaleDecoder{}
-	data, _ := hex.DecodeString(hexStr)
-	decoder.Init(scaleBytes.ScaleBytes{Data: data}, nil)
-
-	var count uint32
-	if v := decoder.ProcessAndUpdateData("U32"); v != nil {
-		switch t := v.(type) {
-		case uint32:
-			count = t
-		case int:
-			count = uint32(t)
-		case float64:
-			count = uint32(t)
-		default:
-			return 0, fmt.Errorf("unexpected type for count: %T", t)
-		}
+	if len(data) < 4 {
+		return 0, fmt.Errorf("invalid data length for u32: %d", len(data))
 	}
 
+	// U32 is 4 bytes little-endian
+	count := uint32(data[0]) | uint32(data[1])<<8 | uint32(data[2])<<16 | uint32(data[3])<<24
 	log.Printf("indexer %s: found %d referenda", netName, count)
 	return count, nil
 }
 
-// ────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────
 // Proposal storage helpers
-// ────────────────────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────────────────────────────────────────
 
 func fetchAndStoreProposal(db *gorm.DB, conn websocket.WsConn, netID uint8, idx uint32) error {
-	// Use ReadStorage with the index parameter
+	// The correct storage key is Referenda.ReferendumInfoFor with the index as parameter
 	resp, err := rpc.ReadStorage(conn, "Referenda", "ReferendumInfoFor", "", strconv.FormatUint(uint64(idx), 10))
 	if err != nil {
 		return fmt.Errorf("failed to get referendum info: %w", err)
 	}
+
+	// Get the raw hex string for processing
 	respStr := resp.ToString()
-	if respStr == "" || respStr == "0x" {
+	if respStr == "" || respStr == "0x" || respStr == "null" {
 		return fmt.Errorf("referendum not found")
 	}
 
-	// Extract hex data
-	var hexStr string
-	if strings.HasPrefix(respStr, "{") {
-		var jsonResp map[string]interface{}
-		if err := json.Unmarshal([]byte(respStr), &jsonResp); err == nil {
-			if result, ok := jsonResp["result"].(string); ok {
-				hexStr = result
-			}
-		}
-	} else {
-		hexStr = respStr
-	}
-	if hexStr == "" || hexStr == "0x" {
-		return fmt.Errorf("no referendum data")
+	// Decode to check if closed variant
+	hexStr := strings.TrimPrefix(respStr, "0x")
+	data, err := hex.DecodeString(hexStr)
+	if err != nil {
+		return fmt.Errorf("failed to decode hex: %w", err)
 	}
 
-	// Decode to check if it's a historical reference
-	hexStr = strings.TrimPrefix(hexStr, "0x")
-	data, _ := hex.DecodeString(hexStr)
-
-	// Check if this is a closed referendum with block reference
 	if len(data) > 0 && (data[0] >= 2 && data[0] <= 6) {
-		// This looks like a closed referendum (Approved=2, Rejected=3, Cancelled=4, TimedOut=5, Killed=6)
 		status := getStatusFromVariant(data[0])
-
-		// Extract block number if present
 		if len(data) > 4 {
-			blockDecoder := types.ScaleDecoder{}
-			blockDecoder.Init(scaleBytes.ScaleBytes{Data: data[1:]}, nil)
-			blockNumInterface := blockDecoder.ProcessAndUpdateData("U32")
-
-			var blockNum uint32
-			switch v := blockNumInterface.(type) {
-			case uint32:
-				blockNum = v
-			case int:
-				blockNum = uint32(v)
-			case float64:
-				blockNum = uint32(v)
+			var dec types.ScaleDecoder
+			dec.Init(scaleBytes.ScaleBytes{Data: data[1:]}, nil)
+			bi := dec.ProcessAndUpdateData("U32")
+			if n, ok := bi.(uint32); ok {
+				log.Printf("indexer: referendum %d is %s at block %d", idx, status, n)
 			}
-
-			log.Printf("indexer: referendum %d is %s at block %d", idx, status, blockNum)
-			// For historical data, we would need to query at that block
-			// For now, just save what we know
-			return saveBasicProposal(db, netID, idx, status)
 		}
-
-		// If we can't get block number, at least save the status
 		return saveBasicProposal(db, netID, idx, status)
 	}
-
-	// Parse as ongoing referendum
+	// Ongoing
 	return parseReferendaProposal(db, "0x"+hexStr, netID, idx, "Ongoing")
 }
 
-func getStatusFromVariant(variant byte) string {
-	switch variant {
+func getStatusFromVariant(v byte) string {
+	switch v {
 	case 0:
 		return "Ongoing"
 	case 2:
@@ -267,8 +213,6 @@ func getStatusFromVariant(variant byte) string {
 }
 
 func parseReferendaProposal(db *gorm.DB, hexData string, netID uint8, idx uint32, status string) error {
-	// For now, just create a basic proposal record
-	// In a real implementation, you'd fully decode the SCALE-encoded data
 	var prop apitypes.Proposal
 	if err := db.FirstOrCreate(&prop, apitypes.Proposal{
 		NetworkID: netID,
@@ -276,33 +220,24 @@ func parseReferendaProposal(db *gorm.DB, hexData string, netID uint8, idx uint32
 	}).Error; err != nil {
 		return err
 	}
-
-	// Try to extract submitter if it's an ongoing proposal
+	// rudimentary submitter extraction
 	submitter := ""
 	if status == "Ongoing" && len(hexData) > 100 {
-		// This is a simplified extraction - in production you'd properly decode the struct
-		// Look for potential address pattern (32 bytes after some offset)
 		data, _ := hex.DecodeString(strings.TrimPrefix(hexData, "0x"))
-		if len(data) > 50 {
-			// Skip variant byte and some fields, try to find submitter
-			for i := 10; i < len(data)-32; i++ {
-				// Look for what might be an address
-				if data[i] == 0x00 && i+33 < len(data) {
-					possibleAddr := data[i+1 : i+33]
-					if isValidAddress(possibleAddr) {
-						submitter = "0x" + hex.EncodeToString(possibleAddr)
-						break
-					}
+		for i := 8; i+32 < len(data); i++ {
+			if data[i] == 0x00 {
+				cand := data[i+1 : i+33]
+				if isValidAddress(cand) {
+					submitter = "0x" + hex.EncodeToString(cand)
+					break
 				}
 			}
 		}
 	}
-
 	_ = db.Model(&prop).Updates(map[string]any{
 		"status":    status,
 		"submitter": submitter,
 	}).Error
-
 	if submitter != "" {
 		addParticipant(db, prop.ID, submitter)
 	}
@@ -310,32 +245,26 @@ func parseReferendaProposal(db *gorm.DB, hexData string, netID uint8, idx uint32
 }
 
 func saveBasicProposal(db *gorm.DB, netID uint8, idx uint32, status string) error {
-	var prop apitypes.Proposal
-	if err := db.FirstOrCreate(&prop, apitypes.Proposal{
+	var p apitypes.Proposal
+	if err := db.FirstOrCreate(&p, apitypes.Proposal{
 		NetworkID: netID,
 		RefID:     uint64(idx),
 	}).Error; err != nil {
 		return err
 	}
-	_ = db.Model(&prop).Updates(map[string]any{
-		"status": status,
-	}).Error
-	return nil
+	return db.Model(&p).Update("status", status).Error
 }
 
-func isValidAddress(data []byte) bool {
-	// Basic check - address should be 32 bytes and not all zeros
-	if len(data) != 32 {
+func isValidAddress(b []byte) bool {
+	if len(b) != 32 {
 		return false
 	}
-	allZero := true
-	for _, b := range data {
-		if b != 0 {
-			allZero = false
-			break
+	for _, x := range b {
+		if x != 0 {
+			return true
 		}
 	}
-	return !allZero
+	return false
 }
 
 func addParticipant(db *gorm.DB, propID uint64, addr string) {

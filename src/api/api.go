@@ -25,35 +25,48 @@ var allModels = []interface{}{
 
 func migrate(db *gorm.DB) {
 	err := db.AutoMigrate(allModels...)
+
 	if err == nil {
-		return // first attempt succeeded
+		return
 	}
+
 	log.Printf("auto‑migrate failed (%v) – dropping & recreating schema", err)
 	_ = db.Migrator().DropTable(
 		"email_subscriptions", "messages", "votes",
 		"proposal_participants", "proposals", "dao_members",
 		"rpcs", "networks",
 	)
-	if err2 := db.AutoMigrate(allModels...); err2 != nil {
-		log.Fatalf("migrate after drop: %v", err2)
+	if err := db.AutoMigrate(allModels...); err != nil {
+		log.Fatalf("migrate after drop: %v", err)
+	}
+}
+
+func ensurePolkadotRPC(db *gorm.DB, url string) {
+	// Upsert active Polkadot RPC; disable all others for the network.
+	db.Model(&types.RPC{}).
+		Where("network_id = ? AND url <> ?", 1, url).
+		Update("active", false)
+
+	var rpc types.RPC
+	if err := db.FirstOrCreate(&rpc, types.RPC{
+		NetworkID: 1,
+		URL:       url,
+	}).Error; err == nil {
+		db.Model(&rpc).Update("active", true)
 	}
 }
 
 func main() {
 	cfg := config.Load()
+
 	db := data.MustMySQL(cfg.MySQLDSN)
 	migrate(db)
 
-	// Seed Polkadot network + RPC if absent
+	// Seed Polkadot network
 	_ = db.FirstOrCreate(&types.Network{ID: 1}, types.Network{
 		ID: 1, Name: "Polkadot", Symbol: "DOT", URL: "https://polkadot.network",
 	}).Error
-	_ = db.FirstOrCreate(&types.RPC{}, types.RPC{
-		NetworkID: 1,
-		// Use the canonical parity endpoint – dotters has occasional state issues
-		URL:    "wss://rpc.polkadot.io",
-		Active: true,
-	}).Error
+	ensurePolkadotRPC(db, "wss://rpc.polkadot.io")
 
 	rdb := data.MustRedis(cfg.RedisURL)
 
@@ -67,7 +80,6 @@ func main() {
 		Handler: router,
 	}
 
-	// start server
 	go func() {
 		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http: %v", err)
@@ -75,7 +87,6 @@ func main() {
 	}()
 	log.Printf("GovComms API listening on %s", cfg.Port)
 
-	// graceful shutdown
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig

@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-
 	"github.com/stake-plus/polkadot-gov-comms/src/api/data"
 )
 
@@ -39,15 +38,14 @@ func (a Auth) Challenge(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
-
 	var nonce string
 	var err error
 	switch req.Method {
 	case "polkadotjs", "walletconnect":
-		// Polkadot{.js} expects raw HEX data for signRaw → generate 32‑byte hex
+		// Polkadot{.js} expects raw HEX data for signRaw → generate 32-byte hex
 		nonce, err = randomHex32()
 	default:
-		// Air‑gap remark still fine with UUID (human readable)
+		// Air-gap remark still fine with UUID (human readable)
 		nonce = uuid.NewString()
 	}
 	if err != nil {
@@ -55,7 +53,6 @@ func (a Auth) Challenge(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": "failed to create challenge"})
 		return
 	}
-
 	if err := data.SetNonce(c, a.rdb, req.Address, nonce); err != nil {
 		log.Printf("Failed to set nonce for %s: %v", req.Address, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"err": "failed to create challenge"})
@@ -75,8 +72,10 @@ func (a Auth) Verify(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
-
 	log.Printf("Verify attempt for %s using method %s", req.Address, req.Method)
+
+	// Log the signature for debugging
+	log.Printf("Signature received: %s", req.Signature)
 
 	nonce, err := data.GetAndDelNonce(c, a.rdb, req.Address)
 	if err != nil {
@@ -84,7 +83,6 @@ func (a Auth) Verify(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"err": "challenge expired or not found"})
 		return
 	}
-
 	var token string
 	switch req.Method {
 	case "airgap":
@@ -94,7 +92,6 @@ func (a Auth) Verify(c *gin.Context) {
 			return
 		}
 		token, err = issueJWT(req.Address, a.jwtSecret)
-
 	default: // polkadotjs | walletconnect
 		log.Printf("Verifying signature for %s with nonce %s", req.Address, nonce)
 		if err := verifySignature(req.Address, req.Signature, nonce); err != nil {
@@ -104,7 +101,6 @@ func (a Auth) Verify(c *gin.Context) {
 		}
 		token, err = issueJWT(req.Address, a.jwtSecret)
 	}
-
 	if err != nil {
 		log.Printf("Failed to issue JWT for %s: %v", req.Address, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})

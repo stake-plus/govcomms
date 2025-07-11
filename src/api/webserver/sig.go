@@ -3,19 +3,16 @@ package webserver
 import (
 	"encoding/hex"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
 	schnorrkel "github.com/ChainSafe/go-schnorrkel"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/mr-tron/base58"
-	"golang.org/x/crypto/blake2b"
 )
 
-// decodeSS58 converts an SS58‑formatted address to the raw 32‑byte public key.
+// decodeSS58 converts an SS58 address → raw 32-byte pubkey.
 func decodeSS58(addr string) ([]byte, error) {
-	// Handle both SS58 format and hex format (0x...)
 	if strings.HasPrefix(addr, "0x") {
 		return hex.DecodeString(addr[2:])
 	}
@@ -23,76 +20,78 @@ func decodeSS58(addr string) ([]byte, error) {
 	if err != nil || len(raw) < 35 {
 		return nil, fmt.Errorf("invalid ss58 address")
 	}
-	return raw[1:33], nil // drop 1‑byte prefix & 2‑byte checksum
+	return raw[1:33], nil
 }
 
 func strip0x(s string) string {
-	if len(s) > 1 && s[:2] == "0x" {
+	if strings.HasPrefix(s, "0x") {
 		return s[2:]
 	}
 	return s
 }
 
+// verifySignature matches polkadot-extension `signRaw`:
+// * polkadot.js extension signs the hex string wrapped as <Bytes>0x...</Bytes>
+// * WalletConnect signs the raw hex bytes
 func verifySignature(addr, sigHex, nonce string) error {
-	log.Printf("Verifying signature for address: %s", addr)
-
-	pubKeyBytes, err := decodeSS58(addr)
+	// Decode public key from address
+	pub, err := decodeSS58(addr)
 	if err != nil {
-		log.Printf("Failed to decode address %s: %v", addr, err)
-		return err
-	}
-	if len(pubKeyBytes) != 32 {
-		return fmt.Errorf("invalid public key length: %d", len(pubKeyBytes))
+		return fmt.Errorf("failed to decode address: %w", err)
 	}
 
-	sigBytes, err := hex.DecodeString(strip0x(sigHex))
+	// Decode signature
+	rawSig, err := hex.DecodeString(strip0x(sigHex))
 	if err != nil {
-		log.Printf("Failed to decode signature: %v", err)
-		return err
-	}
-	if len(sigBytes) != 64 {
-		return fmt.Errorf("invalid signature length: %d", len(sigBytes))
+		return fmt.Errorf("failed to decode signature: %w", err)
 	}
 
-	// Convert nonce → bytes (supports both raw hex "0x..." and plain string fallback)
-	msgBytes, err := hex.DecodeString(strip0x(nonce))
-	if err != nil {
-		msgBytes = []byte(nonce)
+	// Drop type prefix when present (65-byte sig)
+	if len(rawSig) == 65 {
+		rawSig = rawSig[1:]
+	}
+	if len(rawSig) != 64 {
+		return fmt.Errorf("invalid signature length: %d", len(rawSig))
 	}
 
-	// Polkadot{.js} hashes the raw bytes once (BLAKE2‑256) before signing
-	msgHash := blake2b.Sum256(msgBytes)
-
-	// Prepare keys
-	var pkRaw [32]byte
-	copy(pkRaw[:], pubKeyBytes)
-	var sigRaw [64]byte
-	copy(sigRaw[:], sigBytes)
+	// Convert to schnorrkel types
+	var pkArr [32]byte
+	copy(pkArr[:], pub)
+	var sigArr [64]byte
+	copy(sigArr[:], rawSig)
 
 	var pk schnorrkel.PublicKey
-	if err = pk.Decode(pkRaw); err != nil {
-		log.Printf("Failed to decode public key: %v", err)
-		return err
+	if err = pk.Decode(pkArr); err != nil {
+		return fmt.Errorf("failed to decode public key: %w", err)
 	}
+
 	var sig schnorrkel.Signature
-	if err = sig.Decode(sigRaw); err != nil {
-		log.Printf("Failed to decode signature: %v", err)
-		return err
+	if err = sig.Decode(sigArr); err != nil {
+		return fmt.Errorf("failed to decode signature: %w", err)
 	}
 
-	ctx := schnorrkel.NewSigningContext([]byte("substrate"), msgHash[:])
-	valid, err := pk.Verify(&sig, ctx)
+	// Try wrapped format first (polkadot.js extension style)
+	// The extension signs <Bytes>NONCE</Bytes> where NONCE is exactly what we sent (including 0x)
+	wrappedMsg := []byte(fmt.Sprintf("<Bytes>%s</Bytes>", nonce))
+	ctxWrapped := schnorrkel.NewSigningContext([]byte("substrate"), wrappedMsg)
+	ok, err := pk.Verify(&sig, ctxWrapped)
+	if err == nil && ok {
+		return nil
+	}
+
+	// Try unwrapped hex bytes (WalletConnect style)
+	msgBytes, err := hex.DecodeString(strip0x(nonce))
 	if err != nil {
-		log.Printf("Signature verification error: %v", err)
-		return err
+		// If hex decode fails, try as raw string
+		msgBytes = []byte(nonce)
 	}
-	if !valid {
-		log.Printf("Signature verification failed - signature is invalid")
-		return fmt.Errorf("signature verification failed")
+	ctx := schnorrkel.NewSigningContext([]byte("substrate"), msgBytes)
+	ok, err = pk.Verify(&sig, ctx)
+	if err == nil && ok {
+		return nil
 	}
 
-	log.Printf("Signature verification successful")
-	return nil
+	return fmt.Errorf("signature verification failed")
 }
 
 func issueJWT(addr string, secret []byte) (string, error) {
