@@ -1,281 +1,116 @@
+// src/api/data/indexer.go
 package data
 
 import (
 	"context"
-	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
-	"strconv"
-	"strings"
-	"time"
 
-	"github.com/itering/scale.go/types"
-	"github.com/itering/scale.go/types/scaleBytes"
-	"github.com/itering/substrate-api-rpc/rpc"
-	"github.com/itering/substrate-api-rpc/storage"
-	"github.com/itering/substrate-api-rpc/websocket"
-	"gorm.io/gorm"
-
-	"github.com/stake-plus/polkadot-gov-comms/src/api/config"
-	apitypes "github.com/stake-plus/polkadot-gov-comms/src/api/types"
+	"github.com/OneOfOne/xxhash"
+	"github.com/gorilla/websocket"
 )
 
-// ────────────────────────────────────────────────────────────────────────────
-// Indexer entry-point
-// ────────────────────────────────────────────────────────────────────────────
+const polkadotRPC = "wss://rpc.polkadot.io"
 
-func StartIndexer(ctx context.Context, db *gorm.DB, cfg config.Config) {
-	var nets []apitypes.Network
-	if err := db.Preload("RPCs", "active = ?", true).Find(&nets).Error; err != nil {
-		log.Printf("indexer: failed to load networks: %v", err)
+// ---------- tiny JSON-RPC helpers ----------
+
+type rpcReq struct {
+	Jsonrpc string        `json:"jsonrpc"`
+	ID      uint64        `json:"id"`
+	Method  string        `json:"method"`
+	Params  []interface{} `json:"params"`
+}
+
+type rpcResp struct {
+	Jsonrpc string          `json:"jsonrpc"`
+	ID      uint64          `json:"id"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
+}
+
+// ---------- TwoX-128 (Substrate) ----------
+
+func twox128(data []byte) []byte {
+	hash1 := xxhash.NewS64(0)
+	hash1.Write(data)
+	hash2 := xxhash.NewS64(1)
+	hash2.Write(data)
+
+	out := make([]byte, 16)
+	binary.LittleEndian.PutUint64(out[0:], hash1.Sum64())
+	binary.LittleEndian.PutUint64(out[8:], hash2.Sum64())
+	return out
+}
+
+func storageKey(pallet, item string) string {
+	key := append(twox128([]byte(pallet)), twox128([]byte(item))...)
+	return "0x" + hex.EncodeToString(key)
+}
+
+// Referenda.ReferendumCount
+var refCountKey = storageKey("Referenda", "ReferendumCount")
+
+// ---------- core fetcher ----------
+
+func getReferendumCount(ws *websocket.Conn) (uint32, error) {
+	req := rpcReq{
+		Jsonrpc: "2.0",
+		ID:      1,
+		Method:  "state_getStorage",
+		Params:  []interface{}{refCountKey, nil}, // nil → latest
+	}
+	if err := ws.WriteJSON(req); err != nil {
+		return 0, err
+	}
+
+	var rsp rpcResp
+	if err := ws.ReadJSON(&rsp); err != nil {
+		return 0, err
+	}
+	if rsp.Error != nil {
+		return 0, fmt.Errorf("RPC %d: %s", rsp.Error.Code, rsp.Error.Message)
+	}
+
+	var hexVal string
+	if err := json.Unmarshal(rsp.Result, &hexVal); err != nil {
+		return 0, err
+	}
+	if len(hexVal) < 3 { // "0x"
+		return 0, nil
+	}
+
+	raw, err := hex.DecodeString(hexVal[2:])
+	if err != nil {
+		return 0, err
+	}
+	if len(raw) < 4 {
+		return 0, fmt.Errorf("unexpected storage length: %d", len(raw))
+	}
+
+	return binary.LittleEndian.Uint32(raw[:4]), nil
+}
+
+// ---------- public entry-point ----------
+
+// Call this from whatever scheduler you already have.
+func RunPolkadotIndexer(ctx context.Context) {
+	ws, _, err := websocket.DefaultDialer.DialContext(ctx, polkadotRPC, nil)
+	if err != nil {
+		log.Printf("indexer polkadot: dial error: %v", err)
 		return
 	}
-	log.Printf("indexer: found %d networks", len(nets))
-	for _, n := range nets {
-		if len(n.RPCs) == 0 {
-			log.Printf("indexer: no active RPCs for network %s", n.Name)
-			continue
-		}
-		// Use configured RPC URL if available, otherwise use network's RPC
-		rpcURL := cfg.RPCURL
-		if rpcURL == "" || !strings.Contains(strings.ToLower(rpcURL), strings.ToLower(n.Name)) {
-			rpcURL = n.RPCs[0].URL
-		}
-		log.Printf("indexer: starting sync for %s using RPC %s", n.Name, rpcURL)
-		go syncNetwork(ctx, db, n, rpcURL, time.Duration(cfg.PollInterval)*time.Second)
-	}
-}
+	defer ws.Close()
 
-func syncNetwork(ctx context.Context, db *gorm.DB, net apitypes.Network, rpcURL string, every time.Duration) {
-	// first run
-	if err := importMissing(db, net, rpcURL); err != nil {
-		log.Printf("indexer %s: initial sync error: %v", net.Name, err)
-	}
-	// then poll
-	tick := time.NewTicker(every)
-	defer tick.Stop()
-	for {
-		select {
-		case <-tick.C:
-			if err := importMissing(db, net, rpcURL); err != nil {
-				log.Printf("indexer %s: sync error: %v", net.Name, err)
-			}
-		case <-ctx.Done():
-			log.Printf("indexer %s: shutting down", net.Name)
-			return
-		}
-	}
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// One-off sync for a single network
-// ────────────────────────────────────────────────────────────────────────────
-
-func importMissing(db *gorm.DB, net apitypes.Network, rpcURL string) error {
-	log.Printf("indexer %s: checking for missing proposals", net.Name)
-	// fresh connection for THIS pass → avoids "close sent"
-	websocket.SetEndpoint(rpcURL)
-	pooled, err := websocket.Init()
+	cnt, err := getReferendumCount(ws)
 	if err != nil {
-		return fmt.Errorf("ws init: %w", err)
+		log.Printf("indexer polkadot: failed to fetch count: %v", err)
+		return
 	}
-	conn := pooled.Conn
-	defer pooled.Close()
-
-	// Get referendum count from OpenGov
-	remoteCnt, err := getReferendumCount(conn, net.Name)
-	if err != nil {
-		return err
-	}
-	if remoteCnt == 0 {
-		log.Printf("indexer %s: no referenda found on chain", net.Name)
-		return nil
-	}
-	remoteMax := remoteCnt - 1
-
-	// highest ref_id we already have
-	var maxRef sql.NullInt64
-	db.Table("proposals").
-		Where("network_id = ?", net.ID).
-		Select("MAX(ref_id)").Scan(&maxRef)
-
-	start := uint32(0)
-	if maxRef.Valid {
-		start = uint32(maxRef.Int64) + 1
-	}
-	if start > remoteMax {
-		log.Printf("indexer %s: up to date (local: %d, remote: %d)", net.Name, start-1, remoteMax)
-		return nil
-	}
-	log.Printf("indexer %s: syncing referenda %d to %d", net.Name, start, remoteMax)
-	for i := start; i <= remoteMax; i++ {
-		if err := fetchAndStoreProposal(db, conn, net.ID, i); err != nil {
-			log.Printf("import %s #%d: %v", net.Name, i, err)
-		} else {
-			log.Printf("indexer %s: imported referendum #%d", net.Name, i)
-		}
-	}
-	return nil
-}
-
-// getReferendumCount gets the referendum count from OpenGov Referenda pallet
-func getReferendumCount(conn websocket.WsConn, netName string) (uint32, error) {
-	log.Printf("indexer %s: checking Referenda pallet (OpenGov)", netName)
-
-	// The correct storage key for Polkadot OpenGov is Referenda.ReferendumCount
-	var resp storage.StateStorage
-	var err error
-
-	// According to the docs, for storage without parameters we just pass module, storage name, and empty block hash
-	resp, err = rpc.ReadStorage(conn, "Referenda", "ReferendumCount", "")
-	if err != nil {
-		return 0, fmt.Errorf("failed to get referendum count: %w", err)
-	}
-
-	// Use the ToU32FromCodec method as per documentation
-	count := resp.ToU32FromCodec()
-	log.Printf("indexer %s: found %d referenda (using ToU32FromCodec)", netName, count)
-
-	// If that returns 0, try manual decoding to debug
-	if count == 0 {
-		respStr := resp.ToString()
-		log.Printf("indexer %s: ReferendumCount raw response: %s", netName, respStr)
-
-		if respStr != "" && respStr != "0x" {
-			hexStr := strings.TrimPrefix(respStr, "0x")
-			data, err := hex.DecodeString(hexStr)
-			if err == nil && len(data) >= 4 {
-				manualCount := uint32(data[0]) | uint32(data[1])<<8 | uint32(data[2])<<16 | uint32(data[3])<<24
-				log.Printf("indexer %s: manual decode shows %d referenda", netName, manualCount)
-				if manualCount > 0 {
-					return manualCount, nil
-				}
-			}
-		}
-	}
-
-	return count, nil
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// Proposal storage helpers
-// ────────────────────────────────────────────────────────────────────────────
-
-func fetchAndStoreProposal(db *gorm.DB, conn websocket.WsConn, netID uint8, idx uint32) error {
-	// For parameterized storage, pass the parameter after the block hash
-	resp, err := rpc.ReadStorage(conn, "Referenda", "ReferendumInfoFor", "", strconv.FormatUint(uint64(idx), 10))
-	if err != nil {
-		return fmt.Errorf("failed to get referendum info: %w", err)
-	}
-
-	// Get the raw hex string for processing
-	respStr := resp.ToString()
-	if respStr == "" || respStr == "0x" || respStr == "null" {
-		return fmt.Errorf("referendum not found")
-	}
-
-	// Decode to check if closed variant
-	hexStr := strings.TrimPrefix(respStr, "0x")
-	data, err := hex.DecodeString(hexStr)
-	if err != nil {
-		return fmt.Errorf("failed to decode hex: %w", err)
-	}
-
-	if len(data) > 0 && (data[0] >= 2 && data[0] <= 6) {
-		status := getStatusFromVariant(data[0])
-		if len(data) > 4 {
-			var dec types.ScaleDecoder
-			dec.Init(scaleBytes.ScaleBytes{Data: data[1:]}, nil)
-			bi := dec.ProcessAndUpdateData("U32")
-			if n, ok := bi.(uint32); ok {
-				log.Printf("indexer: referendum %d is %s at block %d", idx, status, n)
-			}
-		}
-		return saveBasicProposal(db, netID, idx, status)
-	}
-	// Ongoing
-	return parseReferendaProposal(db, "0x"+hexStr, netID, idx, "Ongoing")
-}
-
-func getStatusFromVariant(v byte) string {
-	switch v {
-	case 0:
-		return "Ongoing"
-	case 2:
-		return "Approved"
-	case 3:
-		return "Rejected"
-	case 4:
-		return "Cancelled"
-	case 5:
-		return "TimedOut"
-	case 6:
-		return "Killed"
-	default:
-		return "Unknown"
-	}
-}
-
-func parseReferendaProposal(db *gorm.DB, hexData string, netID uint8, idx uint32, status string) error {
-	var prop apitypes.Proposal
-	if err := db.FirstOrCreate(&prop, apitypes.Proposal{
-		NetworkID: netID,
-		RefID:     uint64(idx),
-	}).Error; err != nil {
-		return err
-	}
-	// rudimentary submitter extraction
-	submitter := ""
-	if status == "Ongoing" && len(hexData) > 100 {
-		data, _ := hex.DecodeString(strings.TrimPrefix(hexData, "0x"))
-		for i := 8; i+32 < len(data); i++ {
-			if data[i] == 0x00 {
-				cand := data[i+1 : i+33]
-				if isValidAddress(cand) {
-					submitter = "0x" + hex.EncodeToString(cand)
-					break
-				}
-			}
-		}
-	}
-	_ = db.Model(&prop).Updates(map[string]any{
-		"status":    status,
-		"submitter": submitter,
-	}).Error
-	if submitter != "" {
-		addParticipant(db, prop.ID, submitter)
-	}
-	return nil
-}
-
-func saveBasicProposal(db *gorm.DB, netID uint8, idx uint32, status string) error {
-	var p apitypes.Proposal
-	if err := db.FirstOrCreate(&p, apitypes.Proposal{
-		NetworkID: netID,
-		RefID:     uint64(idx),
-	}).Error; err != nil {
-		return err
-	}
-	return db.Model(&p).Update("status", status).Error
-}
-
-func isValidAddress(b []byte) bool {
-	if len(b) != 32 {
-		return false
-	}
-	for _, x := range b {
-		if x != 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func addParticipant(db *gorm.DB, propID uint64, addr string) {
-	_ = db.FirstOrCreate(&apitypes.DaoMember{Address: addr}).Error
-	_ = db.FirstOrCreate(&apitypes.ProposalParticipant{
-		ProposalID: propID,
-		Address:    addr,
-	}).Error
+	log.Printf("indexer polkadot: chain reports %d referenda", cnt)
 }

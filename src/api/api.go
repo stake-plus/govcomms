@@ -72,7 +72,7 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go data.StartRemarkWatcher(ctx, cfg.RPCURL, rdb)
-	go data.StartIndexer(ctx, db, cfg)
+	go data.RunPolkadotIndexer(ctx)
 
 	router := webserver.New(cfg, db, rdb)
 	httpSrv := &http.Server{

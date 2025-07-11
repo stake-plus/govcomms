@@ -15,7 +15,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.6.0
 	// Substrate stack
-	github.com/itering/scale.go v1.9.23
+	github.com/itering/scale.go v1.9.23 // indirect
 	github.com/itering/substrate-api-rpc v0.8.2
 	github.com/mr-tron/base58 v1.2.0
 	// Cache
@@ -25,7 +25,11 @@ require (
 	gorm.io/gorm v1.30.0
 )
 
-require github.com/gin-contrib/cors v1.7.6
+require (
+	github.com/OneOfOne/xxhash v1.2.8
+	github.com/gin-contrib/cors v1.7.6
+	github.com/gorilla/websocket v1.5.3
+)
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
@@ -42,7 +46,6 @@ require (
 	github.com/go-playground/validator/v10 v10.27.0 // indirect
 	github.com/go-sql-driver/mysql v1.9.3 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/gtank/merlin v0.1.1 // indirect
 	github.com/gtank/ristretto255 v0.1.2 // indirect
 	github.com/huandu/xstrings v1.5.0 // indirect

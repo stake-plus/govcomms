@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,88 +12,97 @@ import (
 	"github.com/mr-tron/base58"
 )
 
-// decodeSS58 converts an SS58 address → raw 32-byte pubkey.
+// ───────────────────────── helpers ─────────────────────────
+
+// decodeSS58 extracts the 32-byte pubkey from an SS58 (or 0x…) address.
 func decodeSS58(addr string) ([]byte, error) {
 	if strings.HasPrefix(addr, "0x") {
 		return hex.DecodeString(addr[2:])
 	}
 	raw, err := base58.Decode(addr)
-	if err != nil || len(raw) < 35 {
-		return nil, fmt.Errorf("invalid ss58 address")
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) < 35 {
+		return nil, errors.New("invalid SS58 length")
 	}
 	return raw[1:33], nil
 }
 
-func strip0x(s string) string {
-	if strings.HasPrefix(s, "0x") {
-		return s[2:]
+// buildSr25519Message reproduces exactly what polkadot-js signs.
+func buildSr25519Message(nonce string) ([]byte, error) {
+	hexPart := strings.TrimPrefix(nonce, "0x")
+	nonceBytes, err := hex.DecodeString(hexPart)
+	if err != nil {
+		return nil, fmt.Errorf("invalid nonce hex: %w", err)
 	}
-	return s
+	msg := make([]byte, 0, len(nonceBytes)+14)
+	msg = append(msg, []byte("<Bytes>")...)
+	msg = append(msg, nonceBytes...)
+	msg = append(msg, []byte("</Bytes>")...)
+	return msg, nil
 }
 
-// verifySignature matches polkadot-extension `signRaw`:
-func verifySignature(addr, sigHex, nonce string) error {
-	// Decode public key from address
-	pub, err := decodeSS58(addr)
+// ─────────────────────── public API ───────────────────────
+
+// verifySignature validates sr25519 signatures produced by polkadot-js signRaw.
+func verifySignature(address, sigHex, nonce string) error {
+	// 1. pubkey
+	pub, err := decodeSS58(address)
 	if err != nil {
-		return fmt.Errorf("failed to decode address: %w", err)
+		return fmt.Errorf("decode address: %w", err)
+	}
+	if len(pub) != 32 {
+		return fmt.Errorf("unexpected pubkey length %d", len(pub))
+	}
+	var pubArr [32]byte
+	copy(pubArr[:], pub)
+	var pk schnorrkel.PublicKey
+	if err = pk.Decode(pubArr); err != nil {
+		return fmt.Errorf("decode pubkey: %w", err)
 	}
 
-	// Decode signature
-	rawSig, err := hex.DecodeString(strip0x(sigHex))
+	// 2. signature
+	rawSig, err := hex.DecodeString(strings.TrimPrefix(sigHex, "0x"))
 	if err != nil {
-		return fmt.Errorf("failed to decode signature: %w", err)
+		return fmt.Errorf("decode sig hex: %w", err)
 	}
-
-	// Drop type prefix when present (65-byte sig)
-	if len(rawSig) == 65 {
+	if len(rawSig) == 65 { // drop prefix (0x00)
 		rawSig = rawSig[1:]
 	}
 	if len(rawSig) != 64 {
-		return fmt.Errorf("invalid signature length: %d", len(rawSig))
+		return fmt.Errorf("unexpected sig length %d", len(rawSig))
+	}
+	var sigArr [64]byte
+	copy(sigArr[:], rawSig)
+	var sig schnorrkel.Signature
+	if err = sig.Decode(sigArr); err != nil {
+		return fmt.Errorf("decode sig: %w", err)
 	}
 
-	// Convert public key bytes to PublicKey
-	var pubKeyBytes [32]byte
-	copy(pubKeyBytes[:], pub)
-
-	pubKey := &schnorrkel.PublicKey{}
-	err = pubKey.Decode(pubKeyBytes)
+	// 3. message + context
+	message, err := buildSr25519Message(nonce)
 	if err != nil {
-		return fmt.Errorf("failed to decode public key: %w", err)
+		return err
 	}
+	ctx := schnorrkel.NewSigningContext([]byte("substrate"), message)
 
-	// Convert signature bytes to Signature
-	var sigBytes [64]byte
-	copy(sigBytes[:], rawSig)
-
-	sig := &schnorrkel.Signature{}
-	err = sig.Decode(sigBytes)
+	// 4. verify
+	ok, err := pk.Verify(&sig, ctx)
 	if err != nil {
-		return fmt.Errorf("failed to decode signature: %w", err)
-	}
-
-	// Polkadot.js signs: <Bytes>NONCE</Bytes> where NONCE includes 0x prefix
-	message := []byte(fmt.Sprintf("<Bytes>%s</Bytes>", nonce))
-
-	// Create signing context
-	transcript := schnorrkel.NewSigningContext([]byte("substrate"), message)
-
-	// Verify
-	ok, err := pubKey.Verify(sig, transcript)
-	if err != nil {
-		return fmt.Errorf("verification error: %w", err)
+		return fmt.Errorf("verify: %w", err)
 	}
 	if !ok {
-		return fmt.Errorf("signature verification failed")
+		return errors.New("signature verification failed")
 	}
-
 	return nil
 }
 
+// issueJWT matches the original call-site signature in auth.go.
 func issueJWT(addr string, secret []byte) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"addr": addr,
+		"iat":  time.Now().Unix(),
 		"exp":  time.Now().Add(time.Hour).Unix(),
 	})
 	return token.SignedString(secret)
