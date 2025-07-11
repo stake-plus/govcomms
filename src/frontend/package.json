@@ -17,6 +17,7 @@
     "@walletconnect/sign-client": "^2.21.4",
     "react": "18.2.0",
     "react-dom": "18.2.0",
+    "react-markdown": "^9.0.1",
     "react-router-dom": "^7.6.3",
     "styled-components": "^6.1.1"
   },

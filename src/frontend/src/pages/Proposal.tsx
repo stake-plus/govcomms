@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Identicon from '@polkadot/react-identicon';
+import ReactMarkdown from 'react-markdown';
 import { api } from '../utils/api';
 import { getAuth, clearAuth, formatAddress } from '../utils/auth';
 import { ProposalData } from '../types';
@@ -47,9 +48,23 @@ function Proposal() {
     navigate('/');
   };
 
-  const formatTime = (timestamp: string) => {
-    const date = new Date(timestamp);
-    return date.toLocaleString();
+  const formatTime = (timestamp: string | null | undefined) => {
+    if (!timestamp) {
+      return 'Unknown time';
+    }
+    try {
+      const date = new Date(timestamp);
+      
+      if (isNaN(date.getTime())) {
+        console.error('Invalid date format:', timestamp);
+        return 'Unknown time';
+      }
+      
+      return date.toLocaleString();
+    } catch (e) {
+      console.error('Date parsing error:', e, timestamp);
+      return 'Unknown time';
+    }
   };
 
   if (!auth) return null;
@@ -90,7 +105,7 @@ function Proposal() {
         </div>
       </header>
 
-      <div className="proposal-content">
+      <div className="proposal-content-wide">
         <section className="proposal-info">
           <h2>Referendum #{data.proposal.ref_id}</h2>
           {data.proposal.title && <h3>{data.proposal.title}</h3>}
@@ -108,12 +123,14 @@ function Proposal() {
               <p className="no-messages">No messages yet. Be the first to start the discussion!</p>
             ) : (
               data.messages.map((message) => (
-                <div key={message.id} className={`message ${message.internal ? 'internal' : ''}`}>
+                <div key={message.ID} className={`message ${message.Internal ? 'internal' : ''}`}>
                   <div className="message-header">
-                    <span className="message-author">{formatAddress(message.author)}</span>
-                    <span className="message-time">{formatTime(message.created_at)}</span>
+                    <span className="message-author">{formatAddress(message.Author)}</span>
+                    <span className="message-time">{formatTime(message.CreatedAt)}</span>
                   </div>
-                  <div className="message-body">{message.body}</div>
+                  <div className="message-body markdown-content">
+                    <ReactMarkdown>{message.Body}</ReactMarkdown>
+                  </div>
                 </div>
               ))
             )}
@@ -122,13 +139,16 @@ function Proposal() {
 
         <section className="message-input-section">
           <h3>Send Message</h3>
+          <div className="markdown-hint">
+            <span>You can use **bold**, *italic*, `code`, [links](url), and more markdown formatting.</span>
+          </div>
           <form onSubmit={handleSendMessage}>
             <textarea
               className="message-textarea"
-              placeholder="Type your message here..."
+              placeholder="Type your message here... (Markdown supported)"
               value={messageBody}
               onChange={(e) => setMessageBody(e.target.value)}
-              rows={5}
+              rows={10}
               disabled={sendMessageMutation.isPending}
             />
             <button 

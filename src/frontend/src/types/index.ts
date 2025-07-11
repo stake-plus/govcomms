@@ -4,11 +4,11 @@ export interface AuthToken {
 }
 
 export interface Message {
-  id: number;
-  author: string;
-  body: string;
-  created_at: string;
-  internal?: boolean;
+  ID: number;
+  Author: string;
+  Body: string;
+  CreatedAt: string;
+  Internal?: boolean;
 }
 
 export interface ProposalInfo {

@@ -16,6 +16,6 @@ export const clearAuth = () => {
 };
 
 export const formatAddress = (address: string): string => {
-  if (address.length <= 16) return address;
+  if (!address || address.length <= 16) return address || '';
   return `${address.slice(0, 8)}...${address.slice(-8)}`;
 };
