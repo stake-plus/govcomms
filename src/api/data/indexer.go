@@ -66,12 +66,10 @@ func storageKey(pallet, item string, keys ...[]byte) string {
 
 func storageKeyWithHash(pallet, item string, refID uint32) string {
 	key := append(twox128([]byte(pallet)), twox128([]byte(item))...)
-
 	// Encode referendum ID and hash it
 	idBytes := make([]byte, 4)
 	binary.LittleEndian.PutUint32(idBytes, refID)
 	hashedID := append(twox64(idBytes), idBytes...)
-
 	key = append(key, hashedID...)
 	return "0x" + hex.EncodeToString(key)
 }
@@ -93,7 +91,6 @@ func getReferendumCount(ws *websocket.Conn) (uint32, error) {
 	if err := ws.WriteJSON(req); err != nil {
 		return 0, err
 	}
-
 	var rsp rpcResp
 	if err := ws.ReadJSON(&rsp); err != nil {
 		return 0, err
@@ -101,7 +98,6 @@ func getReferendumCount(ws *websocket.Conn) (uint32, error) {
 	if rsp.Error != nil {
 		return 0, fmt.Errorf("RPC %d: %s", rsp.Error.Code, rsp.Error.Message)
 	}
-
 	var hexVal string
 	if err := json.Unmarshal(rsp.Result, &hexVal); err != nil {
 		return 0, err
@@ -109,7 +105,6 @@ func getReferendumCount(ws *websocket.Conn) (uint32, error) {
 	if len(hexVal) < 3 {
 		return 0, nil
 	}
-
 	raw, err := hex.DecodeString(hexVal[2:])
 	if err != nil {
 		return 0, err
@@ -117,7 +112,6 @@ func getReferendumCount(ws *websocket.Conn) (uint32, error) {
 	if len(raw) < 4 {
 		return 0, fmt.Errorf("unexpected storage length: %d", len(raw))
 	}
-
 	return binary.LittleEndian.Uint32(raw[:4]), nil
 }
 
@@ -130,11 +124,9 @@ func getReferendumInfo(ws *websocket.Conn, refID uint32) (map[string]interface{}
 		Method:  "state_getStorage",
 		Params:  []interface{}{key, nil},
 	}
-
 	if err := ws.WriteJSON(req); err != nil {
 		return nil, err
 	}
-
 	var rsp rpcResp
 	if err := ws.ReadJSON(&rsp); err != nil {
 		return nil, err
@@ -142,18 +134,13 @@ func getReferendumInfo(ws *websocket.Conn, refID uint32) (map[string]interface{}
 	if rsp.Error != nil {
 		return nil, fmt.Errorf("RPC error: %s", rsp.Error.Message)
 	}
-
 	var hexVal string
 	if err := json.Unmarshal(rsp.Result, &hexVal); err != nil {
 		return nil, err
 	}
-	if hexVal == "" || hexVal == "0x" {
-		return nil, nil // No referendum info
-	}
 
-	// Log raw data for debugging
-	if refID%50 == 0 {
-		log.Printf("indexer polkadot: ref %d raw data: %s", refID, hexVal)
+	if hexVal == "" || hexVal == "0x" || hexVal == "null" {
+		return nil, nil // No referendum info
 	}
 
 	// Decode the SCALE encoded data
@@ -162,88 +149,136 @@ func getReferendumInfo(ws *websocket.Conn, refID uint32) (map[string]interface{}
 		return nil, err
 	}
 
+	// Log for debugging active refs
+	if len(raw) > 0 {
+		log.Printf("indexer polkadot: ref %d has data, first byte (variant): %d", refID, raw[0])
+	}
+
 	// Parse the referendum info
-	return decodeReferendumInfo(raw)
+	return decodeReferendumInfo(raw, refID)
 }
 
-func decodeReferendumInfo(data []byte) (map[string]interface{}, error) {
+func decodeReferendumInfo(data []byte, refID uint32) (map[string]interface{}, error) {
 	if len(data) == 0 {
 		return nil, nil
 	}
 
 	result := make(map[string]interface{})
+	offset := 0
 
 	// First byte is the enum variant
-	variant := data[0]
+	if offset >= len(data) {
+		return nil, fmt.Errorf("data too short")
+	}
+	variant := data[offset]
+	offset++
 
 	switch variant {
 	case 0: // Ongoing
 		result["status"] = "Ongoing"
 
-		// Track is at offset 1, u16 little-endian
-		if len(data) >= 3 {
-			track := binary.LittleEndian.Uint16(data[1:3])
-			result["track"] = uint16(track)
+		// Decode track (u16)
+		if offset+2 > len(data) {
+			return result, nil
 		}
+		track := binary.LittleEndian.Uint16(data[offset : offset+2])
+		result["track"] = track
+		offset += 2
 
-		// For now, let's extract what we can from the raw data
-		// Look for potential account IDs (32 bytes) in the data
-		for i := 1; i < len(data)-32; i++ {
-			// Simple heuristic: look for non-zero 32-byte sequences
-			if data[i] != 0 && i+32 < len(data) {
-				possibleAccount := data[i : i+32]
-				// Check if it looks like an account (not all zeros)
-				nonZero := false
-				for _, b := range possibleAccount {
-					if b != 0 {
-						nonZero = true
-						break
-					}
+		// The structure for Ongoing is complex:
+		// - track: u16
+		// - origin: RuntimeOrigin (enum, variable size)
+		// - proposal: Bounded<CallOf<T, I>, T::Preimages> (variable size)
+		// - enactment: DispatchTime<BlockNumberFor<T>> (enum)
+		// - submitted: BlockNumberFor<T> (u32)
+		// - submission_deposit: Deposit<T::AccountId, BalanceOf<T, I>>
+		// - decision_deposit: Option<Deposit<T::AccountId, BalanceOf<T, I>>>
+		// - deciding: Option<DecidingStatus<BlockNumberFor<T>>>
+		// - tally: Tally<T::Votes, T::Currency>
+		// - in_queue: bool
+		// - alarm: Option<AlarmData>
+
+		// Try to find the submitter by looking for account ID patterns
+		// Account IDs are 32 bytes and typically appear after some known patterns
+		for i := offset; i <= len(data)-32; i++ {
+			// Look for potential account ID
+			candidate := data[i : i+32]
+
+			// Check if this could be an account ID
+			nonZero := false
+			allFF := true
+			zeroCount := 0
+
+			for _, b := range candidate {
+				if b != 0 {
+					nonZero = true
 				}
-				if nonZero {
-					result["submitter"] = "0x" + hex.EncodeToString(possibleAccount)
-					break
+				if b != 0xFF {
+					allFF = false
 				}
+				if b == 0 {
+					zeroCount++
+				}
+			}
+
+			// Heuristics for valid account ID:
+			// - Has some non-zero bytes
+			// - Not all 0xFF
+			// - Not mostly zeros (less than 28 zeros out of 32)
+			if nonZero && !allFF && zeroCount < 28 {
+				result["submitter"] = "0x" + hex.EncodeToString(candidate)
+				break
 			}
 		}
 
 	case 1: // Approved
 		result["status"] = "Approved"
-		if len(data) >= 5 {
-			endBlockVal := binary.LittleEndian.Uint32(data[1:5])
-			result["endBlock"] = endBlockVal
+		// Structure: since: BlockNumberFor<T>, submission_deposit: Option<Deposit>, decision_deposit: Option<Deposit>
+		// Read since block (u32)
+		if offset+4 <= len(data) {
+			since := binary.LittleEndian.Uint32(data[offset : offset+4])
+			result["endBlock"] = since
 		}
 
 	case 2: // Rejected
 		result["status"] = "Rejected"
-		if len(data) >= 5 {
-			endBlockVal := binary.LittleEndian.Uint32(data[1:5])
-			result["endBlock"] = endBlockVal
+		// Structure: since: BlockNumberFor<T>, submission_deposit: Option<Deposit>, decision_deposit: Option<Deposit>
+		// Read since block (u32)
+		if offset+4 <= len(data) {
+			since := binary.LittleEndian.Uint32(data[offset : offset+4])
+			result["endBlock"] = since
 		}
 
 	case 3: // Cancelled
 		result["status"] = "Cancelled"
-		if len(data) >= 5 {
-			endBlockVal := binary.LittleEndian.Uint32(data[1:5])
-			result["endBlock"] = endBlockVal
+		// Structure: since: BlockNumberFor<T>, submission_deposit: Option<Deposit>, decision_deposit: Option<Deposit>
+		// Read since block (u32)
+		if offset+4 <= len(data) {
+			since := binary.LittleEndian.Uint32(data[offset : offset+4])
+			result["endBlock"] = since
 		}
 
 	case 4: // TimedOut
 		result["status"] = "TimedOut"
-		if len(data) >= 5 {
-			endBlockVal := binary.LittleEndian.Uint32(data[1:5])
-			result["endBlock"] = endBlockVal
+		// Structure: since: BlockNumberFor<T>, submission_deposit: Option<Deposit>, decision_deposit: Option<Deposit>
+		// Read since block (u32)
+		if offset+4 <= len(data) {
+			since := binary.LittleEndian.Uint32(data[offset : offset+4])
+			result["endBlock"] = since
 		}
 
 	case 5: // Killed
 		result["status"] = "Killed"
-		if len(data) >= 5 {
-			endBlockVal := binary.LittleEndian.Uint32(data[1:5])
-			result["endBlock"] = endBlockVal
+		// Structure: since: BlockNumberFor<T>
+		// Read since block (u32)
+		if offset+4 <= len(data) {
+			since := binary.LittleEndian.Uint32(data[offset : offset+4])
+			result["endBlock"] = since
 		}
 
 	default:
 		result["status"] = "Unknown"
+		log.Printf("Unknown referendum variant: %d", variant)
 	}
 
 	return result, nil
@@ -256,11 +291,9 @@ func getCurrentBlock(ws *websocket.Conn) (uint64, error) {
 		Method:  "chain_getHeader",
 		Params:  []interface{}{},
 	}
-
 	if err := ws.WriteJSON(req); err != nil {
 		return 0, err
 	}
-
 	var rsp rpcResp
 	if err := ws.ReadJSON(&rsp); err != nil {
 		return 0, err
@@ -268,18 +301,15 @@ func getCurrentBlock(ws *websocket.Conn) (uint64, error) {
 	if rsp.Error != nil {
 		return 0, fmt.Errorf("RPC error: %s", rsp.Error.Message)
 	}
-
 	var header struct {
 		Number string `json:"number"`
 	}
 	if err := json.Unmarshal(rsp.Result, &header); err != nil {
 		return 0, err
 	}
-
 	// Parse hex number
 	blockNum := new(big.Int)
 	blockNum.SetString(header.Number[2:], 16)
-
 	return blockNum.Uint64(), nil
 }
 
@@ -307,25 +337,27 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 		log.Printf("indexer polkadot: failed to fetch count: %v", err)
 		return
 	}
-	log.Printf("indexer polkadot: chain reports %d referenda", cnt)
+	log.Printf("indexer polkadot: chain reports %d referenda total", cnt)
 
 	// Check what we have in database
 	var dbCount int64
 	db.Model(&types.Proposal{}).Where("network_id = ?", 1).Count(&dbCount)
 	log.Printf("indexer polkadot: database has %d proposals", dbCount)
 
-	// Process recent referenda (last 100)
-	startFrom := uint32(0)
-	if cnt > 100 {
-		startFrom = cnt - 100
-	}
-
+	// For now, let's try to get the most recent referenda that might still be active
+	// We'll scan backwards from the latest referendum
 	updated := 0
 	created := 0
 	skipped := 0
 	errors := 0
+	found := 0
 
-	for i := startFrom; i < cnt; i++ {
+	startFrom := cnt - 1
+	endAt := uint32(0)
+
+	log.Printf("indexer polkadot: scanning referenda from %d down to %d", startFrom, endAt)
+
+	for i := startFrom; i >= endAt && found < 20; i-- {
 		select {
 		case <-ctx.Done():
 			return
@@ -339,20 +371,23 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 			errors++
 			continue
 		}
+
 		if info == nil {
 			skipped++
+			if i%10 == 0 {
+				log.Printf("indexer polkadot: ref %d has no data (not active)", i)
+			}
 			continue
 		}
 
-		// Log first few referendum info
-		if i < startFrom+5 {
-			log.Printf("indexer polkadot: ref %d info: %+v", i, info)
-		}
+		found++
+		log.Printf("indexer polkadot: ref %d info: %+v", i, info)
 
 		// Extract data from info map
 		status, _ := info["status"].(string)
 		track, _ := info["track"].(uint16)
 		submitter, _ := info["submitter"].(string)
+		origin, _ := info["origin"].(string)
 
 		if status == "" {
 			status = "Unknown"
@@ -370,6 +405,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 				Status:    status,
 				TrackID:   track,
 				Submitter: submitter,
+				Origin:    origin,
 				Approved:  status == "Approved",
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
@@ -384,28 +420,37 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 				log.Printf("indexer polkadot: failed to create proposal %d: %v", i, err)
 			} else {
 				created++
-				log.Printf("indexer polkadot: created proposal %d with status %s", i, status)
+				log.Printf("indexer polkadot: created proposal %d with status %s, track %d", i, status, track)
+			}
+
+			// Also create the proposal participant entry for the submitter
+			if proposal.Submitter != "Unknown" && proposal.Submitter != "" {
+				participant := types.ProposalParticipant{
+					ProposalID: proposal.ID,
+					Address:    proposal.Submitter,
+				}
+				db.Create(&participant)
 			}
 		} else if err == nil {
 			// Update existing
 			changed := false
-
 			if proposal.Status != status && status != "" {
 				log.Printf("indexer polkadot: updating ref %d status from %s to %s", i, proposal.Status, status)
 				proposal.Status = status
 				changed = true
 			}
-
 			if track > 0 && proposal.TrackID != track {
 				proposal.TrackID = track
 				changed = true
 			}
-
 			if submitter != "" && submitter != proposal.Submitter && proposal.Submitter == "Unknown" {
 				proposal.Submitter = submitter
 				changed = true
 			}
-
+			if origin != "" && proposal.Origin != origin {
+				proposal.Origin = origin
+				changed = true
+			}
 			if status == "Approved" && !proposal.Approved {
 				proposal.Approved = true
 				changed = true
@@ -424,17 +469,17 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 		}
 
 		// Progress logging
-		if i%20 == 0 && i > startFrom {
-			log.Printf("indexer polkadot: processed %d/%d referenda (created: %d, updated: %d, skipped: %d, errors: %d)",
-				i-startFrom, cnt-startFrom, created, updated, skipped, errors)
+		if (startFrom-i) > 0 && (startFrom-i)%20 == 0 {
+			log.Printf("indexer polkadot: scanned %d referenda, found %d active (created: %d, updated: %d, skipped: %d, errors: %d)",
+				startFrom-i, found, created, updated, skipped, errors)
 		}
 
 		// Small delay
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	log.Printf("indexer polkadot: sync complete - created %d, updated %d, skipped %d, errors %d proposals",
-		created, updated, skipped, errors)
+	log.Printf("indexer polkadot: sync complete - found %d active, created %d, updated %d, skipped %d, errors %d proposals",
+		found, created, updated, skipped, errors)
 }
 
 // IndexerService runs the indexer periodically
