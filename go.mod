@@ -7,25 +7,25 @@ toolchain go1.24.2
 require (
 	// Crypto
 	github.com/ChainSafe/go-schnorrkel v1.1.0
+	// Discord
+	github.com/bwmarrin/discordgo v0.29.0
 	// HTTP
 	github.com/gin-gonic/gin v1.10.1
-
 	// JWT & misc
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/google/uuid v1.6.0
-
 	// Substrate stack
 	github.com/itering/scale.go v1.9.23 // indirect
 	github.com/itering/substrate-api-rpc v0.8.2
 	github.com/mr-tron/base58 v1.2.0
-
 	// Cache
 	github.com/redis/go-redis/v9 v9.11.0
-
 	// Storage
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.30.0
 )
+
+require github.com/gin-contrib/cors v1.7.6
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect

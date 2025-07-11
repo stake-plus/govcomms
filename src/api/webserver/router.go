@@ -1,14 +1,23 @@
 package webserver
 
 import (
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"gorm.io/gorm"
-
 	"github.com/stake-plus/polkadot-gov-comms/src/api/config"
+	"gorm.io/gorm"
 )
 
 func attachRoutes(r *gin.Engine, cfg config.Config, db *gorm.DB, rdb *redis.Client) {
+	// Add CORS middleware
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"http://localhost:3000", "https://govcomms.chaosdao.org"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+	}))
+
 	authH := NewAuth(rdb, []byte(cfg.JWTSecret))
 	msgH := NewMessages(db, rdb)
 	voteH := NewVotes(db)
@@ -21,7 +30,6 @@ func attachRoutes(r *gin.Engine, cfg config.Config, db *gorm.DB, rdb *redis.Clie
 		secured := v1.Use(JWTMiddleware([]byte(cfg.JWTSecret)))
 		secured.POST("/messages", msgH.Create)
 		secured.GET("/messages/:net/:id", msgH.List)
-
 		secured.POST("/votes", voteH.Cast)
 		secured.GET("/votes/:net/:id", voteH.Summary)
 	}
