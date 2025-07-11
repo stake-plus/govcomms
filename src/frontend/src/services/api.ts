@@ -8,9 +8,8 @@ class ApiService {
   }
 
   private async request(endpoint: string, options: RequestInit = {}) {
-    const headers: HeadersInit = {
+    const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      ...options.headers,
     };
 
     if (this.token) {
@@ -19,7 +18,10 @@ class ApiService {
 
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
-      headers,
+      headers: {
+        ...headers,
+        ...options.headers,
+      },
     });
 
     if (!response.ok) {

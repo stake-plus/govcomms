@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { WalletConnect } from './WalletConnect';
-import { MessageList } from './MessageList';
-import { MessageInput } from './MessageInput';
-import { api } from '../services/api';
+import { WalletConnect } from 'components/WalletConnect';
+import { MessageList } from 'components/MessageList';
+import { MessageInput } from 'components/MessageInput';
+import { api } from 'services/api';
 
 interface ProposalViewProps {
   network: string;
@@ -88,7 +88,7 @@ export function ProposalView({ network, referendumId }: ProposalViewProps) {
       <MessageList messages={data?.messages || []} />
       
       <MessageInput
-        onSend={(message) => sendMessage.mutate(message)}
+        onSend={(message: string) => sendMessage.mutate(message)}
         disabled={sendMessage.isPending}
       />
     </div>

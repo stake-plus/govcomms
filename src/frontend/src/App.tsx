@@ -1,8 +1,8 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, useParams } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ProposalView } from './components/ProposalView';
-import { Home } from './components/Home';
+import { ProposalView } from 'components/ProposalView';
+import { Home } from 'components/Home';
 import './App.css';
 
 const queryClient = new QueryClient();
