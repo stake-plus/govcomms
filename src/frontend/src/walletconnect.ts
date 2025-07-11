@@ -1,5 +1,6 @@
 // src/frontend/src/walletconnect.ts
-import SignClient, { SessionTypes } from "@walletconnect/sign-client";
+import SignClient from "@walletconnect/sign-client";
+import type { SessionTypes } from "@walletconnect/types";
 
 /**
  * Initialise a WalletConnect Sign v2 client.
@@ -20,7 +21,15 @@ export async function signWithWalletConnect(
 ) {
   if (!client) throw new Error("WalletConnect client not initialised");
 
-  const chainId = session.namespaces.polkadot.chains[0]; // e.g.  "polkadot:91b171bb158e2d3848fa23a9f1c25182"
+  const polkadotNs = session.namespaces?.polkadot;
+  const chains = polkadotNs?.chains;
+
+  if (!chains || chains.length === 0) {
+    throw new Error("Polkadot namespace missing or has no chains in WalletConnect session");
+  }
+
+  const chainId = chains[0]; // e.g. "polkadot:91b171bb158e2d3848fa23a9f1c25182"
+
   const request = {
     topic: session.topic,
     chainId,

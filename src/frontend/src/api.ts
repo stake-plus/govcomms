@@ -1,7 +1,7 @@
 import { ofetch } from 'ofetch';
 
 export const api = ofetch.create({
-  baseURL: import.meta.env.VITE_API ?? 'https://api.gcs.example.com/v1',
+  baseURL: import.meta.env.VITE_API ?? 'http://127.0.0.1:443/v1',
   retry: 0
 });
 

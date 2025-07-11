@@ -4,8 +4,6 @@
     "module": "ESNext",
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
     "jsx": "react-jsx",
-
-    /* —— Key fixes —— */
     "moduleResolution": "node",
     "baseUrl": "./src",
 
