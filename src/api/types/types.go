@@ -3,7 +3,7 @@ package types
 import "time"
 
 //
-// ─── NETWORKS / RPC ENDPOINTS ────────────────────────────────────────────────
+// ─── NETWORKS / RPC ENDPOINTS ──────────────────────────────────────────────────
 //
 
 type Network struct {
@@ -22,18 +22,30 @@ type RPC struct {
 }
 
 //
-// ─── GOVERNANCE ──────────────────────────────────────────────────────────────
+// ─── GOVERNANCE ────────────────────────────────────────────────────────────────
 //
 
 type Proposal struct {
-	ID        uint64 `gorm:"primaryKey"`
-	NetworkID uint8  `gorm:"index;not null"`
-	RefID     uint64 `gorm:"not null"`
-	Submitter string `gorm:"size:64;not null"`
-	Title     string `gorm:"size:255"`
-	Status    string `gorm:"size:32"`
-	EndBlock  uint64
-	CreatedAt time.Time
+	ID            uint64    `gorm:"primaryKey"`
+	NetworkID     uint8     `gorm:"index;not null"`
+	RefID         uint64    `gorm:"not null"`
+	Submitter     string    `gorm:"size:64;not null"`
+	Title         string    `gorm:"size:255"`
+	Status        string    `gorm:"size:32"`
+	TrackID       uint16    `gorm:"index"`
+	Origin        string    `gorm:"size:64"`
+	Enactment     string    `gorm:"size:32"`
+	Submitted     uint64    // Block number when submitted
+	SubmittedAt   time.Time // Timestamp when submitted
+	DecisionStart uint64    // Block number when decision started
+	DecisionEnd   uint64    // Block number when decision ends
+	ConfirmStart  uint64    // Block number when confirm started
+	ConfirmEnd    uint64    // Block number when confirm ends
+	Approved      bool
+	Support       string `gorm:"size:64"` // Percentage or amount
+	Approval      string `gorm:"size:64"` // Percentage
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type ProposalParticipant struct {
@@ -62,6 +74,8 @@ type Vote struct {
 	VoterAddr  string `gorm:"size:64;not null"`
 	Choice     string `gorm:"size:8;not null"` // aye|nay|abstain
 	Conviction int16
+	Balance    string `gorm:"size:64"` // Vote weight/balance
+	CreatedAt  time.Time
 }
 
 type EmailSubscription struct {
@@ -69,4 +83,19 @@ type EmailSubscription struct {
 	MessageID uint64
 	Email     string `gorm:"size:256;not null"`
 	SentAt    *time.Time
+}
+
+// Track information for different referendum tracks
+type Track struct {
+	ID                 uint16 `gorm:"primaryKey"`
+	NetworkID          uint8  `gorm:"index;not null"`
+	Name               string `gorm:"size:64;not null"`
+	MaxDeciding        uint32
+	DecisionDeposit    string `gorm:"size:64"`
+	PreparePeriod      uint32
+	DecisionPeriod     uint32
+	ConfirmPeriod      uint32
+	MinEnactmentPeriod uint32
+	MinApproval        string `gorm:"size:32"`
+	MinSupport         string `gorm:"size:32"`
 }
