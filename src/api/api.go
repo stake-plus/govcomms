@@ -25,19 +25,15 @@ var allModels = []interface{}{
 
 func migrate(db *gorm.DB) {
 	err := db.AutoMigrate(allModels...)
-
 	if err == nil {
 		return // first attempt succeeded
 	}
-
 	log.Printf("auto‑migrate failed (%v) – dropping & recreating schema", err)
-
 	_ = db.Migrator().DropTable(
 		"email_subscriptions", "messages", "votes",
 		"proposal_participants", "proposals", "dao_members",
 		"rpcs", "networks",
 	)
-
 	if err2 := db.AutoMigrate(allModels...); err2 != nil {
 		log.Fatalf("migrate after drop: %v", err2)
 	}
@@ -45,7 +41,6 @@ func migrate(db *gorm.DB) {
 
 func main() {
 	cfg := config.Load()
-
 	db := data.MustMySQL(cfg.MySQLDSN)
 	migrate(db)
 
@@ -55,8 +50,9 @@ func main() {
 	}).Error
 	_ = db.FirstOrCreate(&types.RPC{}, types.RPC{
 		NetworkID: 1,
-		URL:       "wss://polkadot.dotters.network",
-		Active:    true,
+		// Use the canonical parity endpoint – dotters has occasional state issues
+		URL:    "wss://rpc.polkadot.io",
+		Active: true,
 	}).Error
 
 	rdb := data.MustRedis(cfg.RedisURL)
@@ -66,7 +62,6 @@ func main() {
 	go data.StartIndexer(ctx, db, cfg)
 
 	router := webserver.New(cfg, db, rdb)
-
 	httpSrv := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: router,

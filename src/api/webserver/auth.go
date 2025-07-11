@@ -1,12 +1,15 @@
 package webserver
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+
 	"github.com/stake-plus/polkadot-gov-comms/src/api/data"
 )
 
@@ -19,6 +22,14 @@ func NewAuth(rdb *redis.Client, secret []byte) Auth {
 	return Auth{rdb: rdb, jwtSecret: secret}
 }
 
+func randomHex32() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "0x" + hex.EncodeToString(b), nil
+}
+
 func (a Auth) Challenge(c *gin.Context) {
 	var req struct {
 		Address string `json:"address" binding:"required"`
@@ -29,13 +40,27 @@ func (a Auth) Challenge(c *gin.Context) {
 		return
 	}
 
-	nonce := uuid.NewString()
-	if err := data.SetNonce(c, a.rdb, req.Address, nonce); err != nil {
-		log.Printf("Failed to set nonce for %s: %v", req.Address, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"err": "Failed to create challenge"})
+	var nonce string
+	var err error
+	switch req.Method {
+	case "polkadotjs", "walletconnect":
+		// Polkadot{.js} expects raw HEX data for signRaw → generate 32‑byte hex
+		nonce, err = randomHex32()
+	default:
+		// Air‑gap remark still fine with UUID (human readable)
+		nonce = uuid.NewString()
+	}
+	if err != nil {
+		log.Printf("Failed to create nonce: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"err": "failed to create challenge"})
 		return
 	}
 
+	if err := data.SetNonce(c, a.rdb, req.Address, nonce); err != nil {
+		log.Printf("Failed to set nonce for %s: %v", req.Address, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"err": "failed to create challenge"})
+		return
+	}
 	log.Printf("Challenge created for %s with nonce %s", req.Address, nonce)
 	c.JSON(http.StatusOK, gin.H{"nonce": nonce})
 }
@@ -69,7 +94,8 @@ func (a Auth) Verify(c *gin.Context) {
 			return
 		}
 		token, err = issueJWT(req.Address, a.jwtSecret)
-	default:
+
+	default: // polkadotjs | walletconnect
 		log.Printf("Verifying signature for %s with nonce %s", req.Address, nonce)
 		if err := verifySignature(req.Address, req.Signature, nonce); err != nil {
 			log.Printf("Signature verification failed for %s: %v", req.Address, err)
@@ -84,7 +110,6 @@ func (a Auth) Verify(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
-
 	log.Printf("Successfully authenticated %s", req.Address)
 	c.JSON(http.StatusOK, gin.H{"token": token})
 }

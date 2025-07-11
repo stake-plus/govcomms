@@ -54,6 +54,15 @@ func verifySignature(addr, sigHex, nonce string) error {
 		return fmt.Errorf("invalid signature length: %d", len(sigBytes))
 	}
 
+	// Convert nonce → bytes (supports both raw hex "0x..." and plain string fallback)
+	msgBytes, err := hex.DecodeString(strip0x(nonce))
+	if err != nil {
+		msgBytes = []byte(nonce)
+	}
+
+	// Polkadot{.js} hashes the raw bytes once (BLAKE2‑256) before signing
+	msgHash := blake2b.Sum256(msgBytes)
+
 	// Prepare keys
 	var pkRaw [32]byte
 	copy(pkRaw[:], pubKeyBytes)
@@ -71,11 +80,7 @@ func verifySignature(addr, sigHex, nonce string) error {
 		return err
 	}
 
-	// The polkadot{.js} signRaw implementation hashes the payload (BLAKE2‑256)
-	// before signing. Re‑hash the nonce here to verify correctly.
-	msgHash := blake2b.Sum256([]byte(nonce))
 	ctx := schnorrkel.NewSigningContext([]byte("substrate"), msgHash[:])
-
 	valid, err := pk.Verify(&sig, ctx)
 	if err != nil {
 		log.Printf("Signature verification error: %v", err)
