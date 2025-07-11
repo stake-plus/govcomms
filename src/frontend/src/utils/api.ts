@@ -1,4 +1,11 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:443/v1';
+const API_URL = import.meta.env.VITE_API_URL || 'https://govcomms-api.chaosdao.org/v1';
+
+export class ApiError extends Error {
+  constructor(public status: number, message: string, public details?: any) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
 
 export const api = {
   challenge: async (address: string, method: string) => {
@@ -7,7 +14,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ address, method })
     });
-    if (!res.ok) throw new Error('Failed to get challenge');
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ err: 'Failed to get challenge' }));
+      throw new ApiError(res.status, error.err || 'Failed to get challenge');
+    }
     return res.json();
   },
 
@@ -17,7 +27,13 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ address, method, signature })
     });
-    if (!res.ok) throw new Error('Failed to verify');
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ err: 'Failed to verify' }));
+      if (res.status === 401) {
+        throw new ApiError(res.status, 'Not authorized for this referendum', error);
+      }
+      throw new ApiError(res.status, error.err || 'Failed to verify');
+    }
     return res.json();
   },
 
@@ -25,7 +41,10 @@ export const api = {
     const res = await fetch(`${API_URL}/messages/${network}/${refId}`, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
-    if (!res.ok) throw new Error('Failed to fetch messages');
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ err: 'Failed to fetch messages' }));
+      throw new ApiError(res.status, error.err || 'Failed to fetch messages');
+    }
     return res.json();
   },
 
@@ -38,7 +57,10 @@ export const api = {
       },
       body: JSON.stringify({ proposalRef, body, emails: [] })
     });
-    if (!res.ok) throw new Error('Failed to send message');
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ err: 'Failed to send message' }));
+      throw new ApiError(res.status, error.err || 'Failed to send message');
+    }
     return res.json();
   }
 };

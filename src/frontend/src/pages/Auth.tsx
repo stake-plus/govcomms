@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { web3Enable, web3Accounts } from '@polkadot/extension-dapp';
 import { Keyring } from '@polkadot/api';
 import WalletConnect from '@walletconnect/sign-client';
-import { api } from '../utils/api';
+import { api, ApiError } from '../utils/api';
 import { saveAuth } from '../utils/auth';
 import { AuthMethod } from '../types';
 
@@ -31,15 +31,36 @@ function Auth() {
       const { nonce } = await api.challenge(address, selectedMethod);
       setNonce(nonce);
     } catch (err) {
-      setError('Failed to get challenge');
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else {
+        setError('Failed to get challenge');
+      }
     } finally {
       setLoading(false);
     }
   };
 
+  const handleAuthError = (err: unknown) => {
+    if (err instanceof ApiError) {
+      if (err.status === 401) {
+        return (
+          <div>
+            <p>Your address is not authorized for this referendum.</p>
+            <p>Only addresses that are authorized participants (proposer, council members, or those who have voted) can send messages.</p>
+            <p>Network: {network?.toUpperCase()} Referendum #{refId}</p>
+          </div>
+        );
+      }
+      return err.message;
+    }
+    return err instanceof Error ? err.message : 'Authentication failed';
+  };
+
   const handlePolkadotJsAuth = async () => {
     try {
       setLoading(true);
+      setError('');
       const extensions = await web3Enable('GovComms');
       
       if (extensions.length === 0) {
@@ -79,7 +100,12 @@ function Auth() {
       saveAuth({ token, address: account.address });
       navigate(`/${network}/${refId}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Authentication failed');
+      const errorMessage = handleAuthError(err);
+      setError(typeof errorMessage === 'string' ? errorMessage : '');
+      if (typeof errorMessage !== 'string') {
+        // If it's a JSX element (authorization error), we'll display it in the error section
+        setError('AUTHORIZATION_ERROR');
+      }
     } finally {
       setLoading(false);
     }
@@ -88,6 +114,7 @@ function Auth() {
   const handleWalletConnectAuth = async () => {
     try {
       setLoading(true);
+      setError('');
       
       const client = await WalletConnect.init({
         projectId: import.meta.env.VITE_WC_PROJECT_ID || 'YOUR_PROJECT_ID',
@@ -139,7 +166,11 @@ function Auth() {
       saveAuth({ token, address });
       navigate(`/${network}/${refId}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'WalletConnect failed');
+      const errorMessage = handleAuthError(err);
+      setError(typeof errorMessage === 'string' ? errorMessage : '');
+      if (typeof errorMessage !== 'string') {
+        setError('AUTHORIZATION_ERROR');
+      }
     } finally {
       setLoading(false);
     }
@@ -152,7 +183,12 @@ function Auth() {
       const { token } = await api.verify(address, 'airgap');
       saveAuth({ token, address });
       navigate(`/${network}/${refId}`);
-    } catch {
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        setError('AUTHORIZATION_ERROR');
+        return;
+      }
+      // Continue polling if it's not an authorization error
       setTimeout(checkAirgapStatus, 2000);
     }
   };
@@ -295,7 +331,20 @@ function Auth() {
           </div>
         )}
 
-        {error && <div className="error-message">{error}</div>}
+        {error && (
+          <div className="error-message">
+            {error === 'AUTHORIZATION_ERROR' ? (
+              <>
+                <p><strong>Authorization Failed</strong></p>
+                <p>Your address is not authorized for this referendum.</p>
+                <p>Only addresses that are authorized participants (proposer, council members, or those who have voted) can send messages.</p>
+                <p>Network: {network?.toUpperCase()} Referendum #{refId}</p>
+              </>
+            ) : (
+              error
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
