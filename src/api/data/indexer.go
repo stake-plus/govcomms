@@ -218,7 +218,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 		}
 
 		// Small delay to not hammer the node
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond)
 	}
 
 	log.Printf("indexer polkadot: sync complete - created %d, updated %d, errors %d proposals",
