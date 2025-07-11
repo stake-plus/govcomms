@@ -14,7 +14,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stake-plus/polkadot-gov-comms/src/api/types"
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // ---------- tiny JSON-RPC helpers ----------
@@ -49,9 +48,12 @@ func twox128(data []byte) []byte {
 	return out
 }
 
-func blake2128(data []byte) []byte {
-	// For simplicity, using a placeholder. In production, use proper blake2b
-	return twox128(data) // This is incorrect but works for demo
+func twox64(data []byte) []byte {
+	hash := xxhash.NewS64(0)
+	hash.Write(data)
+	out := make([]byte, 8)
+	binary.LittleEndian.PutUint64(out, hash.Sum64())
+	return out
 }
 
 func storageKey(pallet, item string, keys ...[]byte) string {
@@ -59,6 +61,18 @@ func storageKey(pallet, item string, keys ...[]byte) string {
 	for _, k := range keys {
 		key = append(key, k...)
 	}
+	return "0x" + hex.EncodeToString(key)
+}
+
+func storageKeyWithHash(pallet, item string, refID uint32) string {
+	key := append(twox128([]byte(pallet)), twox128([]byte(item))...)
+
+	// Encode referendum ID and hash it
+	idBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(idBytes, refID)
+	hashedID := append(twox64(idBytes), idBytes...)
+
+	key = append(key, hashedID...)
 	return "0x" + hex.EncodeToString(key)
 }
 
@@ -105,6 +119,134 @@ func getReferendumCount(ws *websocket.Conn) (uint32, error) {
 	}
 
 	return binary.LittleEndian.Uint32(raw[:4]), nil
+}
+
+func getReferendumInfo(ws *websocket.Conn, refID uint32) (map[string]interface{}, error) {
+	key := storageKeyWithHash("Referenda", "ReferendumInfoFor", refID)
+
+	req := rpcReq{
+		Jsonrpc: "2.0",
+		ID:      uint64(refID + 1000),
+		Method:  "state_getStorage",
+		Params:  []interface{}{key, nil},
+	}
+
+	if err := ws.WriteJSON(req); err != nil {
+		return nil, err
+	}
+
+	var rsp rpcResp
+	if err := ws.ReadJSON(&rsp); err != nil {
+		return nil, err
+	}
+	if rsp.Error != nil {
+		return nil, fmt.Errorf("RPC error: %s", rsp.Error.Message)
+	}
+
+	var hexVal string
+	if err := json.Unmarshal(rsp.Result, &hexVal); err != nil {
+		return nil, err
+	}
+	if hexVal == "" || hexVal == "0x" {
+		return nil, nil // No referendum info
+	}
+
+	// Log raw data for debugging
+	if refID%50 == 0 {
+		log.Printf("indexer polkadot: ref %d raw data: %s", refID, hexVal)
+	}
+
+	// Decode the SCALE encoded data
+	raw, err := hex.DecodeString(hexVal[2:])
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse the referendum info
+	return decodeReferendumInfo(raw)
+}
+
+func decodeReferendumInfo(data []byte) (map[string]interface{}, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+
+	result := make(map[string]interface{})
+
+	// First byte is the enum variant
+	variant := data[0]
+
+	switch variant {
+	case 0: // Ongoing
+		result["status"] = "Ongoing"
+
+		// Track is at offset 1, u16 little-endian
+		if len(data) >= 3 {
+			track := binary.LittleEndian.Uint16(data[1:3])
+			result["track"] = uint16(track)
+		}
+
+		// For now, let's extract what we can from the raw data
+		// Look for potential account IDs (32 bytes) in the data
+		for i := 1; i < len(data)-32; i++ {
+			// Simple heuristic: look for non-zero 32-byte sequences
+			if data[i] != 0 && i+32 < len(data) {
+				possibleAccount := data[i : i+32]
+				// Check if it looks like an account (not all zeros)
+				nonZero := false
+				for _, b := range possibleAccount {
+					if b != 0 {
+						nonZero = true
+						break
+					}
+				}
+				if nonZero {
+					result["submitter"] = "0x" + hex.EncodeToString(possibleAccount)
+					break
+				}
+			}
+		}
+
+	case 1: // Approved
+		result["status"] = "Approved"
+		if len(data) >= 5 {
+			endBlockVal := binary.LittleEndian.Uint32(data[1:5])
+			result["endBlock"] = endBlockVal
+		}
+
+	case 2: // Rejected
+		result["status"] = "Rejected"
+		if len(data) >= 5 {
+			endBlockVal := binary.LittleEndian.Uint32(data[1:5])
+			result["endBlock"] = endBlockVal
+		}
+
+	case 3: // Cancelled
+		result["status"] = "Cancelled"
+		if len(data) >= 5 {
+			endBlockVal := binary.LittleEndian.Uint32(data[1:5])
+			result["endBlock"] = endBlockVal
+		}
+
+	case 4: // TimedOut
+		result["status"] = "TimedOut"
+		if len(data) >= 5 {
+			endBlockVal := binary.LittleEndian.Uint32(data[1:5])
+			result["endBlock"] = endBlockVal
+		}
+
+	case 5: // Killed
+		result["status"] = "Killed"
+		if len(data) >= 5 {
+			endBlockVal := binary.LittleEndian.Uint32(data[1:5])
+			result["endBlock"] = endBlockVal
+		}
+
+	default:
+		result["status"] = "Unknown"
+	}
+
+	return result, nil
 }
 
 func getCurrentBlock(ws *websocket.Conn) (uint64, error) {
@@ -167,60 +309,132 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 	}
 	log.Printf("indexer polkadot: chain reports %d referenda", cnt)
 
-	// Get existing proposal count to check if we need to sync
-	var existingCount int64
-	db.Model(&types.Proposal{}).Where("network_id = ?", 1).Count(&existingCount)
+	// Check what we have in database
+	var dbCount int64
+	db.Model(&types.Proposal{}).Where("network_id = ?", 1).Count(&dbCount)
+	log.Printf("indexer polkadot: database has %d proposals", dbCount)
 
-	if existingCount >= int64(cnt) {
-		log.Printf("indexer polkadot: already have all %d proposals", cnt)
-		return
+	// Process recent referenda (last 100)
+	startFrom := uint32(0)
+	if cnt > 100 {
+		startFrom = cnt - 100
 	}
 
-	// Batch insert missing proposals
-	log.Printf("indexer polkadot: syncing %d missing proposals", int64(cnt)-existingCount)
+	updated := 0
+	created := 0
+	skipped := 0
+	errors := 0
 
-	batchSize := 100
-	proposals := make([]types.Proposal, 0, batchSize)
-
-	for i := uint32(0); i < cnt; i++ {
+	for i := startFrom; i < cnt; i++ {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
 
-		// Check if already exists
-		var exists bool
-		db.Model(&types.Proposal{}).
-			Select("count(*) > 0").
-			Where("network_id = ? AND ref_id = ?", 1, i).
-			Find(&exists)
+		// Get referendum info
+		info, err := getReferendumInfo(ws, i)
+		if err != nil {
+			log.Printf("indexer polkadot: error fetching ref %d: %v", i, err)
+			errors++
+			continue
+		}
+		if info == nil {
+			skipped++
+			continue
+		}
 
-		if !exists {
-			proposals = append(proposals, types.Proposal{
+		// Log first few referendum info
+		if i < startFrom+5 {
+			log.Printf("indexer polkadot: ref %d info: %+v", i, info)
+		}
+
+		// Extract data from info map
+		status, _ := info["status"].(string)
+		track, _ := info["track"].(uint16)
+		submitter, _ := info["submitter"].(string)
+
+		if status == "" {
+			status = "Unknown"
+		}
+
+		// Update database
+		var proposal types.Proposal
+		err = db.Where("network_id = ? AND ref_id = ?", 1, i).First(&proposal).Error
+
+		if err == gorm.ErrRecordNotFound {
+			// Create new
+			proposal = types.Proposal{
 				NetworkID: 1,
 				RefID:     uint64(i),
-				Status:    "Unknown",
-				Submitter: "Unknown",
+				Status:    status,
+				TrackID:   track,
+				Submitter: submitter,
+				Approved:  status == "Approved",
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
-			})
+			}
+
+			// Set default submitter if empty
+			if proposal.Submitter == "" {
+				proposal.Submitter = "Unknown"
+			}
+
+			if err := db.Create(&proposal).Error; err != nil {
+				log.Printf("indexer polkadot: failed to create proposal %d: %v", i, err)
+			} else {
+				created++
+				log.Printf("indexer polkadot: created proposal %d with status %s", i, status)
+			}
+		} else if err == nil {
+			// Update existing
+			changed := false
+
+			if proposal.Status != status && status != "" {
+				log.Printf("indexer polkadot: updating ref %d status from %s to %s", i, proposal.Status, status)
+				proposal.Status = status
+				changed = true
+			}
+
+			if track > 0 && proposal.TrackID != track {
+				proposal.TrackID = track
+				changed = true
+			}
+
+			if submitter != "" && submitter != proposal.Submitter && proposal.Submitter == "Unknown" {
+				proposal.Submitter = submitter
+				changed = true
+			}
+
+			if status == "Approved" && !proposal.Approved {
+				proposal.Approved = true
+				changed = true
+			}
+
+			if changed {
+				proposal.UpdatedAt = time.Now()
+				if err := db.Save(&proposal).Error; err != nil {
+					log.Printf("indexer polkadot: failed to update proposal %d: %v", i, err)
+				} else {
+					updated++
+				}
+			}
+		} else {
+			log.Printf("indexer polkadot: database error for ref %d: %v", i, err)
 		}
 
-		// Insert batch when full or at end
-		if len(proposals) >= batchSize || (i == cnt-1 && len(proposals) > 0) {
-			if err := db.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(proposals, batchSize).Error; err != nil {
-				log.Printf("indexer polkadot: batch insert error: %v", err)
-			} else {
-				log.Printf("indexer polkadot: inserted batch of %d proposals", len(proposals))
-			}
-			proposals = proposals[:0] // Clear slice
+		// Progress logging
+		if i%20 == 0 && i > startFrom {
+			log.Printf("indexer polkadot: processed %d/%d referenda (created: %d, updated: %d, skipped: %d, errors: %d)",
+				i-startFrom, cnt-startFrom, created, updated, skipped, errors)
 		}
+
+		// Small delay
+		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Final count
-	db.Model(&types.Proposal{}).Where("network_id = ?", 1).Count(&existingCount)
-	log.Printf("indexer polkadot: sync complete, total proposals: %d", existingCount)
+	log.Printf("indexer polkadot: sync complete - created %d, updated %d, skipped %d, errors %d proposals",
+		created, updated, skipped, errors)
 }
 
 // IndexerService runs the indexer periodically
