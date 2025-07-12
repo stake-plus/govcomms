@@ -21,6 +21,7 @@ var allModels = []interface{}{
 	&types.Proposal{}, &types.ProposalParticipant{},
 	&types.Message{}, &types.DaoMember{}, &types.Vote{},
 	&types.EmailSubscription{}, &types.Track{}, &types.Preimage{},
+	&types.DiscordChannel{}, // Add this
 }
 
 func migrate(db *gorm.DB) {

@@ -236,15 +236,32 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 					}
 				}
 
-				// Store preimage info if available
-				if info.Proposal != "" && info.ProposalLen > 0 {
-					preimage := types.Preimage{
-						Hash:      info.Proposal,
-						Length:    info.ProposalLen,
-						CreatedAt: time.Now(),
-					}
-					if err := db.FirstOrCreate(&preimage, types.Preimage{Hash: info.Proposal}).Error; err != nil {
-						log.Printf("indexer polkadot: failed to store preimage: %v", err)
+				// Add this after creating the proposal in the database
+				if info.Proposal != "" && info.ProposalLen > 0 && created > 0 {
+					// Decode preimage to extract participants
+					preimageDecoder := polkadot.NewPreimageDecoder(client)
+					addresses, err := preimageDecoder.FetchAndDecodePreimage(
+						info.Proposal,
+						info.ProposalLen,
+						uint32(proposal.Submitted),
+					)
+					if err != nil {
+						log.Printf("Failed to decode preimage for ref %d: %v", refID, err)
+					} else {
+						// Add all addresses as participants
+						for _, addr := range addresses {
+							if addr != "" && addr != proposal.Submitter {
+								participant := types.ProposalParticipant{
+									ProposalID: proposal.ID,
+									Address:    addr,
+									Role:       "recipient",
+								}
+								if err := db.Create(&participant).Error; err != nil {
+									log.Printf("Failed to create recipient participant: %v", err)
+								}
+							}
+						}
+						log.Printf("Added %d recipients from preimage for ref %d", len(addresses), refID)
 					}
 				}
 			}

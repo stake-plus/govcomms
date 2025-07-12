@@ -33,4 +33,12 @@ func attachRoutes(r *gin.Engine, cfg config.Config, db *gorm.DB, rdb *redis.Clie
 		secured.POST("/votes", voteH.Cast)
 		secured.GET("/votes/:net/:id", voteH.Summary)
 	}
+
+	// Add in attachRoutes function
+	admin := v1.Group("/admin")
+	admin.Use(JWTMiddleware([]byte(cfg.JWTSecret)))
+	{
+		adminH := NewAdmin(db)
+		admin.POST("/discord/channel", adminH.SetDiscordChannel)
+	}
 }

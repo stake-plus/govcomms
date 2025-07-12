@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -27,16 +28,18 @@ type DiscordBot struct {
 	feedbackCommand string
 	apiURL          string
 	guildID         string
+	channels        map[uint8]string // networkID -> channelID
 }
 
 type StreamMessage struct {
-	Proposal string `json:"proposal"`
-	Author   string `json:"author"`
-	Body     string `json:"body"`
-	Time     int64  `json:"time"`
-	ID       uint64 `json:"id"`
-	Network  string `json:"network"`
-	RefID    uint64 `json:"ref_id"`
+	Proposal  string
+	Author    string
+	Body      string
+	Time      int64
+	ID        uint64
+	Network   string
+	NetworkID uint8
+	RefID     uint64
 }
 
 func NewDiscordBot(token, feedbackRoleID, guildID, apiURL string, rdb *redis.Client, db *gorm.DB) (*DiscordBot, error) {
@@ -53,9 +56,16 @@ func NewDiscordBot(token, feedbackRoleID, guildID, apiURL string, rdb *redis.Cli
 		feedbackCommand: "!feedback",
 		apiURL:          apiURL,
 		guildID:         guildID,
+		channels:        make(map[uint8]string),
 	}
 
-	dg.AddHandler(bot.messageCreate)
+	// Load channel configuration
+	if err := bot.loadChannelConfig(); err != nil {
+		return nil, err
+	}
+
+	dg.AddHandler(bot.handleMessageCreate)
+	dg.AddHandler(bot.handleReady)
 	dg.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsMessageContent
 
 	return bot, nil
@@ -69,7 +79,33 @@ func (b *DiscordBot) Stop() error {
 	return b.session.Close()
 }
 
-func (b *DiscordBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
+func (b *DiscordBot) loadChannelConfig() error {
+	var channels []types.DiscordChannel
+	if err := b.db.Where("guild_id = ? AND channel_type = ?", b.guildID, "referenda").Find(&channels).Error; err != nil {
+		return err
+	}
+
+	for _, ch := range channels {
+		b.channels[ch.NetworkID] = ch.ChannelID
+	}
+
+	if len(b.channels) == 0 {
+		log.Println("No channels configured, using defaults")
+	}
+
+	return nil
+}
+
+func (b *DiscordBot) handleReady(s *discordgo.Session, event *discordgo.Ready) {
+	log.Printf("Discord bot logged in as %s", event.User.Username)
+
+	// Setup channels if not configured
+	if len(b.channels) == 0 {
+		b.setupDefaultChannels(s)
+	}
+}
+
+func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if m.Author.ID == s.State.User.ID {
 		return
 	}
@@ -211,11 +247,134 @@ func (b *DiscordBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCre
 		},
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
-
 	s.ChannelMessageSendEmbed(m.ChannelID, embed)
 }
 
+func (b *DiscordBot) setupDefaultChannels(s *discordgo.Session) {
+	channels, err := s.GuildChannels(b.guildID)
+	if err != nil {
+		log.Printf("Failed to get guild channels: %v", err)
+		return
+	}
+
+	for _, ch := range channels {
+		lowerName := strings.ToLower(ch.Name)
+
+		if strings.Contains(lowerName, "polkadot") && strings.Contains(lowerName, "referendum") {
+			b.channels[1] = ch.ID
+			b.saveChannelConfig(1, ch.ID)
+			log.Printf("Set Polkadot referenda channel: %s", ch.Name)
+		} else if strings.Contains(lowerName, "kusama") && strings.Contains(lowerName, "referendum") {
+			b.channels[2] = ch.ID
+			b.saveChannelConfig(2, ch.ID)
+			log.Printf("Set Kusama referenda channel: %s", ch.Name)
+		}
+	}
+}
+
+func (b *DiscordBot) saveChannelConfig(networkID uint8, channelID string) {
+	channel := types.DiscordChannel{
+		GuildID:     b.guildID,
+		ChannelID:   channelID,
+		NetworkID:   networkID,
+		ChannelType: "referenda",
+		CreatedAt:   time.Now(),
+	}
+	b.db.Create(&channel)
+}
+
+func (b *DiscordBot) findReferendumThread(channelID string, refNum int) (*discordgo.Channel, error) {
+	// Get all threads in the channel
+	threads, err := b.session.GuildThreadsActive(b.guildID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Pattern to match thread names like "1655: title" or "1655 - title"
+	pattern := fmt.Sprintf(`^%d\s*[:|-]`, refNum)
+	re := regexp.MustCompile(pattern)
+
+	for _, thread := range threads.Threads {
+		if thread.ParentID == channelID && re.MatchString(thread.Name) {
+			return thread, nil
+		}
+	}
+
+	// Check archived threads
+	before := ""
+	limit := 100
+
+	for {
+		archived, err := b.session.ThreadsArchived(channelID, before, limit)
+		if err != nil {
+			break
+		}
+
+		for _, thread := range archived.Threads {
+			if re.MatchString(thread.Name) {
+				// Unarchive the thread
+				_, err := b.session.ChannelEdit(thread.ID, &discordgo.ChannelEdit{
+					Archived: boolPtr(false),
+				})
+				if err == nil {
+					return thread, nil
+				}
+			}
+		}
+
+		if len(archived.Threads) < limit {
+			break
+		}
+
+		// Get the last thread ID for pagination
+		if len(archived.Threads) > 0 {
+			before = archived.Threads[len(archived.Threads)-1].ID
+		}
+	}
+
+	return nil, fmt.Errorf("thread not found for referendum %d", refNum)
+}
+
+func (b *DiscordBot) postToReferendumThread(msg StreamMessage) error {
+	// Get the channel for this network
+	channelID, exists := b.channels[uint8(msg.NetworkID)]
+	if !exists {
+		return fmt.Errorf("no channel configured for network %d", msg.NetworkID)
+	}
+
+	// Find the thread
+	thread, err := b.findReferendumThread(channelID, int(msg.RefID))
+	if err != nil {
+		return fmt.Errorf("find thread: %w", err)
+	}
+
+	// Format the message
+	embed := &discordgo.MessageEmbed{
+		Author: &discordgo.MessageEmbedAuthor{
+			Name: fmt.Sprintf("Message from %s", formatAddress(msg.Author)),
+		},
+		Description: msg.Body,
+		Color:       0x0099ff,
+		Timestamp:   time.Unix(msg.Time, 0).Format(time.RFC3339),
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: fmt.Sprintf("Via GovComms | %s #%d", msg.Network, msg.RefID),
+		},
+		Fields: []*discordgo.MessageEmbedField{
+			{
+				Name:  "Continue Discussion",
+				Value: fmt.Sprintf("[Click here](%s/%s/%d)", b.apiURL, msg.Network, msg.RefID),
+			},
+		},
+	}
+
+	_, err = b.session.ChannelMessageSendEmbed(thread.ID, embed)
+	return err
+}
+
 func (b *DiscordBot) listenForMessages(ctx context.Context) {
+	// Initialize last ID to start from the beginning
+	lastID := "0"
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -223,18 +382,23 @@ func (b *DiscordBot) listenForMessages(ctx context.Context) {
 		default:
 			// Read from Redis stream
 			streams, err := b.rdb.XRead(ctx, &redis.XReadArgs{
-				Streams: []string{"govcomms.messages", "$"},
+				Streams: []string{"govcomms.messages", lastID},
+				Count:   10,
 				Block:   5 * time.Second,
 			}).Result()
 
-			if err != nil && err != redis.Nil {
-				log.Printf("Error reading stream: %v", err)
+			if err != nil {
+				if err != redis.Nil {
+					log.Printf("Error reading stream: %v", err)
+				}
 				continue
 			}
 
 			for _, stream := range streams {
 				for _, msg := range stream.Messages {
 					var m StreamMessage
+
+					// Parse message fields
 					if proposal, ok := msg.Values["proposal"].(string); ok {
 						m.Proposal = proposal
 					}
@@ -251,6 +415,11 @@ func (b *DiscordBot) listenForMessages(ctx context.Context) {
 					}
 					if network, ok := msg.Values["network"].(string); ok {
 						m.Network = network
+						if network == "polkadot" {
+							m.NetworkID = 1
+						} else if network == "kusama" {
+							m.NetworkID = 2
+						}
 					}
 					if refIDStr, ok := msg.Values["ref_id"].(string); ok {
 						if r, err := strconv.ParseUint(refIDStr, 10, 64); err == nil {
@@ -258,62 +427,30 @@ func (b *DiscordBot) listenForMessages(ctx context.Context) {
 						}
 					}
 
-					// Post to appropriate Discord channel
-					b.postToDiscord(m)
+					// Post to Discord
+					if err := b.postToReferendumThread(m); err != nil {
+						log.Printf("Failed to post to Discord: %v", err)
+					} else {
+						log.Printf("Posted message to Discord for %s #%d", m.Network, m.RefID)
+					}
+
+					// Update last ID
+					lastID = msg.ID
 				}
 			}
 		}
 	}
 }
 
-func (b *DiscordBot) postToDiscord(msg StreamMessage) {
-	// Find the appropriate channel/thread for this referendum
-	channelName := fmt.Sprintf("ref-%s-%d", msg.Network, msg.RefID)
-
-	guilds := b.session.State.Guilds
-	var targetChannel *discordgo.Channel
-
-	for _, guild := range guilds {
-		channels, _ := b.session.GuildChannels(guild.ID)
-		for _, channel := range channels {
-			if strings.ToLower(channel.Name) == channelName {
-				targetChannel = channel
-				break
-			}
-		}
-		if targetChannel != nil {
-			break
-		}
+func formatAddress(addr string) string {
+	if len(addr) > 16 {
+		return addr[:8] + "..." + addr[len(addr)-8:]
 	}
+	return addr
+}
 
-	if targetChannel == nil {
-		log.Printf("Channel not found for %s", msg.Proposal)
-		return
-	}
-
-	// Format the address
-	shortAddr := msg.Author
-	if len(shortAddr) > 16 {
-		shortAddr = shortAddr[:8] + "..." + shortAddr[len(shortAddr)-8:]
-	}
-
-	// Create embed for the message
-	embed := &discordgo.MessageEmbed{
-		Author: &discordgo.MessageEmbedAuthor{
-			Name: fmt.Sprintf("Response from %s", shortAddr),
-		},
-		Description: msg.Body,
-		Color:       0x0099ff,
-		Timestamp:   time.Unix(msg.Time, 0).Format(time.RFC3339),
-		Footer: &discordgo.MessageEmbedFooter{
-			Text: fmt.Sprintf("Via GovComms | %s #%d", msg.Network, msg.RefID),
-		},
-	}
-
-	_, err := b.session.ChannelMessageSendEmbed(targetChannel.ID, embed)
-	if err != nil {
-		log.Printf("Failed to send message to Discord: %v", err)
-	}
+func boolPtr(b bool) *bool {
+	return &b
 }
 
 func main() {
@@ -341,6 +478,11 @@ func main() {
 	cfg := config.Load()
 	rdb := data.MustRedis(cfg.RedisURL)
 	db := data.MustMySQL(cfg.MySQLDSN)
+
+	// Add DiscordChannel to migration
+	if err := db.AutoMigrate(&types.DiscordChannel{}); err != nil {
+		log.Fatalf("Failed to migrate discord channels: %v", err)
+	}
 
 	bot, err := NewDiscordBot(token, feedbackRoleID, guildID, apiURL, rdb, db)
 	if err != nil {

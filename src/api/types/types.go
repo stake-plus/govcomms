@@ -117,3 +117,12 @@ type Preimage struct {
 	Deposit   string `gorm:"size:64"`
 	CreatedAt time.Time
 }
+
+type DiscordChannel struct {
+	ID          uint64 `gorm:"primaryKey"`
+	GuildID     string `gorm:"size:64;not null"`
+	ChannelID   string `gorm:"size:64;not null"`
+	NetworkID   uint8  `gorm:"not null"`
+	ChannelType string `gorm:"size:32;not null"` // "referenda", "feedback"
+	CreatedAt   time.Time
+}
