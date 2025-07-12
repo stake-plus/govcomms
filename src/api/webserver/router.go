@@ -66,18 +66,14 @@ func attachRoutes(r *gin.Engine, cfg config.Config, db *gorm.DB, rdb *redis.Clie
 		AllowCredentials: true,
 	}))
 
-	authH := NewAuth(rdb, []byte(cfg.JWTSecret), db)
-	msgH := NewMessages(db, rdb)
-	voteH := NewVotes(db)
-
 	// Create rate limiters
 	authLimiter := NewRateLimiter(5, 1*time.Minute)    // 5 auth attempts per minute
 	apiLimiter := NewRateLimiter(30, 1*time.Minute)    // 30 API calls per minute
 	messageLimiter := NewRateLimiter(5, 5*time.Minute) // 5 messages per 5 minutes
 
-	authH = NewAuth(rdb, []byte(cfg.JWTSecret), db)
-	msgH = NewMessages(db, rdb)
-	voteH = NewVotes(db)
+	authH := NewAuth(rdb, []byte(cfg.JWTSecret), db)
+	msgH := NewMessages(db, rdb)
+	voteH := NewVotes(db)
 
 	v1 := r.Group("/v1")
 	{
