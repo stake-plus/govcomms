@@ -3,6 +3,7 @@ package polkadot
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 
 	gsrpc "github.com/centrifuge/go-substrate-rpc-client/v4"
 	"github.com/centrifuge/go-substrate-rpc-client/v4/types"
@@ -13,6 +14,14 @@ import (
 type Client struct {
 	api      *gsrpc.SubstrateAPI
 	metadata *types.Metadata
+
+	// Cache for constants
+	constantsCache map[string]interface{}
+	constantsMu    sync.RWMutex
+
+	// SS58 prefix cache
+	ss58Prefix uint16
+	ss58Cached bool
 }
 
 // NewClient creates a new Polkadot client
@@ -28,10 +37,28 @@ func NewClient(url string) (*Client, error) {
 		return nil, fmt.Errorf("failed to get metadata: %w", err)
 	}
 
-	return &Client{
-		api:      api,
-		metadata: meta,
-	}, nil
+	client := &Client{
+		api:            api,
+		metadata:       meta,
+		constantsCache: make(map[string]interface{}),
+	}
+
+	// Pre-cache SS58 prefix
+	if prefix, err := client.GetSS58Prefix(); err == nil {
+		client.ss58Prefix = prefix
+		client.ss58Cached = true
+	}
+
+	return client, nil
+}
+
+// GetCachedSS58Prefix returns the cached SS58 prefix
+func (c *Client) GetCachedSS58Prefix() uint16 {
+	if c.ss58Cached {
+		return c.ss58Prefix
+	}
+	// Default to generic substrate prefix
+	return 42
 }
 
 // Close closes the connection
@@ -187,6 +214,7 @@ func (c *Client) GetReferendumInfoAt(refID uint32, blockHash string) (*Referendu
 	// Query storage at specific block
 	var raw types.StorageDataRaw
 	var hash types.Hash
+
 	err := codec.DecodeFromHex(blockHash, &hash)
 	if err != nil {
 		return nil, fmt.Errorf("decode block hash: %w", err)

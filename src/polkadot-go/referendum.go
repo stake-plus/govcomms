@@ -130,19 +130,78 @@ func createReferendumStorageKey(refID uint32) []byte {
 	return key
 }
 
-// accountIDToSS58 converts an AccountID to generic Substrate SS58 format (prefix 42)
-func accountIDToSS58(accountID types.AccountID) string {
-	// SS58 encoding with network prefix 42 for generic Substrate addresses
-	prefix := byte(42)
+// accountIDToSS58 converts an AccountID to SS58 format using chain's prefix
+func (c *Client) accountIDToSS58(accountID types.AccountID) string {
+	prefix := c.GetCachedSS58Prefix()
 
 	// Create the payload: prefix + accountID + checksum
 	payload := make([]byte, 0, 35)
-	payload = append(payload, prefix)
+
+	// For prefix > 63, we need to encode it differently
+	if prefix < 64 {
+		payload = append(payload, byte(prefix))
+	} else {
+		// For larger prefixes, use the extended format
+		payload = append(payload, 0x40|((byte(prefix>>8))&0x3f))
+		payload = append(payload, byte(prefix&0xff))
+	}
+
 	payload = append(payload, accountID[:]...)
 
 	// Calculate SS58 checksum
 	checksumInput := []byte("SS58PRE")
-	checksumInput = append(checksumInput, prefix)
+
+	// Add the correct prefix bytes for checksum
+	if prefix < 64 {
+		checksumInput = append(checksumInput, byte(prefix))
+	} else {
+		checksumInput = append(checksumInput, 0x40|((byte(prefix>>8))&0x3f))
+		checksumInput = append(checksumInput, byte(prefix&0xff))
+	}
+
+	checksumInput = append(checksumInput, accountID[:]...)
+	checksum := Blake2_256(checksumInput)
+
+	// Append first 2 bytes of checksum
+	payload = append(payload, checksum[0:2]...)
+
+	// Base58 encode
+	return base58.Encode(payload)
+}
+
+// Helper function for backwards compatibility
+func accountIDToSS58(accountID types.AccountID) string {
+	// Use generic substrate prefix for backwards compatibility
+	return accountIDToSS58WithPrefix(accountID, 42)
+}
+
+// accountIDToSS58WithPrefix converts with specific prefix
+func accountIDToSS58WithPrefix(accountID types.AccountID, prefix uint16) string {
+	// Create the payload: prefix + accountID + checksum
+	payload := make([]byte, 0, 35)
+
+	// For prefix > 63, we need to encode it differently
+	if prefix < 64 {
+		payload = append(payload, byte(prefix))
+	} else {
+		// For larger prefixes, use the extended format
+		payload = append(payload, 0x40|((byte(prefix>>8))&0x3f))
+		payload = append(payload, byte(prefix&0xff))
+	}
+
+	payload = append(payload, accountID[:]...)
+
+	// Calculate SS58 checksum
+	checksumInput := []byte("SS58PRE")
+
+	// Add the correct prefix bytes for checksum
+	if prefix < 64 {
+		checksumInput = append(checksumInput, byte(prefix))
+	} else {
+		checksumInput = append(checksumInput, 0x40|((byte(prefix>>8))&0x3f))
+		checksumInput = append(checksumInput, byte(prefix&0xff))
+	}
+
 	checksumInput = append(checksumInput, accountID[:]...)
 	checksum := Blake2_256(checksumInput)
 
@@ -196,6 +255,7 @@ func decodeLegacyReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, err
 			info.Submission.Who = "Unknown"
 			info.Submission.Amount = "0"
 		}
+
 		return info, nil
 	}
 
@@ -247,7 +307,6 @@ func decodeLegacyReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, err
 				var who types.AccountID
 				if err := decoder.Decode(&who); err == nil {
 					info.Submission.Who = accountIDToSS58(who)
-
 					var amount types.U128
 					if err := decoder.Decode(&amount); err == nil {
 						info.Submission.Amount = amount.String()
@@ -340,19 +399,14 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 	switch variant {
 	case 0: // Ongoing
 		return decodeOngoingReferendum(decoder, refID)
-
 	case 1: // Approved
 		return decodeFinishedReferendum(decoder, "Approved")
-
 	case 2: // Rejected
 		return decodeFinishedReferendum(decoder, "Rejected")
-
 	case 3: // Cancelled
 		return decodeFinishedReferendum(decoder, "Cancelled")
-
 	case 4: // TimedOut
 		return decodeFinishedReferendum(decoder, "TimedOut")
-
 	case 5: // Killed
 		info := &ReferendumInfo{
 			Status: "Killed",
@@ -368,7 +422,6 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		info.Submission.Who = "Unknown"
 		info.Submission.Amount = "0"
 		return info, nil
-
 	default:
 		return nil, fmt.Errorf("unknown referendum variant: %d", variant)
 	}
@@ -474,7 +527,6 @@ func decodeProposal(decoder *scale.Decoder, info *ReferendumInfo, refID uint32) 
 		}
 		info.Proposal = hash.Hex()
 		info.ProposalLen = uint32(length)
-
 	case 1: // Legacy
 		var hash types.Hash
 		if err := decoder.Decode(&hash); err != nil {
@@ -482,24 +534,20 @@ func decodeProposal(decoder *scale.Decoder, info *ReferendumInfo, refID uint32) 
 		}
 		info.Proposal = hash.Hex()
 		info.ProposalLen = 0
-
 	case 2: // Inline
 		var length types.UCompact
 		if err := decoder.Decode(&length); err != nil {
 			return fmt.Errorf("decode inline length: %w", err)
 		}
-
 		// UCompact stores the value as bytes, we need to extract it
 		// This is a workaround - ideally we'd have a method to get the uint64 value
 		callLen := uint32(0)
-
 		// Read the actual call data length from the stream
 		// Since we can't easily convert UCompact, let's read it as a U32
 		if err := decoder.Decode(&callLen); err != nil {
 			// If that fails, try a default length
 			callLen = 1024
 		}
-
 		callData := make([]byte, callLen)
 		if err := decoder.Read(callData); err != nil {
 			return fmt.Errorf("decode inline call: %w", err)
@@ -515,7 +563,6 @@ func decodeProposal(decoder *scale.Decoder, info *ReferendumInfo, refID uint32) 
 		}
 		info.Proposal = hash.Hex()
 		info.ProposalLen = 0
-
 	case 8, 9, 10: // Legacy format with hash only (Democracy era)
 		var hash types.Hash
 		if err := decoder.Decode(&hash); err != nil {
@@ -523,14 +570,12 @@ func decodeProposal(decoder *scale.Decoder, info *ReferendumInfo, refID uint32) 
 		}
 		info.Proposal = hash.Hex()
 		info.ProposalLen = 0
-
 	case 11, 12: // Democracy era with hash and maybe length
 		var hash types.Hash
 		if err := decoder.Decode(&hash); err != nil {
 			return fmt.Errorf("decode democracy v2 hash: %w", err)
 		}
 		info.Proposal = hash.Hex()
-
 		// Some versions include length
 		if proposalType == 12 {
 			var length types.U32
@@ -542,14 +587,12 @@ func decodeProposal(decoder *scale.Decoder, info *ReferendumInfo, refID uint32) 
 		} else {
 			info.ProposalLen = 0
 		}
-
 	case 13, 14: // Transition era formats
 		var hash types.Hash
 		if err := decoder.Decode(&hash); err != nil {
 			return fmt.Errorf("decode transition hash: %w", err)
 		}
 		info.Proposal = hash.Hex()
-
 		// Try to decode length, but don't fail if it's not there
 		var length types.U32
 		if err := decoder.Decode(&length); err == nil {
@@ -557,11 +600,9 @@ func decodeProposal(decoder *scale.Decoder, info *ReferendumInfo, refID uint32) 
 		} else {
 			info.ProposalLen = 0
 		}
-
 	default:
 		// For completely unknown types, try common patterns
 		log.Printf("Attempting to decode unknown proposal type %d for ref %d", proposalType, refID)
-
 		// Most proposal types have a hash as the first field
 		var hash types.Hash
 		if err := decoder.Decode(&hash); err != nil {
@@ -571,7 +612,6 @@ func decodeProposal(decoder *scale.Decoder, info *ReferendumInfo, refID uint32) 
 			info.ProposalLen = 0
 		} else {
 			info.Proposal = hash.Hex()
-
 			// Try to decode an optional length
 			var length types.U32
 			if err := decoder.Decode(&length); err == nil && uint32(length) < 1000000 {
@@ -652,6 +692,7 @@ func decodeDeciding(decoder *scale.Decoder, decision **DecisionStatus) error {
 
 	if hasDeciding == 1 {
 		*decision = &DecisionStatus{}
+
 		var since uint32
 		if err := decoder.Decode(&since); err != nil {
 			return fmt.Errorf("decode deciding since: %w", err)
@@ -679,6 +720,7 @@ func decodeDeciding(decoder *scale.Decoder, decision **DecisionStatus) error {
 // decodeTally decodes the tally information
 func decodeTally(decoder *scale.Decoder, tally *Tally) error {
 	var ayes, nays, support types.U128
+
 	if err := decoder.Decode(&ayes); err != nil {
 		return fmt.Errorf("decode ayes: %w", err)
 	}
@@ -715,8 +757,8 @@ func (c *Client) GetReferendumCount() (uint32, error) {
 	// Create storage key for Referenda.ReferendumCount
 	palletHash := Twox128([]byte("Referenda"))
 	storageHash := Twox128([]byte("ReferendumCount"))
-	key := append(palletHash, storageHash...)
 
+	key := append(palletHash, storageHash...)
 	storageKey := types.NewStorageKey(key)
 
 	var count types.U32
