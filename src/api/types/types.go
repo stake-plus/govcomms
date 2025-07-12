@@ -15,8 +15,16 @@ type Network struct {
 type NetworkRPC struct {
 	ID        uint32 `gorm:"primaryKey"`
 	NetworkID uint8
-	URL       string `gorm:"size:256;not null"`
-	Active    bool   `gorm:"default:true"`
+	URL       string  `gorm:"size:256;not null"`
+	Active    bool    `gorm:"default:true"`
+	Network   Network `gorm:"foreignKey:NetworkID;references:ID"`
+}
+
+// Settings
+type Setting struct {
+	ID    uint8  `gorm:"primaryKey"`
+	Name  string `gorm:"size:32;not null"`
+	Value string `gorm:"size:256;not null"`
 }
 
 // DAO members

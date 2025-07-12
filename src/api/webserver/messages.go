@@ -49,7 +49,6 @@ func (m Messages) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": "bad proposalRef"})
 		return
 	}
-
 	refID, _ := strconv.ParseUint(parts[1], 10, 64)
 	netID := uint8(1)
 	network := "polkadot"
@@ -76,7 +75,6 @@ func (m Messages) Create(c *gin.Context) {
 			}).Error
 		}
 	}
-
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
@@ -112,9 +110,9 @@ func (m Messages) Create(c *gin.Context) {
 
 	// If first message and we have Polkassembly client, post it
 	if msgCount == 1 && m.pa != nil {
-		frontendURL := os.Getenv("FRONTEND_URL")
+		frontendURL := data.GetSetting("gc_url")
 		if frontendURL == "" {
-			frontendURL = "https://govcomms.chaosdao.org"
+			frontendURL = "https://gc.reeeeeeeeee.io"
 		}
 		link := fmt.Sprintf("%s/%s/%d", frontendURL, network, refID)
 		content := fmt.Sprintf("%s\n\n[Continue discussion](%s)", msg.Body, link)
@@ -145,7 +143,6 @@ func (m Messages) Create(c *gin.Context) {
 func (m Messages) List(c *gin.Context) {
 	net := c.Param("net")
 	refNum, _ := strconv.ParseUint(c.Param("id"), 10, 64)
-
 	netID := uint8(1)
 	if net == "kusama" {
 		netID = 2

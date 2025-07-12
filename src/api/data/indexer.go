@@ -3,9 +3,11 @@ package data
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"log"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stake-plus/polkadot-gov-comms/src/api/types"
@@ -13,33 +15,162 @@ import (
 	"gorm.io/gorm"
 )
 
-// RunPolkadotIndexer indexes Polkadot referendum data
-func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
-	// Create client
-	client, err := polkadot.NewClient(rpcURL)
-	if err != nil {
-		log.Printf("indexer polkadot: failed to create client: %v", err)
-		return
-	}
-	defer client.Close()
+// NetworkIndexer handles indexing for a specific network
+type NetworkIndexer struct {
+	networkID   uint8
+	networkName string
+	rpcURLs     []string
+	db          *gorm.DB
+	client      *polkadot.Client
+	mu          sync.RWMutex
+	lastError   error
+	running     bool
+}
 
-	// Get current block
-	header, err := client.GetHeader(nil)
+// NewNetworkIndexer creates an indexer for a specific network
+func NewNetworkIndexer(networkID uint8, networkName string, db *gorm.DB) (*NetworkIndexer, error) {
+	ni := &NetworkIndexer{
+		networkID:   networkID,
+		networkName: networkName,
+		db:          db,
+	}
+
+	// Load RPC URLs for this network
+	if err := ni.loadRPCURLs(); err != nil {
+		return nil, err
+	}
+
+	if len(ni.rpcURLs) == 0 {
+		return nil, fmt.Errorf("no active RPC URLs found for network %s", networkName)
+	}
+
+	return ni, nil
+}
+
+func (ni *NetworkIndexer) loadRPCURLs() error {
+	var rpcs []types.NetworkRPC
+	err := ni.db.Where("network_id = ? AND active = ?", ni.networkID, true).Find(&rpcs).Error
 	if err != nil {
-		log.Printf("indexer polkadot: failed to get header: %v", err)
+		return err
+	}
+
+	ni.rpcURLs = make([]string, 0, len(rpcs))
+	for _, rpc := range rpcs {
+		ni.rpcURLs = append(ni.rpcURLs, rpc.URL)
+	}
+
+	return nil
+}
+
+func (ni *NetworkIndexer) connectToRPC() error {
+	var lastErr error
+
+	// Try each RPC URL until one succeeds
+	for _, rpcURL := range ni.rpcURLs {
+		log.Printf("Trying to connect to %s RPC: %s", ni.networkName, rpcURL)
+
+		client, err := polkadot.NewClient(rpcURL)
+		if err != nil {
+			lastErr = err
+			log.Printf("Failed to connect to %s: %v", rpcURL, err)
+			continue
+		}
+
+		// Test the connection
+		header, err := client.GetHeader(nil)
+		if err != nil {
+			client.Close()
+			lastErr = err
+			log.Printf("Failed to get header from %s: %v", rpcURL, err)
+			continue
+		}
+
+		log.Printf("Successfully connected to %s RPC at block %s", ni.networkName, header.Number)
+		ni.client = client
+		return nil
+	}
+
+	return fmt.Errorf("failed to connect to any RPC for %s: %v", ni.networkName, lastErr)
+}
+
+func (ni *NetworkIndexer) Run(ctx context.Context, interval time.Duration) {
+	ni.mu.Lock()
+	if ni.running {
+		ni.mu.Unlock()
 		return
 	}
+	ni.running = true
+	ni.mu.Unlock()
+
+	defer func() {
+		ni.mu.Lock()
+		ni.running = false
+		ni.mu.Unlock()
+		if ni.client != nil {
+			ni.client.Close()
+		}
+	}()
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	// Run immediately
+	ni.indexOnce(ctx)
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Printf("Stopping indexer for %s", ni.networkName)
+			return
+		case <-ticker.C:
+			ni.indexOnce(ctx)
+		}
+	}
+}
+
+func (ni *NetworkIndexer) indexOnce(ctx context.Context) {
+	// Ensure we have a connection
+	if ni.client == nil {
+		if err := ni.connectToRPC(); err != nil {
+			log.Printf("Failed to connect for %s: %v", ni.networkName, err)
+			ni.lastError = err
+			return
+		}
+	}
+
+	log.Printf("Starting indexing run for %s", ni.networkName)
+
+	// Run the indexing logic
+	if err := ni.runIndexing(ctx); err != nil {
+		log.Printf("Indexing error for %s: %v", ni.networkName, err)
+		ni.lastError = err
+
+		// Close client on error to force reconnection
+		if ni.client != nil {
+			ni.client.Close()
+			ni.client = nil
+		}
+	}
+}
+
+func (ni *NetworkIndexer) runIndexing(ctx context.Context) error {
+	// Get current block
+	header, err := ni.client.GetHeader(nil)
+	if err != nil {
+		return fmt.Errorf("failed to get header: %w", err)
+	}
+
 	currentBlock := header.Number
-	log.Printf("indexer polkadot: current block %s", currentBlock)
+	log.Printf("%s indexer: current block %s", ni.networkName, currentBlock)
 
 	// Get all referendum keys that actually exist
 	prefix := "0x" + polkadot.HexEncode(polkadot.Twox128([]byte("Referenda"))) + polkadot.HexEncode(polkadot.Twox128([]byte("ReferendumInfoFor")))
-	keys, err := client.GetKeys(prefix, nil)
+	keys, err := ni.client.GetKeys(prefix, nil)
 	if err != nil {
-		log.Printf("indexer polkadot: failed to get keys: %v", err)
-		return
+		return fmt.Errorf("failed to get keys: %w", err)
 	}
-	log.Printf("indexer polkadot: found %d referendum keys", len(keys))
+
+	log.Printf("%s indexer: found %d referendum keys", ni.networkName, len(keys))
 
 	// Extract referendum IDs from keys
 	existingRefs := make(map[uint32]bool)
@@ -67,7 +198,8 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 			}
 		}
 	}
-	log.Printf("indexer polkadot: found %d existing referenda", len(existingRefs))
+
+	log.Printf("%s indexer: found %d existing referenda", ni.networkName, len(existingRefs))
 
 	// Convert map to sorted slice for ordered processing
 	var refIDs []uint32
@@ -82,8 +214,8 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 
 	// Check what we have in database
 	var dbCount int64
-	db.Model(&types.Ref{}).Where("network_id = ?", 1).Count(&dbCount)
-	log.Printf("indexer polkadot: database has %d proposals", dbCount)
+	ni.db.Model(&types.Ref{}).Where("network_id = ?", ni.networkID).Count(&dbCount)
+	log.Printf("%s indexer: database has %d proposals", ni.networkName, dbCount)
 
 	created := 0
 	updated := 0
@@ -94,34 +226,34 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 	for _, refID := range refIDs {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		default:
 		}
 
 		processed++
 
 		// Get referendum info - the client handles historical lookups
-		info, err := client.GetReferendumInfo(refID)
+		info, err := ni.client.GetReferendumInfo(refID)
 		var ref types.Ref
-		dbErr := db.Where("network_id = ? AND ref_id = ?", 1, refID).First(&ref).Error
+		dbErr := ni.db.Where("network_id = ? AND ref_id = ?", ni.networkID, refID).First(&ref).Error
 
 		if err != nil {
 			// Only log errors for refs we expect to work
 			if !strings.Contains(err.Error(), "does not exist") {
-				log.Printf("indexer polkadot: failed to get info for ref %d: %v", refID, err)
+				log.Printf("%s indexer: failed to get info for ref %d: %v", ni.networkName, refID, err)
 			}
 			if dbErr == gorm.ErrRecordNotFound {
 				// Create with minimal info for cleared refs
 				ref = types.Ref{
 					RefID:     uint64(refID),
-					NetworkID: 1,
+					NetworkID: ni.networkID,
 					Status:    "Cleared",
 					Submitter: "Unknown",
 					CreatedAt: time.Now(),
 					UpdatedAt: time.Now(),
 				}
-				if err := db.Create(&ref).Error; err != nil {
-					log.Printf("indexer polkadot: failed to create ref %d: %v", refID, err)
+				if err := ni.db.Create(&ref).Error; err != nil {
+					log.Printf("%s indexer: failed to create ref %d: %v", ni.networkName, refID, err)
 					errors++
 				} else {
 					created++
@@ -132,7 +264,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 
 		// For finished referenda, always try to fetch historical data
 		if info.Status != "Ongoing" && (info.Submission.Who == "Unknown" || info.Origin == "") {
-			historicalInfo := fetchHistoricalReferendumInfo(client, refID, info)
+			historicalInfo := ni.fetchHistoricalReferendumInfo(refID, info)
 			if historicalInfo != nil {
 				info = historicalInfo
 			}
@@ -142,7 +274,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 		if dbErr == gorm.ErrRecordNotFound {
 			// Create new
 			ref = types.Ref{
-				NetworkID:    1,
+				NetworkID:    ni.networkID,
 				RefID:        uint64(refID),
 				Status:       info.Status,
 				TrackID:      info.Track,
@@ -199,11 +331,12 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 				ref.DecisionEnd = uint64(info.KilledAt)
 			}
 
-			if err := db.Create(&ref).Error; err != nil {
-				log.Printf("indexer polkadot: failed to create ref %d: %v", refID, err)
+			if err := ni.db.Create(&ref).Error; err != nil {
+				log.Printf("%s indexer: failed to create ref %d: %v", ni.networkName, refID, err)
 				errors++
 			} else {
 				created++
+
 				// Create proponents
 				proponents := []types.RefProponent{}
 
@@ -229,15 +362,15 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 
 				// Create proponents
 				for _, p := range proponents {
-					if err := db.Create(&p).Error; err != nil {
-						log.Printf("indexer polkadot: failed to create proponent: %v", err)
+					if err := ni.db.Create(&p).Error; err != nil {
+						log.Printf("%s indexer: failed to create proponent: %v", ni.networkName, err)
 					}
 				}
 
 				// Add this after creating the proposal in the database
 				if info.Proposal != "" && info.ProposalLen > 0 && created > 0 {
 					// Decode preimage to extract participants
-					preimageDecoder := polkadot.NewPreimageDecoder(client)
+					preimageDecoder := polkadot.NewPreimageDecoder(ni.client)
 					addresses, err := preimageDecoder.FetchAndDecodePreimage(
 						info.Proposal,
 						info.ProposalLen,
@@ -255,7 +388,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 									Role:    "recipient",
 									Active:  1,
 								}
-								if err := db.Create(&proponent).Error; err != nil {
+								if err := ni.db.Create(&proponent).Error; err != nil {
 									log.Printf("Failed to create recipient proponent: %v", err)
 								}
 							}
@@ -268,7 +401,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 			// Update existing if changed
 			changed := false
 			if ref.Status != info.Status && info.Status != "" {
-				log.Printf("indexer polkadot: updating ref %d status from %s to %s", refID, ref.Status, info.Status)
+				log.Printf("%s indexer: updating ref %d status from %s to %s", ni.networkName, refID, ref.Status, info.Status)
 				ref.Status = info.Status
 				changed = true
 			}
@@ -361,8 +494,8 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 
 			if changed {
 				ref.UpdatedAt = time.Now()
-				if err := db.Save(&ref).Error; err != nil {
-					log.Printf("indexer polkadot: failed to update ref %d: %v", refID, err)
+				if err := ni.db.Save(&ref).Error; err != nil {
+					log.Printf("%s indexer: failed to update ref %d: %v", ni.networkName, refID, err)
 					errors++
 				} else {
 					updated++
@@ -372,17 +505,19 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 
 		// Progress logging
 		if processed%100 == 0 {
-			log.Printf("indexer polkadot: processed %d referenda (created: %d, updated: %d, errors: %d)",
-				processed, created, updated, errors)
+			log.Printf("%s indexer: processed %d referenda (created: %d, updated: %d, errors: %d)",
+				ni.networkName, processed, created, updated, errors)
 		}
 	}
 
-	log.Printf("indexer polkadot: sync complete - processed %d, created %d, updated %d, errors %d refs",
-		processed, created, updated, errors)
+	log.Printf("%s indexer: sync complete - processed %d, created %d, updated %d, errors %d refs",
+		ni.networkName, processed, created, updated, errors)
+
+	return nil
 }
 
 // fetchHistoricalReferendumInfo tries to get referendum info from when it was ongoing
-func fetchHistoricalReferendumInfo(client *polkadot.Client, refID uint32, currentInfo *polkadot.ReferendumInfo) *polkadot.ReferendumInfo {
+func (ni *NetworkIndexer) fetchHistoricalReferendumInfo(refID uint32, currentInfo *polkadot.ReferendumInfo) *polkadot.ReferendumInfo {
 	// For all finished states, we want to look back to when they were Ongoing
 	var searchBlocks []uint64
 
@@ -419,13 +554,13 @@ func fetchHistoricalReferendumInfo(client *polkadot.Client, refID uint32, curren
 	// Try each block
 	for _, targetBlock := range searchBlocks {
 		// Get block hash for the target block
-		blockHash, err := client.GetBlockHash(&targetBlock)
+		blockHash, err := ni.client.GetBlockHash(&targetBlock)
 		if err != nil {
 			continue
 		}
 
 		// Get referendum info at that block
-		historicalInfo, err := client.GetReferendumInfoAt(refID, blockHash)
+		historicalInfo, err := ni.client.GetReferendumInfoAt(refID, blockHash)
 		if err != nil {
 			continue
 		}
@@ -449,20 +584,86 @@ func fetchHistoricalReferendumInfo(client *polkadot.Client, refID uint32, curren
 	return nil
 }
 
-// IndexerService runs the indexer periodically
-func IndexerService(ctx context.Context, db *gorm.DB, rpcURL string, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+// MultiNetworkIndexer manages multiple network indexers
+type MultiNetworkIndexer struct {
+	indexers map[uint8]*NetworkIndexer
+	db       *gorm.DB
+	mu       sync.RWMutex
+}
 
-	// Run once immediately
-	RunPolkadotIndexer(ctx, db, rpcURL)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			RunPolkadotIndexer(ctx, db, rpcURL)
-		}
+// NewMultiNetworkIndexer creates a new multi-network indexer
+func NewMultiNetworkIndexer(db *gorm.DB) *MultiNetworkIndexer {
+	return &MultiNetworkIndexer{
+		indexers: make(map[uint8]*NetworkIndexer),
+		db:       db,
 	}
+}
+
+// StartAll starts indexing for all configured networks
+func (mni *MultiNetworkIndexer) StartAll(ctx context.Context, interval time.Duration) error {
+	// Load all networks from database
+	var networks []types.Network
+	if err := mni.db.Find(&networks).Error; err != nil {
+		return fmt.Errorf("failed to load networks: %w", err)
+	}
+
+	// Create and start an indexer for each network
+	for _, network := range networks {
+		indexer, err := NewNetworkIndexer(network.ID, network.Name, mni.db)
+		if err != nil {
+			log.Printf("Failed to create indexer for %s: %v", network.Name, err)
+			continue
+		}
+
+		mni.mu.Lock()
+		mni.indexers[network.ID] = indexer
+		mni.mu.Unlock()
+
+		// Start indexer in its own goroutine
+		go func(idx *NetworkIndexer, netName string) {
+			log.Printf("Starting indexer for %s", netName)
+			idx.Run(ctx, interval)
+			log.Printf("Indexer for %s stopped", netName)
+		}(indexer, network.Name)
+	}
+
+	if len(mni.indexers) == 0 {
+		return fmt.Errorf("no indexers started")
+	}
+
+	log.Printf("Started %d network indexers", len(mni.indexers))
+	return nil
+}
+
+// GetStatus returns the status of all indexers
+func (mni *MultiNetworkIndexer) GetStatus() map[string]interface{} {
+	mni.mu.RLock()
+	defer mni.mu.RUnlock()
+
+	status := make(map[string]interface{})
+	for networkID, indexer := range mni.indexers {
+		indexer.mu.RLock()
+		status[fmt.Sprintf("network_%d", networkID)] = map[string]interface{}{
+			"name":      indexer.networkName,
+			"running":   indexer.running,
+			"lastError": indexer.lastError,
+		}
+		indexer.mu.RUnlock()
+	}
+
+	return status
+}
+
+// IndexerService runs the multi-network indexer service
+func IndexerService(ctx context.Context, db *gorm.DB, interval time.Duration) {
+	indexer := NewMultiNetworkIndexer(db)
+
+	if err := indexer.StartAll(ctx, interval); err != nil {
+		log.Printf("Failed to start indexer service: %v", err)
+		return
+	}
+
+	// Wait for context cancellation
+	<-ctx.Done()
+	log.Println("Indexer service stopping")
 }

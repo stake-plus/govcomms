@@ -7,6 +7,24 @@ DROP TABLE IF EXISTS refs;
 DROP TABLE IF EXISTS network_rpcs;
 DROP TABLE IF EXISTS dao_members;
 DROP TABLE IF EXISTS networks;
+DROP TABLE IF EXISTS settings;
+
+-- Settings
+CREATE TABLE IF NOT EXISTS `settings` (
+  `id` tinyint unsigned NOT NULL,
+  `name` varchar(32) NOT NULL,
+  `value` varchar(256) NOT NULL,
+  `active` tinyint NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO settings (id, name, value, active) VALUES
+    (,'site_name', 'REEEEEEEEEE DAO', 1),
+    (,'site_url', 'https://reeeeeeeeee.io/', 1),
+    (,'site_logo', 'https://reeeeeeeeee.io/images/logo.png', 1),
+    (,'gc_url', 'https://gc.reeeeeeeeee.io/', 1),
+    (,'gcapi_url', 'https://api.gc.reeeeeeeeee.io/', 1);
 
 -- Networks
 CREATE TABLE IF NOT EXISTS `networks` (
