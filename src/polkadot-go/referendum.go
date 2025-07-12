@@ -4,21 +4,13 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"math/big"
 
 	"github.com/centrifuge/go-substrate-rpc-client/v4/scale"
 	"github.com/centrifuge/go-substrate-rpc-client/v4/types"
 	"github.com/centrifuge/go-substrate-rpc-client/v4/types/codec"
 )
-
-// ClearedReferendumResponse represents the JSON response for a cleared referendum
-type ClearedReferendumResponse struct {
-	Approved  []interface{} `json:"Approved"`
-	Rejected  []interface{} `json:"Rejected"`
-	Cancelled []interface{} `json:"Cancelled"`
-	TimedOut  []interface{} `json:"TimedOut"`
-	Killed    []interface{} `json:"Killed"`
-}
 
 // GetReferendumInfo fetches and decodes referendum info
 func (c *Client) GetReferendumInfo(refID uint32) (*ReferendumInfo, error) {
@@ -36,11 +28,14 @@ func (c *Client) GetReferendumInfo(refID uint32) (*ReferendumInfo, error) {
 		return nil, fmt.Errorf("referendum %d does not exist", refID)
 	}
 
-	// Try to decode as ongoing referendum
-	info, err := decodeReferendumInfo(raw)
+	// Decode the referendum data
+	info, err := decodeReferendumInfo(raw, refID)
 	if err != nil {
-		// If decode fails, try as cleared referendum
-		return decodeFinishedReferendum(raw, refID)
+		// Log error for debugging but don't spam logs
+		if refID < 10 || refID > 1660 {
+			log.Printf("Failed to decode ref %d: %v", refID, err)
+		}
+		return nil, err
 	}
 
 	return info, nil
@@ -66,8 +61,8 @@ func createReferendumStorageKey(refID uint32) []byte {
 	return key
 }
 
-// decodeReferendumInfo decodes ongoing referendum data
-func decodeReferendumInfo(data []byte) (*ReferendumInfo, error) {
+// decodeReferendumInfo decodes referendum data based on the structure from the documentation
+func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 	decoder := scale.NewDecoder(bytes.NewReader(data))
 
 	// Read variant
@@ -82,7 +77,7 @@ func decodeReferendumInfo(data []byte) (*ReferendumInfo, error) {
 	case 0: // Ongoing
 		info.Status = "Ongoing"
 
-		// Track
+		// Track (u16)
 		var track uint16
 		if err := decoder.Decode(&track); err != nil {
 			return nil, fmt.Errorf("decode track: %w", err)
@@ -90,50 +85,93 @@ func decodeReferendumInfo(data []byte) (*ReferendumInfo, error) {
 		info.Track = track
 
 		// Origin - complex enum
-		originVariant, err := decoder.ReadOneByte()
+		// First byte is the origin type
+		originType, err := decoder.ReadOneByte()
 		if err != nil {
-			return nil, fmt.Errorf("read origin variant: %w", err)
-		}
-		info.Origin = getOriginName(originVariant)
-
-		// Skip origin data based on variant
-		if err := skipOriginData(decoder, originVariant); err != nil {
-			return nil, fmt.Errorf("skip origin data: %w", err)
+			return nil, fmt.Errorf("read origin type: %w", err)
 		}
 
-		// Proposal (bounded call)
-		proposal, err := decodeBoundedCall(decoder)
+		if originType == 0 { // system
+			info.Origin = "system"
+		} else if originType == 1 { // Origins pallet
+			// Read the origin variant
+			originVariant, err := decoder.ReadOneByte()
+			if err != nil {
+				return nil, fmt.Errorf("read origin variant: %w", err)
+			}
+			info.Origin = getOriginName(originVariant)
+		} else {
+			info.Origin = fmt.Sprintf("Unknown(%d)", originType)
+		}
+
+		// Proposal - Bounded<CallOf<T, I>, T::Preimages>
+		// First byte indicates Lookup(0), Legacy(1), or Inline(2)
+		proposalType, err := decoder.ReadOneByte()
 		if err != nil {
-			return nil, fmt.Errorf("decode proposal: %w", err)
+			return nil, fmt.Errorf("read proposal type: %w", err)
 		}
-		info.Proposal = proposal.Hash
-		info.ProposalLen = proposal.Len
 
-		// Enactment
+		switch proposalType {
+		case 0: // Lookup
+			var hash types.Hash
+			if err := decoder.Decode(&hash); err != nil {
+				return nil, fmt.Errorf("decode lookup hash: %w", err)
+			}
+			var length types.U32
+			if err := decoder.Decode(&length); err != nil {
+				return nil, fmt.Errorf("decode lookup length: %w", err)
+			}
+			info.Proposal = hash.Hex()
+			info.ProposalLen = uint32(length)
+		case 1: // Legacy
+			var hash types.Hash
+			if err := decoder.Decode(&hash); err != nil {
+				return nil, fmt.Errorf("decode legacy hash: %w", err)
+			}
+			info.Proposal = hash.Hex()
+			info.ProposalLen = 0
+		case 2: // Inline
+			// Read bounded vec
+			var length types.UCompact
+			if err := decoder.Decode(&length); err != nil {
+				return nil, fmt.Errorf("decode inline length: %w", err)
+			}
+			callLen := uint32(length.Int64())
+			callData := make([]byte, callLen)
+			if err := decoder.Decode(&callData); err != nil {
+				return nil, fmt.Errorf("decode inline call: %w", err)
+			}
+			// Compute hash
+			hash := Blake2_256(callData)
+			info.Proposal = codec.HexEncodeToString(hash)
+			info.ProposalLen = callLen
+		default:
+			return nil, fmt.Errorf("unknown proposal type: %d", proposalType)
+		}
+
+		// Enactment - DispatchTime<BlockNumberFor<T, I>>
 		enactmentVariant, err := decoder.ReadOneByte()
 		if err != nil {
 			return nil, fmt.Errorf("read enactment variant: %w", err)
 		}
-
 		var enactmentValue uint32
 		if err := decoder.Decode(&enactmentValue); err != nil {
 			return nil, fmt.Errorf("decode enactment value: %w", err)
 		}
-
 		if enactmentVariant == 0 {
 			info.Enactment = fmt.Sprintf("At(%d)", enactmentValue)
 		} else {
 			info.Enactment = fmt.Sprintf("After(%d)", enactmentValue)
 		}
 
-		// Submitted
+		// Submitted - BlockNumberFor<T, I>
 		var submitted uint32
 		if err := decoder.Decode(&submitted); err != nil {
 			return nil, fmt.Errorf("decode submitted: %w", err)
 		}
 		info.Submitted = submitted
 
-		// Submission deposit
+		// SubmissionDeposit - Deposit<T::AccountId, BalanceOf<T, I>>
 		var submitter types.AccountID
 		if err := decoder.Decode(&submitter); err != nil {
 			return nil, fmt.Errorf("decode submitter: %w", err)
@@ -142,16 +180,15 @@ func decodeReferendumInfo(data []byte) (*ReferendumInfo, error) {
 
 		var amount types.U128
 		if err := decoder.Decode(&amount); err != nil {
-			return nil, fmt.Errorf("decode amount: %w", err)
+			return nil, fmt.Errorf("decode submission amount: %w", err)
 		}
 		info.Submission.Amount = amount.String()
 
-		// Decision deposit (Option)
+		// DecisionDeposit - Option<Deposit<T::AccountId, BalanceOf<T, I>>>
 		hasDecisionDeposit, err := decoder.ReadOneByte()
 		if err != nil {
 			return nil, fmt.Errorf("read decision deposit option: %w", err)
 		}
-
 		if hasDecisionDeposit == 1 {
 			info.DecisionDeposit = &Deposit{}
 			var decisionWho types.AccountID
@@ -167,12 +204,11 @@ func decodeReferendumInfo(data []byte) (*ReferendumInfo, error) {
 			info.DecisionDeposit.Amount = decisionAmount.String()
 		}
 
-		// Deciding (Option)
+		// Deciding - Option<DecidingStatus<BlockNumberFor<T, I>>>
 		hasDeciding, err := decoder.ReadOneByte()
 		if err != nil {
 			return nil, fmt.Errorf("read deciding option: %w", err)
 		}
-
 		if hasDeciding == 1 {
 			info.Decision = &DecisionStatus{}
 			var since uint32
@@ -181,12 +217,11 @@ func decodeReferendumInfo(data []byte) (*ReferendumInfo, error) {
 			}
 			info.Decision.Since = since
 
-			// Confirming (Option)
+			// Confirming - Option<BlockNumberFor<T, I>>
 			hasConfirming, err := decoder.ReadOneByte()
 			if err != nil {
 				return nil, fmt.Errorf("read confirming option: %w", err)
 			}
-
 			if hasConfirming == 1 {
 				var confirming uint32
 				if err := decoder.Decode(&confirming); err != nil {
@@ -196,7 +231,7 @@ func decodeReferendumInfo(data []byte) (*ReferendumInfo, error) {
 			}
 		}
 
-		// Tally
+		// Tally - T::Tally
 		var ayes, nays, support types.U128
 		if err := decoder.Decode(&ayes); err != nil {
 			return nil, fmt.Errorf("decode ayes: %w", err)
@@ -212,7 +247,7 @@ func decodeReferendumInfo(data []byte) (*ReferendumInfo, error) {
 		info.Tally.Nays = nays.String()
 		info.Tally.Support = support.String()
 
-		// Calculate approval percentage if we have total votes
+		// Calculate approval percentage
 		totalVotes := new(big.Int).Add(ayes.Int, nays.Int)
 		if totalVotes.Cmp(big.NewInt(0)) > 0 {
 			approval := new(big.Int).Mul(ayes.Int, big.NewInt(10000))
@@ -220,226 +255,185 @@ func decodeReferendumInfo(data []byte) (*ReferendumInfo, error) {
 			info.Tally.Approval = fmt.Sprintf("%d.%02d%%", approval.Int64()/100, approval.Int64()%100)
 		}
 
-		// In queue
+		// InQueue - bool
 		var inQueue bool
 		if err := decoder.Decode(&inQueue); err != nil {
 			return nil, fmt.Errorf("decode inQueue: %w", err)
 		}
 		info.InQueue = inQueue
 
-		// Alarm (Option) - skip for now
+		// Alarm - Option<(BlockNumberFor<T, I>, ScheduleAddressOf<T, I>)>
 		hasAlarm, err := decoder.ReadOneByte()
-		if err != nil {
-			return nil, fmt.Errorf("read alarm option: %w", err)
-		}
-		if hasAlarm == 1 {
-			// Skip alarm data (block number + scheduler data)
-			skipBytes(decoder, 4) // block number
-			skipBytes(decoder, 4) // scheduler index
+		if err == nil && hasAlarm == 1 {
+			// Skip alarm data (block number + schedule address)
+			skipBytes(decoder, 40) // 4 bytes block + 32 bytes address + 4 bytes index
 		}
 
 		return info, nil
 
-	default:
-		return nil, fmt.Errorf("not an ongoing referendum, variant: %d", variant)
-	}
-}
-
-// decodeFinishedReferendum handles approved/rejected/cancelled/timedout/killed referenda
-func decodeFinishedReferendum(data []byte, refID uint32) (*ReferendumInfo, error) {
-	decoder := scale.NewDecoder(bytes.NewReader(data))
-
-	// Read variant
-	variant, err := decoder.ReadOneByte()
-	if err != nil {
-		return nil, fmt.Errorf("read variant: %w", err)
-	}
-
-	info := &ReferendumInfo{}
-
-	switch variant {
 	case 1: // Approved
 		info.Status = "Approved"
-		// Approved has: (since, Option<Deposit>, Option<DecidingStatus>)
+		// Since - BlockNumberFor<T, I>
 		var since uint32
 		if err := decoder.Decode(&since); err != nil {
 			return nil, fmt.Errorf("decode approved since: %w", err)
 		}
 		info.ApprovedAt = since
 
-		// Option<Deposit>
-		hasDeposit, _ := decoder.ReadOneByte()
-		if hasDeposit == 1 {
-			info.Submission = Submission{}
+		// Deposit - Option<Deposit<T::AccountId, BalanceOf<T, I>>>
+		hasDeposit, err := decoder.ReadOneByte()
+		if err == nil && hasDeposit == 1 {
 			var who types.AccountID
-			decoder.Decode(&who)
-			info.Submission.Who = who.ToHexString()
+			if err := decoder.Decode(&who); err == nil {
+				info.Submission.Who = who.ToHexString()
+			}
 			var amount types.U128
-			decoder.Decode(&amount)
-			info.Submission.Amount = amount.String()
+			if err := decoder.Decode(&amount); err == nil {
+				info.Submission.Amount = amount.String()
+			}
+		} else {
+			info.Submission.Who = "Unknown"
 		}
+
+		// Approved/Rejected/Cancelled/TimedOut don't store track directly
+		// but we can infer Root track (0) for these old referendums
+		info.Track = 0
+
+		return info, nil
 
 	case 2: // Rejected
 		info.Status = "Rejected"
-		// Rejected has: (since, Option<Deposit>, Option<DecidingStatus>)
+		// Since - BlockNumberFor<T, I>
 		var since uint32
 		if err := decoder.Decode(&since); err != nil {
 			return nil, fmt.Errorf("decode rejected since: %w", err)
 		}
 		info.RejectedAt = since
 
-		// Option<Deposit>
-		hasDeposit, _ := decoder.ReadOneByte()
-		if hasDeposit == 1 {
-			info.Submission = Submission{}
+		// Deposit - Option<Deposit<T::AccountId, BalanceOf<T, I>>>
+		hasDeposit, err := decoder.ReadOneByte()
+		if err == nil && hasDeposit == 1 {
 			var who types.AccountID
-			decoder.Decode(&who)
-			info.Submission.Who = who.ToHexString()
+			if err := decoder.Decode(&who); err == nil {
+				info.Submission.Who = who.ToHexString()
+			}
 			var amount types.U128
-			decoder.Decode(&amount)
-			info.Submission.Amount = amount.String()
+			if err := decoder.Decode(&amount); err == nil {
+				info.Submission.Amount = amount.String()
+			}
+		} else {
+			info.Submission.Who = "Unknown"
 		}
+
+		info.Track = 0
+
+		return info, nil
 
 	case 3: // Cancelled
 		info.Status = "Cancelled"
-		// Cancelled has: (since, Option<Deposit>, Option<DecidingStatus>)
+		// Since - BlockNumberFor<T, I>
 		var since uint32
 		if err := decoder.Decode(&since); err != nil {
 			return nil, fmt.Errorf("decode cancelled since: %w", err)
 		}
 		info.CancelledAt = since
 
-		// Option<Deposit>
-		hasDeposit, _ := decoder.ReadOneByte()
-		if hasDeposit == 1 {
-			info.Submission = Submission{}
+		// Deposit - Option<Deposit<T::AccountId, BalanceOf<T, I>>>
+		hasDeposit, err := decoder.ReadOneByte()
+		if err == nil && hasDeposit == 1 {
 			var who types.AccountID
-			decoder.Decode(&who)
-			info.Submission.Who = who.ToHexString()
+			if err := decoder.Decode(&who); err == nil {
+				info.Submission.Who = who.ToHexString()
+			}
 			var amount types.U128
-			decoder.Decode(&amount)
-			info.Submission.Amount = amount.String()
+			if err := decoder.Decode(&amount); err == nil {
+				info.Submission.Amount = amount.String()
+			}
+		} else {
+			info.Submission.Who = "Unknown"
 		}
+
+		info.Track = 0
+
+		return info, nil
 
 	case 4: // TimedOut
 		info.Status = "TimedOut"
-		// TimedOut has: (since, Option<Deposit>, Option<DecidingStatus>)
+		// Since - BlockNumberFor<T, I>
 		var since uint32
 		if err := decoder.Decode(&since); err != nil {
 			return nil, fmt.Errorf("decode timedout since: %w", err)
 		}
 		info.TimedOutAt = since
 
-		// Option<Deposit>
-		hasDeposit, _ := decoder.ReadOneByte()
-		if hasDeposit == 1 {
-			info.Submission = Submission{}
+		// Deposit - Option<Deposit<T::AccountId, BalanceOf<T, I>>>
+		hasDeposit, err := decoder.ReadOneByte()
+		if err == nil && hasDeposit == 1 {
 			var who types.AccountID
-			decoder.Decode(&who)
-			info.Submission.Who = who.ToHexString()
+			if err := decoder.Decode(&who); err == nil {
+				info.Submission.Who = who.ToHexString()
+			}
 			var amount types.U128
-			decoder.Decode(&amount)
-			info.Submission.Amount = amount.String()
+			if err := decoder.Decode(&amount); err == nil {
+				info.Submission.Amount = amount.String()
+			}
+		} else {
+			info.Submission.Who = "Unknown"
 		}
+
+		info.Track = 0
+
+		return info, nil
 
 	case 5: // Killed
 		info.Status = "Killed"
-		// Killed has: (since)
+		// Since - BlockNumberFor<T, I>
 		var since uint32
 		if err := decoder.Decode(&since); err != nil {
 			return nil, fmt.Errorf("decode killed since: %w", err)
 		}
 		info.KilledAt = since
 
+		info.Track = 0
+
+		return info, nil
+
 	default:
 		return nil, fmt.Errorf("unknown referendum variant: %d", variant)
 	}
-
-	return info, nil
 }
 
-// decodeBoundedCall decodes a bounded call (proposal)
-func decodeBoundedCall(decoder *scale.Decoder) (*BoundedCall, error) {
-	// Read compact length
-	var length types.UCompact
-	if err := decoder.Decode(&length); err != nil {
-		return nil, err
-	}
-
-	callLen := uint32(length.Int64())
-
-	// For now, we'll just skip the actual call data and compute hash
-	// In a full implementation, you'd decode the call to extract recipients
-	callData := make([]byte, callLen)
-	if err := decoder.Decode(&callData); err != nil {
-		return nil, err
-	}
-
-	// Compute blake2-256 hash of the call
-	hash := Blake2_256(callData)
-
-	return &BoundedCall{
-		Hash: codec.HexEncodeToString(hash),
-		Len:  callLen,
-		Data: callData,
-	}, nil
-}
-
-// Helper functions
-func getOriginName(variant byte) string {
-	origins := map[byte]string{
-		0:  "Root",
-		1:  "WhitelistedCaller",
-		2:  "GeneralAdmin",
-		3:  "ReferendumCanceller",
-		4:  "ReferendumKiller",
-		10: "StakingAdmin",
-		11: "Treasurer",
-		12: "LeaseAdmin",
-		13: "FellowshipAdmin",
-		14: "SmallTipper",
-		15: "BigTipper",
-		16: "SmallSpender",
-		17: "MediumSpender",
-		18: "BigSpender",
-		19: "WhitelistedCaller",
+// getOriginName maps the origin variant to a name
+func getOriginName(variant uint8) string {
+	// These map to the Polkadot runtime Origins enum
+	origins := map[uint8]string{
+		0:  "StakingAdmin",
+		1:  "Treasurer",
+		2:  "FellowshipAdmin",
+		3:  "GeneralAdmin",
+		4:  "AuctionAdmin",
+		5:  "LeaseAdmin",
+		6:  "ReferendumCanceller",
+		7:  "ReferendumKiller",
+		8:  "SmallTipper",
+		9:  "BigTipper",
+		10: "SmallSpender",
+		11: "MediumSpender",
+		12: "BigSpender",
+		13: "WhitelistedCaller",
+		14: "WishForChange",
 	}
 
 	if name, ok := origins[variant]; ok {
 		return name
 	}
-	return fmt.Sprintf("Unknown(%d)", variant)
+	return fmt.Sprintf("Custom(%d)", variant)
 }
 
-func skipOriginData(decoder *scale.Decoder, variant byte) error {
-	switch variant {
-	case 1: // Signed
-		skipBytes(decoder, 32) // AccountID
-		// Most origins have no additional data
-	}
-	return nil
-}
-
+// Helper function to skip bytes
 func skipBytes(decoder *scale.Decoder, n int) error {
-	// Skip n bytes by reading into a small buffer
-	const bufSize = 256
-	buf := make([]byte, bufSize)
-
-	for n > 0 {
-		toRead := n
-		if toRead > bufSize {
-			toRead = bufSize
-		}
-
-		tmpBuf := buf[:toRead]
-		if err := decoder.Decode(&tmpBuf); err != nil {
-			return err
-		}
-
-		n -= toRead
-	}
-
-	return nil
+	buf := make([]byte, n)
+	return decoder.Decode(&buf)
 }
 
 // GetReferendumCount gets the total number of referenda
@@ -479,8 +473,7 @@ func (c *Client) GetTrackInfo(trackID uint16) (*TrackInfo, error) {
 		return nil, fmt.Errorf("tracks not found")
 	}
 
-	// Decode tracks array and find the one we want
-	// This is simplified - you'd need to properly decode the Vec<TrackInfo>
+	// Return simplified track info
 	return &TrackInfo{
 		Name:               getTrackName(trackID),
 		MaxDeciding:        1,
@@ -494,127 +487,26 @@ func (c *Client) GetTrackInfo(trackID uint16) (*TrackInfo, error) {
 
 func getTrackName(trackID uint16) string {
 	trackNames := map[uint16]string{
-		0:  "Root",
-		1:  "WhitelistedCaller",
-		10: "StakingAdmin",
-		11: "Treasurer",
-		12: "LeaseAdmin",
-		13: "FellowshipAdmin",
-		14: "GeneralAdmin",
-		15: "AuctionAdmin",
-		20: "ReferendumCanceller",
-		21: "ReferendumKiller",
-		30: "SmallTipper",
-		31: "BigTipper",
-		32: "SmallSpender",
-		33: "MediumSpender",
-		34: "BigSpender",
+		0:    "Root",
+		1:    "WhitelistedCaller",
+		10:   "StakingAdmin",
+		11:   "Treasurer",
+		12:   "LeaseAdmin",
+		13:   "FellowshipAdmin",
+		14:   "GeneralAdmin",
+		15:   "AuctionAdmin",
+		20:   "ReferendumCanceller",
+		21:   "ReferendumKiller",
+		30:   "SmallTipper",
+		31:   "BigTipper",
+		32:   "SmallSpender",
+		33:   "MediumSpender",
+		34:   "BigSpender",
+		1000: "WishForChange",
 	}
 
 	if name, ok := trackNames[trackID]; ok {
 		return name
 	}
 	return fmt.Sprintf("Track%d", trackID)
-}
-
-// GetAccountVotes gets all votes by an account for a referendum
-func (c *Client) GetAccountVotes(account string, refID uint32) (*AccountVote, error) {
-	// ConvictionVoting.VotingFor storage key
-	palletHash := Twox128([]byte("ConvictionVoting"))
-	storageHash := Twox128([]byte("VotingFor"))
-
-	// Decode account
-	accountBytes, err := DecodeHex(account)
-	if err != nil {
-		return nil, err
-	}
-
-	// First key is account (Blake2_128_Concat)
-	accountKey := append(Blake2_128(accountBytes), accountBytes...)
-
-	// Second key is track class - we need to find which track the referendum is on
-	// For now, assume track 0 (this would need to be looked up)
-	trackBytes := make([]byte, 2)
-	binary.LittleEndian.PutUint16(trackBytes, 0)
-	trackKey := append(Blake2_128(trackBytes), trackBytes...)
-
-	key := append(palletHash, storageHash...)
-	key = append(key, accountKey...)
-	key = append(key, trackKey...)
-
-	storageKey := types.NewStorageKey(key)
-	var raw types.StorageDataRaw
-	ok, err := c.api.RPC.State.GetStorageLatest(storageKey, &raw)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, nil // No votes
-	}
-
-	// Decode VotingInfo
-	return decodeVotingInfo(raw, refID)
-}
-
-func decodeVotingInfo(data []byte, refID uint32) (*AccountVote, error) {
-	decoder := scale.NewDecoder(bytes.NewReader(data))
-
-	// Read variant (Casting, Delegating)
-	variant, err := decoder.ReadOneByte()
-	if err != nil {
-		return nil, err
-	}
-
-	switch variant {
-	case 0: // Casting
-		// Decode Casting struct
-		var casting CastingInfo
-		if err := decoder.Decode(&casting); err != nil {
-			return nil, err
-		}
-
-		// Look for our referendum in the votes
-		for _, vote := range casting.Votes {
-			if vote.RefID == refID {
-				return &AccountVote{
-					VoteType: "Casting",
-					Vote:     &vote,
-				}, nil
-			}
-		}
-
-	case 1: // Delegating
-		// Decode delegating info
-		var target types.AccountID
-		if err := decoder.Decode(&target); err != nil {
-			return nil, err
-		}
-
-		var conviction uint8
-		if err := decoder.Decode(&conviction); err != nil {
-			return nil, err
-		}
-
-		var balance types.U128
-		if err := decoder.Decode(&balance); err != nil {
-			return nil, err
-		}
-
-		var prior PriorLock
-		if err := decoder.Decode(&prior); err != nil {
-			return nil, err
-		}
-
-		return &AccountVote{
-			VoteType: "Delegating",
-			Delegating: &DelegatingInfo{
-				Target:     target.ToHexString(),
-				Conviction: conviction,
-				Balance:    balance.String(),
-				Prior:      prior,
-			},
-		}, nil
-	}
-
-	return nil, fmt.Errorf("unknown voting variant: %d", variant)
 }

@@ -3,7 +3,7 @@ package types
 import "time"
 
 //
-// ──── NETWORKS / RPC ENDPOINTS ────────────────────────────────────────────────
+// ──── NETWORKS / RPC ENDPOINTS ─────────────────────────────────────────────────
 //
 
 type Network struct {
@@ -22,7 +22,7 @@ type RPC struct {
 }
 
 //
-// ──── GOVERNANCE ──────────────────────────────────────────────────────────────
+// ──── GOVERNANCE ────────────────────────────────────────────────────────────────
 //
 
 type Proposal struct {
@@ -61,7 +61,7 @@ type Proposal struct {
 type ProposalParticipant struct {
 	ProposalID uint64 `gorm:"primaryKey"`
 	Address    string `gorm:"primaryKey;size:128"`
-	Role       string `gorm:"size:32"` // submitter, voter, delegator, etc
+	Role       string `gorm:"size:32"` // submitter, dao_member, feedback_provider
 }
 
 type Message struct {
@@ -79,6 +79,7 @@ type DaoMember struct {
 	Discord string `gorm:"size:64"`
 }
 
+// Internal DAO vote tracking (not on-chain votes)
 type Vote struct {
 	ID         uint64 `gorm:"primaryKey"`
 	ProposalID uint64 `gorm:"index;not null"`
@@ -109,21 +110,6 @@ type Track struct {
 	MinEnactmentPeriod uint32
 	MinApproval        string `gorm:"size:32"`
 	MinSupport         string `gorm:"size:32"`
-}
-
-// OnchainVote represents actual on-chain votes
-type OnchainVote struct {
-	ID          uint64 `gorm:"primaryKey"`
-	ProposalID  uint64 `gorm:"index;not null"`
-	Voter       string `gorm:"size:128;not null;index"`
-	VoteType    string `gorm:"size:32;not null"` // standard, split, splitAbstain
-	Aye         string `gorm:"size:64"`
-	Nay         string `gorm:"size:64"`
-	Abstain     string `gorm:"size:64"`
-	Conviction  uint8
-	Delegations string `gorm:"size:64"`
-	BlockNumber uint64 `gorm:"index"`
-	CreatedAt   time.Time
 }
 
 // Preimage stores proposal content

@@ -49,7 +49,6 @@ func (m Messages) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": "bad proposalRef"})
 		return
 	}
-
 	refID, _ := strconv.ParseUint(parts[1], 10, 64)
 	netID := uint8(1)
 	network := "polkadot"
@@ -72,7 +71,7 @@ func (m Messages) Create(c *gin.Context) {
 		if err = m.db.Create(&prop).Error; err == nil {
 			_ = m.db.FirstOrCreate(&types.DaoMember{Address: prop.Submitter}).Error
 			_ = m.db.FirstOrCreate(&types.ProposalParticipant{
-				ProposalID: prop.ID, Address: prop.Submitter,
+				ProposalID: prop.ID, Address: prop.Submitter, Role: "submitter",
 			}).Error
 		}
 	}
@@ -111,21 +110,30 @@ func (m Messages) Create(c *gin.Context) {
 
 	// If first message and we have Polkassembly client, post it
 	if msgCount == 1 && m.pa != nil {
-		link := fmt.Sprintf("%s/%s/%d", os.Getenv("FRONTEND_URL"), network, refID)
+		frontendURL := os.Getenv("FRONTEND_URL")
+		if frontendURL == "" {
+			frontendURL = "https://govcomms.chaosdao.org"
+		}
+		link := fmt.Sprintf("%s/%s/%d", frontendURL, network, refID)
 		content := fmt.Sprintf("%s\n\n[Continue discussion](%s)", msg.Body, link)
-
 		go func() {
 			if _, err := m.pa.PostComment(network, int(refID), content); err != nil {
 				log.Printf("Failed to post to Polkassembly: %v", err)
+			} else {
+				log.Printf("Posted first message to Polkassembly for %s/%d", network, refID)
 			}
 		}()
 	}
 
+	// Publish to Redis for Discord bot
 	_ = data.PublishMessage(context.Background(), m.rdb, map[string]any{
 		"proposal": req.Proposal,
 		"author":   msg.Author,
 		"body":     msg.Body,
 		"time":     msg.CreatedAt.Unix(),
+		"id":       msg.ID,
+		"network":  network,
+		"ref_id":   refID,
 	})
 
 	c.JSON(http.StatusCreated, gin.H{"id": msg.ID})
@@ -157,6 +165,7 @@ func (m Messages) List(c *gin.Context) {
 			"title":     prop.Title,
 			"submitter": prop.Submitter,
 			"status":    prop.Status,
+			"track_id":  prop.TrackID,
 		},
 		"messages": msgs,
 	}

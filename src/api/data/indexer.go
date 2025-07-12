@@ -29,7 +29,6 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 		log.Printf("indexer polkadot: failed to get header: %v", err)
 		return
 	}
-
 	currentBlock := header.Number
 	log.Printf("indexer polkadot: current block %s", currentBlock)
 
@@ -40,34 +39,28 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 		log.Printf("indexer polkadot: failed to get keys: %v", err)
 		return
 	}
-
 	log.Printf("indexer polkadot: found %d referendum keys", len(keys))
 
 	// Extract referendum IDs from keys
 	existingRefs := make(map[uint32]bool)
 	prefixLen := len(prefix) - 2 // Remove "0x"
-
 	for _, key := range keys {
 		// Remove 0x prefix
 		keyHex := strings.TrimPrefix(key, "0x")
-
 		// The key format is: prefix + blake2_128(refID) + refID
 		// We need to extract the refID from the end
 		if len(keyHex) > prefixLen {
 			// Get the part after the prefix
 			remainder := keyHex[prefixLen:]
-
 			// The remainder should be: blake2_128_hash(16 bytes = 32 hex chars) + refID(4 bytes = 8 hex chars)
 			if len(remainder) >= 40 { // 32 + 8
 				// Extract the last 8 hex characters (4 bytes) which is the refID
 				refIDHex := remainder[len(remainder)-8:]
-
 				// Convert hex to bytes
 				refIDBytes, err := polkadot.DecodeHex(refIDHex)
 				if err != nil || len(refIDBytes) != 4 {
 					continue
 				}
-
 				// Convert to uint32 (little endian)
 				refID := binary.LittleEndian.Uint32(refIDBytes)
 				existingRefs[refID] = true
@@ -98,6 +91,14 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 	errors := 0
 	processed := 0
 
+	// Log raw data for a few specific referendums to debug
+	debugRefs := []uint32{1000, 1001, 1002, 1003, 1004}
+	for _, refID := range debugRefs {
+		if _, exists := existingRefs[refID]; exists {
+			log.Printf("indexer polkadot: debugging ref %d", refID)
+		}
+	}
+
 	// Process each existing referendum in order
 	for _, refID := range refIDs {
 		select {
@@ -119,7 +120,6 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 			if !strings.Contains(err.Error(), "does not exist") {
 				log.Printf("indexer polkadot: failed to get info for ref %d: %v", refID, err)
 			}
-
 			if dbErr == gorm.ErrRecordNotFound {
 				// Create with minimal info for cleared refs
 				proposal = types.Proposal{
@@ -130,7 +130,6 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 					CreatedAt: time.Now(),
 					UpdatedAt: time.Now(),
 				}
-
 				if err := db.Create(&proposal).Error; err != nil {
 					log.Printf("indexer polkadot: failed to create proposal %d: %v", refID, err)
 					errors++
@@ -214,7 +213,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 				errors++
 			} else {
 				created++
-				log.Printf("indexer polkadot: created ref %d with status %s on track %d", refID, info.Status, info.Track)
+				log.Printf("indexer polkadot: created ref %d with status %s on track %d origin %s", refID, info.Status, info.Track, info.Origin)
 
 				// Create proposal participants
 				participants := []types.ProposalParticipant{}
@@ -291,17 +290,14 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 				proposal.Support = info.Tally.Support
 				changed = true
 			}
-
 			if info.Tally.Ayes != "" && proposal.Ayes != info.Tally.Ayes {
 				proposal.Ayes = info.Tally.Ayes
 				changed = true
 			}
-
 			if info.Tally.Nays != "" && proposal.Nays != info.Tally.Nays {
 				proposal.Nays = info.Tally.Nays
 				changed = true
 			}
-
 			if info.Tally.Approval != "" && proposal.Approval != info.Tally.Approval {
 				proposal.Approval = info.Tally.Approval
 				changed = true
@@ -408,6 +404,7 @@ func indexTracks(db *gorm.DB, client *polkadot.Client) {
 		{ID: 32, NetworkID: 1, Name: "SmallSpender"},
 		{ID: 33, NetworkID: 1, Name: "MediumSpender"},
 		{ID: 34, NetworkID: 1, Name: "BigSpender"},
+		{ID: 1000, NetworkID: 1, Name: "WishForChange"},
 	}
 
 	for _, track := range tracks {

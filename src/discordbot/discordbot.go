@@ -15,11 +15,14 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stake-plus/polkadot-gov-comms/src/api/config"
 	"github.com/stake-plus/polkadot-gov-comms/src/api/data"
+	"github.com/stake-plus/polkadot-gov-comms/src/api/types"
+	"gorm.io/gorm"
 )
 
 type DiscordBot struct {
 	session         *discordgo.Session
 	rdb             *redis.Client
+	db              *gorm.DB
 	feedbackRoleID  string
 	feedbackCommand string
 	apiURL          string
@@ -31,9 +34,12 @@ type StreamMessage struct {
 	Author   string `json:"author"`
 	Body     string `json:"body"`
 	Time     int64  `json:"time"`
+	ID       uint64 `json:"id"`
+	Network  string `json:"network"`
+	RefID    uint64 `json:"ref_id"`
 }
 
-func NewDiscordBot(token, feedbackRoleID, guildID, apiURL string, rdb *redis.Client) (*DiscordBot, error) {
+func NewDiscordBot(token, feedbackRoleID, guildID, apiURL string, rdb *redis.Client, db *gorm.DB) (*DiscordBot, error) {
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, err
@@ -42,6 +48,7 @@ func NewDiscordBot(token, feedbackRoleID, guildID, apiURL string, rdb *redis.Cli
 	bot := &DiscordBot{
 		session:         dg,
 		rdb:             rdb,
+		db:              db,
 		feedbackRoleID:  feedbackRoleID,
 		feedbackCommand: "!feedback",
 		apiURL:          apiURL,
@@ -119,29 +126,76 @@ func (b *DiscordBot) messageCreate(s *discordgo.Session, m *discordgo.MessageCre
 		return
 	}
 
-	// Store in database and post to Polkassembly (first message only)
+	// Get Discord user's linked address from dao_members table
+	var daoMember types.DaoMember
+	if err := b.db.Where("discord = ?", m.Author.Username).First(&daoMember).Error; err != nil {
+		s.ChannelMessageSend(m.ChannelID, "Your Discord account is not linked to a Polkadot address. Please contact an admin.")
+		return
+	}
+
+	// Get proposal
+	netID := uint8(1)
+	if network == "kusama" {
+		netID = 2
+	}
+
+	var prop types.Proposal
+	if err := b.db.First(&prop, "network_id = ? AND ref_id = ?", netID, refNum).Error; err != nil {
+		// Create proposal if it doesn't exist
+		prop = types.Proposal{
+			NetworkID: netID,
+			RefID:     uint64(refNum),
+			Submitter: daoMember.Address,
+			Status:    "Unknown",
+			Title:     fmt.Sprintf("%s Referendum #%d", strings.Title(network), refNum),
+		}
+		if err := b.db.Create(&prop).Error; err != nil {
+			s.ChannelMessageSend(m.ChannelID, "Failed to create proposal record. Please try again.")
+			return
+		}
+	}
+
+	// Create participant record
+	participant := types.ProposalParticipant{
+		ProposalID: prop.ID,
+		Address:    daoMember.Address,
+		Role:       "dao_member",
+	}
+	b.db.FirstOrCreate(&participant, types.ProposalParticipant{ProposalID: prop.ID, Address: daoMember.Address})
+
+	// Store message
+	msg := types.Message{
+		ProposalID: prop.ID,
+		Author:     daoMember.Address,
+		Body:       feedbackMsg,
+		CreatedAt:  time.Now(),
+	}
+	if err := b.db.Create(&msg).Error; err != nil {
+		s.ChannelMessageSend(m.ChannelID, "Failed to store message. Please try again.")
+		return
+	}
+
+	// Check if this is the first message
+	var msgCount int64
+	b.db.Model(&types.Message{}).Where("proposal_id = ?", prop.ID).Count(&msgCount)
+
+	// Store link to frontend
 	link := fmt.Sprintf("%s/%s/%d", b.apiURL, network, refNum)
 
-	// Here you would call your API to store the message
-	// For now, publish to Redis stream
-	ctx := context.Background()
-	err = b.rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: "govcomms.discord.feedback",
-		Values: map[string]interface{}{
-			"proposal":   proposalRef,
-			"author":     m.Author.Username,
-			"body":       feedbackMsg,
-			"time":       time.Now().Unix(),
-			"channel":    m.ChannelID,
-			"message_id": m.ID,
-			"is_first":   "true", // Flag for Polkassembly posting
-		},
-	}).Err()
-
-	if err != nil {
-		log.Printf("Failed to publish feedback: %v", err)
-		s.ChannelMessageSend(m.ChannelID, "Failed to submit feedback. Please try again.")
-		return
+	// Publish to Redis stream for Polkassembly posting if first message
+	if msgCount == 1 {
+		_ = b.rdb.XAdd(context.Background(), &redis.XAddArgs{
+			Stream: "govcomms.discord.feedback",
+			Values: map[string]interface{}{
+				"proposal":   proposalRef,
+				"author":     m.Author.Username,
+				"body":       feedbackMsg,
+				"time":       time.Now().Unix(),
+				"channel":    m.ChannelID,
+				"message_id": m.ID,
+				"is_first":   "true",
+			},
+		}).Err()
 	}
 
 	// Send success message with link
@@ -195,6 +249,14 @@ func (b *DiscordBot) listenForMessages(ctx context.Context) {
 							m.Time = t
 						}
 					}
+					if network, ok := msg.Values["network"].(string); ok {
+						m.Network = network
+					}
+					if refIDStr, ok := msg.Values["ref_id"].(string); ok {
+						if r, err := strconv.ParseUint(refIDStr, 10, 64); err == nil {
+							m.RefID = r
+						}
+					}
 
 					// Post to appropriate Discord channel
 					b.postToDiscord(m)
@@ -205,19 +267,8 @@ func (b *DiscordBot) listenForMessages(ctx context.Context) {
 }
 
 func (b *DiscordBot) postToDiscord(msg StreamMessage) {
-	// Parse proposal reference
-	parts := strings.Split(msg.Proposal, "/")
-	if len(parts) != 2 {
-		return
-	}
-
-	network := parts[0]
-	refNum := parts[1]
-
 	// Find the appropriate channel/thread for this referendum
-	// This would need to be configured based on your Discord setup
-	// For now, we'll use a pattern like #ref-network-number
-	channelName := fmt.Sprintf("ref-%s-%s", network, refNum)
+	channelName := fmt.Sprintf("ref-%s-%d", msg.Network, msg.RefID)
 
 	guilds := b.session.State.Guilds
 	var targetChannel *discordgo.Channel
@@ -240,16 +291,22 @@ func (b *DiscordBot) postToDiscord(msg StreamMessage) {
 		return
 	}
 
+	// Format the address
+	shortAddr := msg.Author
+	if len(shortAddr) > 16 {
+		shortAddr = shortAddr[:8] + "..." + shortAddr[len(shortAddr)-8:]
+	}
+
 	// Create embed for the message
 	embed := &discordgo.MessageEmbed{
 		Author: &discordgo.MessageEmbedAuthor{
-			Name: fmt.Sprintf("Response from %s", msg.Author),
+			Name: fmt.Sprintf("Response from %s", shortAddr),
 		},
 		Description: msg.Body,
 		Color:       0x0099ff,
 		Timestamp:   time.Unix(msg.Time, 0).Format(time.RFC3339),
 		Footer: &discordgo.MessageEmbedFooter{
-			Text: fmt.Sprintf("Via GovComms | %s", msg.Proposal),
+			Text: fmt.Sprintf("Via GovComms | %s #%d", msg.Network, msg.RefID),
 		},
 	}
 
@@ -276,15 +333,16 @@ func main() {
 		log.Fatal("GUILD_ID not set")
 	}
 
-	apiURL := os.Getenv("API_URL")
+	apiURL := os.Getenv("FRONTEND_URL")
 	if apiURL == "" {
 		apiURL = "https://govcomms.chaosdao.org"
 	}
 
 	cfg := config.Load()
 	rdb := data.MustRedis(cfg.RedisURL)
+	db := data.MustMySQL(cfg.MySQLDSN)
 
-	bot, err := NewDiscordBot(token, feedbackRoleID, guildID, apiURL, rdb)
+	bot, err := NewDiscordBot(token, feedbackRoleID, guildID, apiURL, rdb, db)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
