@@ -300,17 +300,10 @@ func (b *DiscordBot) findReferendumThread(channelID string, refNum int) (*discor
 		}
 	}
 
-	// Check archived threads
-	before := ""
-	limit := 100
-
-	for {
-		archived, err := b.session.ThreadsArchived(channelID, before, limit)
-		if err != nil {
-			break
-		}
-
-		for _, thread := range archived.Threads {
+	// Check archived threads using public archive threads
+	publicThreads, err := b.session.ThreadsArchived(channelID, nil, 100)
+	if err == nil {
+		for _, thread := range publicThreads.Threads {
 			if re.MatchString(thread.Name) {
 				// Unarchive the thread
 				_, err := b.session.ChannelEdit(thread.ID, &discordgo.ChannelEdit{
@@ -321,14 +314,21 @@ func (b *DiscordBot) findReferendumThread(channelID string, refNum int) (*discor
 				}
 			}
 		}
+	}
 
-		if len(archived.Threads) < limit {
-			break
-		}
-
-		// Get the last thread ID for pagination
-		if len(archived.Threads) > 0 {
-			before = archived.Threads[len(archived.Threads)-1].ID
+	// Check private archived threads
+	privateThreads, err := b.session.ThreadsPrivateArchived(channelID, nil, 100)
+	if err == nil {
+		for _, thread := range privateThreads.Threads {
+			if re.MatchString(thread.Name) {
+				// Unarchive the thread
+				_, err := b.session.ChannelEdit(thread.ID, &discordgo.ChannelEdit{
+					Archived: boolPtr(false),
+				})
+				if err == nil {
+					return thread, nil
+				}
+			}
 		}
 	}
 
