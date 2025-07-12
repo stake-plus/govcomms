@@ -3,12 +3,14 @@ package webserver
 import (
 	"context"
 	"fmt"
+	"html"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
@@ -36,13 +38,31 @@ func NewMessages(db *gorm.DB, rdb *redis.Client) Messages {
 func (m Messages) Create(c *gin.Context) {
 	var req struct {
 		Proposal string   `json:"proposalRef" binding:"required"`
-		Body     string   `json:"body" binding:"required"`
-		Emails   []string `json:"emails"`
-		Title    string   `json:"title"`
+		Body     string   `json:"body" binding:"required,min=1,max=10000"`
+		Emails   []string `json:"emails" binding:"max=10"`
+		Title    string   `json:"title" binding:"max=255"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
+	}
+
+	// Sanitize input
+	req.Body = html.EscapeString(req.Body)
+	req.Title = html.EscapeString(req.Title)
+
+	// Validate UTF-8
+	if !utf8.ValidString(req.Body) || !utf8.ValidString(req.Title) {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "invalid characters in input"})
+		return
+	}
+
+	// Validate emails
+	for _, email := range req.Emails {
+		if !isValidEmail(email) {
+			c.JSON(http.StatusBadRequest, gin.H{"err": "invalid email format"})
+			return
+		}
 	}
 
 	parts := strings.Split(req.Proposal, "/")
@@ -51,12 +71,23 @@ func (m Messages) Create(c *gin.Context) {
 		return
 	}
 
-	refID, _ := strconv.ParseUint(parts[1], 10, 64)
+	// Validate network
+	network := strings.ToLower(parts[0])
+	if network != "polkadot" && network != "kusama" {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "invalid network"})
+		return
+	}
+
+	// Validate referendum ID
+	refID, err := strconv.ParseUint(parts[1], 10, 64)
+	if err != nil || refID == 0 || refID > 1000000 { // reasonable upper limit
+		c.JSON(http.StatusBadRequest, gin.H{"err": "invalid referendum ID"})
+		return
+	}
+
 	netID := uint8(1)
-	network := "polkadot"
-	if parts[0] == "kusama" {
+	if network == "kusama" {
 		netID = 2
-		network = "kusama"
 	}
 
 	// Get user address from JWT
@@ -64,7 +95,7 @@ func (m Messages) Create(c *gin.Context) {
 
 	// Check if referendum exists
 	var ref types.Ref
-	err := m.db.First(&ref, "network_id = ? AND ref_id = ?", netID, refID).Error
+	err = m.db.First(&ref, "network_id = ? AND ref_id = ?", netID, refID).Error
 
 	if err == gorm.ErrRecordNotFound {
 		// Only allow creating new referendum if user is submitting it
@@ -209,4 +240,9 @@ func (m Messages) List(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+func isValidEmail(email string) bool {
+	// Simple email validation
+	return strings.Contains(email, "@") && strings.Contains(email, ".") && len(email) < 256
 }

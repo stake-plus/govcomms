@@ -3,6 +3,7 @@ package webserver
 import (
 	"log"
 	"strings"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -46,6 +47,16 @@ func attachRoutes(r *gin.Engine, cfg config.Config, db *gorm.DB, rdb *redis.Clie
 		allowedOrigins = append(allowedOrigins, "http://localhost:3000")
 	}
 
+	r.Use(func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("X-XSS-Protection", "1; mode=block")
+		c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';")
+		c.Next()
+	})
+
 	// Add CORS middleware
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     allowedOrigins,
@@ -59,13 +70,25 @@ func attachRoutes(r *gin.Engine, cfg config.Config, db *gorm.DB, rdb *redis.Clie
 	msgH := NewMessages(db, rdb)
 	voteH := NewVotes(db)
 
+	// Create rate limiters
+	authLimiter := NewRateLimiter(5, 1*time.Minute)    // 5 auth attempts per minute
+	apiLimiter := NewRateLimiter(30, 1*time.Minute)    // 30 API calls per minute
+	messageLimiter := NewRateLimiter(5, 5*time.Minute) // 5 messages per 5 minutes
+
+	authH = NewAuth(rdb, []byte(cfg.JWTSecret), db)
+	msgH = NewMessages(db, rdb)
+	voteH = NewVotes(db)
+
 	v1 := r.Group("/v1")
 	{
-		v1.POST("/auth/challenge", authH.Challenge)
-		v1.POST("/auth/verify", authH.Verify)
+		// Apply rate limiting to auth endpoints
+		v1.POST("/auth/challenge", RateLimitMiddleware(authLimiter), authH.Challenge)
+		v1.POST("/auth/verify", RateLimitMiddleware(authLimiter), authH.Verify)
 
 		secured := v1.Use(JWTMiddleware([]byte(cfg.JWTSecret)))
-		secured.POST("/messages", msgH.Create)
+		secured.Use(RateLimitMiddleware(apiLimiter))
+
+		secured.POST("/messages", RateLimitMiddleware(messageLimiter), msgH.Create)
 		secured.GET("/messages/:net/:id", msgH.List)
 		secured.POST("/votes", voteH.Cast)
 		secured.GET("/votes/:net/:id", voteH.Summary)
@@ -74,7 +97,8 @@ func attachRoutes(r *gin.Engine, cfg config.Config, db *gorm.DB, rdb *redis.Clie
 	// Add in attachRoutes function
 	admin := v1.Group("/admin")
 	admin.Use(JWTMiddleware([]byte(cfg.JWTSecret)))
-	admin.Use(AdminMiddleware(db)) // Add admin middleware
+	admin.Use(AdminMiddleware(db))
+	admin.Use(RateLimitMiddleware(apiLimiter))
 	{
 		adminH := NewAdmin(db)
 		admin.POST("/discord/channel", adminH.SetDiscordChannel)

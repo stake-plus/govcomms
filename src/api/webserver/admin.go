@@ -1,7 +1,9 @@
 package webserver
 
 import (
+	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stake-plus/polkadot-gov-comms/src/api/types"
@@ -18,13 +20,30 @@ func NewAdmin(db *gorm.DB) Admin {
 
 func (a Admin) SetDiscordChannel(c *gin.Context) {
 	var req struct {
-		NetworkID        uint8  `json:"networkId" binding:"required"`
-		DiscordChannelID string `json:"discordChannelId" binding:"required"`
+		NetworkID        uint8  `json:"networkId" binding:"required,min=1,max=255"`
+		DiscordChannelID string `json:"discordChannelId" binding:"required,min=10,max=30"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
+
+	// Validate Discord channel ID format (should be numeric)
+	if _, err := strconv.ParseUint(req.DiscordChannelID, 10, 64); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "invalid Discord channel ID"})
+		return
+	}
+
+	// Verify network exists
+	var network types.Network
+	if err := a.db.First(&network, "id = ?", req.NetworkID).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "network not found"})
+		return
+	}
+
+	// Log admin action
+	log.Printf("Admin %s updating Discord channel for network %d to %s",
+		c.GetString("addr"), req.NetworkID, req.DiscordChannelID)
 
 	// Update network's discord channel
 	if err := a.db.Model(&types.Network{}).Where("id = ?", req.NetworkID).

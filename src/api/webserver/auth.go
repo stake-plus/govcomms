@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -32,12 +33,25 @@ func randomHex32() (string, error) {
 	}
 	return "0x" + hex.EncodeToString(b), nil
 }
-
 func (a Auth) Challenge(c *gin.Context) {
 	var req struct {
-		Address string `json:"address" binding:"required"`
+		Address string `json:"address" binding:"required,min=32,max=128"`
 		Method  string `json:"method"  binding:"required,oneof=walletconnect polkadotjs airgap"`
 	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+
+	// Log authentication attempt
+	log.Printf("Auth challenge for %s from IP %s using %s", req.Address, c.ClientIP(), req.Method)
+
+	// Validate address format
+	if !isValidPolkadotAddress(req.Address) {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "invalid address format"})
+		return
+	}
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
@@ -144,4 +158,13 @@ func (a Auth) Verify(c *gin.Context) {
 
 	log.Printf("Successfully authenticated %s", req.Address)
 	c.JSON(http.StatusOK, gin.H{"token": token})
+}
+
+func isValidPolkadotAddress(addr string) bool {
+	// Basic validation - starts with expected prefix and has reasonable length
+	if strings.HasPrefix(addr, "0x") {
+		return len(addr) == 66 // 0x + 64 hex chars
+	}
+	// SS58 addresses are typically 47-48 chars
+	return len(addr) >= 47 && len(addr) <= 50
 }

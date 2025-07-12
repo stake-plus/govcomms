@@ -1,6 +1,7 @@
 package data
 
 import (
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -49,4 +50,16 @@ func ensureParam(dsn, key, val string) string {
 		sep = "&"
 	}
 	return dsn + sep + key + "=" + val
+}
+
+// Add validation helper
+func ValidateIdentifier(name string) error {
+	// Only allow alphanumeric and underscore
+	for _, r := range name {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '_') {
+			return fmt.Errorf("invalid identifier: %s", name)
+		}
+	}
+	return nil
 }
