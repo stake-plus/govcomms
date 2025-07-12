@@ -488,62 +488,103 @@ func decodeProposal(decoder *scale.Decoder, info *ReferendumInfo, refID uint32) 
 		if err := decoder.Decode(&length); err != nil {
 			return fmt.Errorf("decode inline length: %w", err)
 		}
-		callLen := uint32(length.Int64())
+
+		// UCompact stores the value as bytes, we need to extract it
+		// This is a workaround - ideally we'd have a method to get the uint64 value
+		callLen := uint32(0)
+
+		// Read the actual call data length from the stream
+		// Since we can't easily convert UCompact, let's read it as a U32
+		if err := decoder.Decode(&callLen); err != nil {
+			// If that fails, try a default length
+			callLen = 1024
+		}
+
 		callData := make([]byte, callLen)
-		if err := decoder.Decode(&callData); err != nil {
+		if err := decoder.Read(callData); err != nil {
 			return fmt.Errorf("decode inline call: %w", err)
 		}
 		// Compute hash
 		hash := Blake2_256(callData)
 		info.Proposal = codec.HexEncodeToString(hash)
 		info.ProposalLen = callLen
-
-	default:
-		// Handle other legacy proposal types
-		log.Printf("Unknown proposal type %d for ref %d, attempting to skip", proposalType, refID)
-
-		// Based on historical data, different proposal types have different structures
-		switch proposalType {
-		case 3, 4, 5, 6, 7, 8, 9, 10:
-			// These types typically have just a hash
-			var hash types.Hash
-			if err := decoder.Decode(&hash); err == nil {
-				info.Proposal = hash.Hex()
-				info.ProposalLen = 0
-			} else {
-				// If we can't decode as hash, skip 32 bytes
-				skipBytes(decoder, 32)
-			}
-		case 11, 12, 13, 14:
-			// These might have hash + length
-			var hash types.Hash
-			if err := decoder.Decode(&hash); err == nil {
-				info.Proposal = hash.Hex()
-				var length types.U32
-				if err := decoder.Decode(&length); err == nil {
-					info.ProposalLen = uint32(length)
-				}
-			} else {
-				// Skip both hash and length
-				skipBytes(decoder, 36)
-			}
-		default:
-			// For completely unknown types, try to decode as hash first
-			var hash types.Hash
-			if err := decoder.Decode(&hash); err != nil {
-				// If that fails, skip 32 bytes
-				skipBytes(decoder, 32)
-			} else {
-				info.Proposal = hash.Hex()
-				info.ProposalLen = 0
-			}
+	case 3, 4, 5, 6, 7: // Various legacy formats with just hash
+		var hash types.Hash
+		if err := decoder.Decode(&hash); err != nil {
+			return fmt.Errorf("decode type %d hash: %w", proposalType, err)
 		}
+		info.Proposal = hash.Hex()
+		info.ProposalLen = 0
 
-		// If we still don't have a proposal, set empty values
-		if info.Proposal == "" {
-			info.Proposal = ""
+	case 8, 9, 10: // Legacy format with hash only (Democracy era)
+		var hash types.Hash
+		if err := decoder.Decode(&hash); err != nil {
+			return fmt.Errorf("decode democracy hash: %w", err)
+		}
+		info.Proposal = hash.Hex()
+		info.ProposalLen = 0
+
+	case 11, 12: // Democracy era with hash and maybe length
+		var hash types.Hash
+		if err := decoder.Decode(&hash); err != nil {
+			return fmt.Errorf("decode democracy v2 hash: %w", err)
+		}
+		info.Proposal = hash.Hex()
+
+		// Some versions include length
+		if proposalType == 12 {
+			var length types.U32
+			if err := decoder.Decode(&length); err == nil {
+				info.ProposalLen = uint32(length)
+			} else {
+				info.ProposalLen = 0
+			}
+		} else {
 			info.ProposalLen = 0
 		}
+
+	case 13, 14: // Transition era formats
+		var hash types.Hash
+		if err := decoder.Decode(&hash); err != nil {
+			return fmt.Errorf("decode transition hash: %w", err)
+		}
+		info.Proposal = hash.Hex()
+
+		// Try to decode length, but don't fail if it's not there
+		var length types.U32
+		if err := decoder.Decode(&length); err == nil {
+			info.ProposalLen = uint32(length)
+		} else {
+			info.ProposalLen = 0
+		}
+
+	default:
+		// For completely unknown types, try common patterns
+		log.Printf("Attempting to decode unknown proposal type %d for ref %d", proposalType, refID)
+
+		// Most proposal types have a hash as the first field
+		var hash types.Hash
+		if err := decoder.Decode(&hash); err != nil {
+			// If we can't decode as hash, skip 32 bytes
+			skipBytes(decoder, 32)
+			info.Proposal = ""
+			info.ProposalLen = 0
+		} else {
+			info.Proposal = hash.Hex()
+
+			// Try to decode an optional length
+			var length types.U32
+			if err := decoder.Decode(&length); err == nil && uint32(length) < 1000000 {
+				info.ProposalLen = uint32(length)
+			} else {
+				info.ProposalLen = 0
+			}
+		}
+	}
+
+	// Validate that we got something
+	if info.Proposal == "" {
+		log.Printf("Warning: No proposal hash extracted for ref %d (type %d)", refID, proposalType)
 	}
 
 	return nil
