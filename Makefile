@@ -7,6 +7,23 @@ DOCKER_COMPOSE = docker-compose
 GO = go
 NPM = npm
 
+# OS detection
+ifeq ($(OS),Windows_NT)
+    RM = cmd /C if exist
+    RMDIR = rmdir /S /Q
+    MKDIR = mkdir
+    CP = xcopy /E /Y /I
+    EXE = .exe
+    SEP = \\
+else
+    RM = rm -f
+    RMDIR = rm -rf
+    MKDIR = mkdir -p
+    CP = cp -r
+    EXE =
+    SEP = /
+endif
+
 # Default target
 all: build
 
@@ -16,24 +33,24 @@ build: api discordbot frontend
 # Build API
 api:
 	@echo "Building API..."
-	$(GO) build -o bin/api.exe ./src/api
+	$(GO) build -o bin/api$(EXE) ./src/api
 
 # Build Discord bot
 discordbot:
 	@echo "Building Discord bot..."
-	$(GO) build -o bin/discordbot.exe ./src/discordbot
+	$(GO) build -o bin/discordbot$(EXE) ./src/discordbot
 
 # Build indexer service
 indexer:
 	@echo "Building indexer..."
-	$(GO) build -o bin/indexer.exe ./src/indexer
+	$(GO) build -o bin/indexer$(EXE) ./src/indexer
 
 # Build frontend
 frontend:
 	@echo "Building frontend..."
 	cd src/frontend && $(NPM) install && $(NPM) run build
-	@if not exist public mkdir public
-	xcopy /E /Y /I src\frontend\dist public
+	$(MKDIR) public
+	$(CP) src$(SEP)frontend$(SEP)dist$(SEP)* public$(SEP)
 
 # Run tests
 test:
@@ -43,8 +60,8 @@ test:
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
-	@if exist bin rmdir /S /Q bin
-	@if exist public rmdir /S /Q public
+	$(RMDIR) bin
+	$(RMDIR) public
 
 # Docker commands
 docker-up:
