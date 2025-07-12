@@ -67,6 +67,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 			}
 		}
 	}
+
 	log.Printf("indexer polkadot: found %d existing referenda", len(existingRefs))
 
 	// Convert map to sorted slice for ordered processing
@@ -102,6 +103,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 
 		// Get referendum info - the client handles historical lookups
 		info, err := client.GetReferendumInfo(refID)
+
 		var proposal types.Proposal
 		dbErr := db.Where("network_id = ? AND ref_id = ?", 1, refID).First(&proposal).Error
 
@@ -110,7 +112,6 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 			if !strings.Contains(err.Error(), "does not exist") {
 				log.Printf("indexer polkadot: failed to get info for ref %d: %v", refID, err)
 			}
-
 			if dbErr == gorm.ErrRecordNotFound {
 				// Create with minimal info for cleared refs
 				proposal = types.Proposal{
@@ -129,6 +130,35 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 				}
 			}
 			continue
+		}
+
+		// For finished referenda with unknown submitter, try to fetch historical data
+		if info.Submission.Who == "Unknown" && info.Status != "Ongoing" {
+			// Try to get historical data from when it was ongoing
+			historicalInfo := fetchHistoricalReferendumInfo(client, refID, info)
+			if historicalInfo != nil && historicalInfo.Submission.Who != "Unknown" {
+				// Use the historical submitter info
+				info.Submission = historicalInfo.Submission
+				if historicalInfo.DecisionDeposit != nil {
+					info.DecisionDeposit = historicalInfo.DecisionDeposit
+				}
+				if historicalInfo.Track > 0 {
+					info.Track = historicalInfo.Track
+				}
+				if historicalInfo.Origin != "" {
+					info.Origin = historicalInfo.Origin
+				}
+				if historicalInfo.Proposal != "" {
+					info.Proposal = historicalInfo.Proposal
+					info.ProposalLen = historicalInfo.ProposalLen
+				}
+				if historicalInfo.Enactment != "" {
+					info.Enactment = historicalInfo.Enactment
+				}
+				if historicalInfo.Submitted > 0 {
+					info.Submitted = historicalInfo.Submitted
+				}
+			}
 		}
 
 		// We have referendum info
@@ -360,6 +390,57 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 
 	log.Printf("indexer polkadot: sync complete - processed %d, created %d, updated %d, errors %d proposals",
 		processed, created, updated, errors)
+}
+
+// fetchHistoricalReferendumInfo tries to get referendum info from when it was ongoing
+func fetchHistoricalReferendumInfo(client *polkadot.Client, refID uint32, currentInfo *polkadot.ReferendumInfo) *polkadot.ReferendumInfo {
+	// Determine which block to query based on the current status
+	var targetBlock uint64
+
+	switch currentInfo.Status {
+	case "Approved":
+		if currentInfo.ApprovedAt > 0 {
+			targetBlock = uint64(currentInfo.ApprovedAt) - 1
+		}
+	case "Rejected":
+		if currentInfo.RejectedAt > 0 {
+			targetBlock = uint64(currentInfo.RejectedAt) - 1
+		}
+	case "Cancelled":
+		if currentInfo.CancelledAt > 0 {
+			targetBlock = uint64(currentInfo.CancelledAt) - 1
+		}
+	case "TimedOut":
+		if currentInfo.TimedOutAt > 0 {
+			targetBlock = uint64(currentInfo.TimedOutAt) - 1
+		}
+	case "Killed":
+		if currentInfo.KilledAt > 0 {
+			targetBlock = uint64(currentInfo.KilledAt) - 1
+		}
+	default:
+		return nil
+	}
+
+	if targetBlock == 0 {
+		return nil
+	}
+
+	// Get block hash for the target block
+	blockHash, err := client.GetBlockHash(&targetBlock)
+	if err != nil {
+		log.Printf("indexer polkadot: failed to get block hash for ref %d at block %d: %v", refID, targetBlock, err)
+		return nil
+	}
+
+	// Get referendum info at that block
+	historicalInfo, err := client.GetReferendumInfoAt(refID, blockHash)
+	if err != nil {
+		log.Printf("indexer polkadot: failed to get historical info for ref %d at block %d: %v", refID, targetBlock, err)
+		return nil
+	}
+
+	return historicalInfo
 }
 
 // indexTracks indexes track configuration
