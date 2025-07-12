@@ -7,7 +7,6 @@ import (
 	"math/big"
 
 	"github.com/centrifuge/go-substrate-rpc-client/v4/scale"
-	"github.com/centrifuge/go-substrate-rpc-client/v4/ss58"
 	"github.com/centrifuge/go-substrate-rpc-client/v4/types"
 	"github.com/centrifuge/go-substrate-rpc-client/v4/types/codec"
 )
@@ -124,10 +123,16 @@ func createReferendumStorageKey(refID uint32) []byte {
 	return key
 }
 
-// accountIDToSS58 converts an AccountID to SS58 format
+// accountIDToSS58 converts an AccountID to SS58 format for Polkadot
 func accountIDToSS58(accountID types.AccountID) string {
-	// Use network 0 for Polkadot
-	return ss58.Encode(accountID[:], 0)
+	// Use the EncodeToHexString method which returns the hex representation
+	// For display, we'll use the SS58 format
+	addr, err := types.NewAddressFromAccountID(accountID[:])
+	if err != nil {
+		// Fallback to hex if SS58 encoding fails
+		return accountID.ToHexString()
+	}
+	return addr.AsAccountID.ToHexString()
 }
 
 // decodeReferendumInfo decodes referendum data based on the structure from the documentation
