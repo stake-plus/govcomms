@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS `networks` (
   `name` varchar(32) NOT NULL,
   `symbol` varchar(8) NOT NULL,
   `url` varchar(256) NOT NULL,
+  `discord_channel_id` varchar(256) NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `idx_network_name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -157,8 +158,8 @@ CREATE TABLE IF NOT EXISTS `preimages` (
 
 -- Insert initial data
 INSERT INTO networks (id, name, symbol, url) VALUES 
-    (1, 'Polkadot', 'DOT', 'https://polkadot.network'),
-    (2, 'Kusama', 'KSM', 'https://kusama.network');
+    (1, 'Polkadot', 'DOT', 'https://polkadot.network', '1234'),
+    (2, 'Kusama', 'KSM', 'https://kusama.network', '1234');
 
 INSERT INTO rpcs (id, network_id, url, active) VALUES
     (1, 1, 'wss://polkadot.dotters.network/', 1),
