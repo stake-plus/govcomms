@@ -1,3 +1,5 @@
+// File: src/api/config/config.go
+
 package config
 
 import (
@@ -46,14 +48,10 @@ func Load(db *gorm.DB) Config {
 		jwtSecret = getenv("JWT_SECRET", "9eafd87a084c0cf4ededa3b0ad774b77be9bb1b1a5696b9e5b11d59b71fa57ce")
 	}
 
-	// Check if SSL is enabled
-	enableSSL := false
-	sslCert := getenv("SSL_CERT", "")
-	sslKey := getenv("SSL_KEY", "")
-
-	if sslCert != "" && sslKey != "" {
-		enableSSL = true
-	}
+	// Check if SSL is enabled - only if BOTH cert and key are provided
+	sslCert := os.Getenv("SSL_CERT")
+	sslKey := os.Getenv("SSL_KEY")
+	enableSSL := sslCert != "" && sslKey != ""
 
 	return Config{
 		MySQLDSN:     getenv("MYSQL_DSN", "govcomms:DK3mfv93jf4m@tcp(172.16.254.7:3306)/govcomms"),

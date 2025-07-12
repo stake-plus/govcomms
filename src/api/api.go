@@ -1,3 +1,5 @@
+// File: src/api/api.go
+
 package main
 
 import (
@@ -34,7 +36,6 @@ func main() {
 
 	// Load config with database
 	cfg := config.Load(db)
-
 	rdb := data.MustRedis(cfg.RedisURL)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -64,22 +65,22 @@ func main() {
 	// Start server
 	go func() {
 		var err error
-		if cfg.EnableSSL {
+		if cfg.EnableSSL && cfg.SSLCert != "" && cfg.SSLKey != "" {
 			log.Printf("Starting HTTPS server on port %s", cfg.Port)
-
 			// Create TLS reloader
 			tlsReloader, err := webserver.NewTLSReloader(cfg.SSLCert, cfg.SSLKey)
 			if err != nil {
-				log.Fatalf("Failed to create TLS reloader: %v", err)
+				log.Printf("Failed to create TLS reloader: %v. Falling back to HTTP", err)
+				log.Printf("Starting HTTP server on port %s", cfg.Port)
+				err = httpSrv.ListenAndServe()
+			} else {
+				// Use custom TLS config
+				httpSrv.TLSConfig = tlsReloader.GetConfig()
+				// ListenAndServeTLS with empty cert/key paths since we're using GetCertificate
+				err = httpSrv.ListenAndServeTLS("", "")
 			}
-
-			// Use custom TLS config
-			httpSrv.TLSConfig = tlsReloader.GetConfig()
-
-			// ListenAndServeTLS with empty cert/key paths since we're using GetCertificate
-			err = httpSrv.ListenAndServeTLS("", "")
 		} else {
-			log.Printf("Starting HTTP server on port %s", cfg.Port)
+			log.Printf("Starting HTTP server on port %s (SSL not configured)", cfg.Port)
 			err = httpSrv.ListenAndServe()
 		}
 
@@ -88,14 +89,13 @@ func main() {
 		}
 	}()
 
-	log.Printf("GovComms API listening on %s (SSL: %v)", cfg.Port, cfg.EnableSSL)
+	log.Printf("GovComms API listening on %s (SSL: %v)", cfg.Port, cfg.EnableSSL && cfg.SSLCert != "" && cfg.SSLKey != "")
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
 
 	cancel()
-
 	shutCtx, cancelShut := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShut()
 	_ = httpSrv.Shutdown(shutCtx)
