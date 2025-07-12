@@ -42,15 +42,22 @@ func (v Votes) Cast(c *gin.Context) {
 		return
 	}
 
+	// Check if user is a DAO member
+	userAddr := c.GetString("addr")
+	var daoMember types.DaoMember
+	if err := v.db.First(&daoMember, "address = ?", userAddr).Error; err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"err": "only DAO members can vote"})
+		return
+	}
+
 	// Convert choice to int
 	choiceMap := map[string]int16{"aye": 1, "nay": 0, "abstain": 2}
 	choiceValue := choiceMap[req.Choice]
 
-	v.db.Where("ref_id = ? AND dao_member_id = ?", ref.ID, c.GetString("addr")).Delete(&types.DaoVote{})
-
+	v.db.Where("ref_id = ? AND dao_member_id = ?", ref.ID, userAddr).Delete(&types.DaoVote{})
 	vote := types.DaoVote{
 		RefID:       ref.ID,
-		DaoMemberID: c.GetString("addr"),
+		DaoMemberID: userAddr,
 		Choice:      choiceValue,
 	}
 	if err := v.db.Create(&vote).Error; err != nil {
@@ -64,7 +71,6 @@ func (v Votes) Cast(c *gin.Context) {
 func (v Votes) Summary(c *gin.Context) {
 	net := c.Param("net")
 	refNum, _ := strconv.ParseUint(c.Param("id"), 10, 64)
-
 	netID := uint8(1)
 	if net == "kusama" {
 		netID = 2
@@ -74,6 +80,18 @@ func (v Votes) Summary(c *gin.Context) {
 	if err := v.db.First(&ref, "network_id = ? AND ref_id = ?", netID, refNum).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"err": "proposal not found"})
 		return
+	}
+
+	// Check if user is authorized
+	userAddr := c.GetString("addr")
+	var auth types.RefProponent
+	if err := v.db.First(&auth, "ref_id = ? AND address = ?", ref.ID, userAddr).Error; err != nil {
+		// Check if user is a DAO member
+		var daoMember types.DaoMember
+		if err := v.db.First(&daoMember, "address = ?", userAddr).Error; err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"err": "not authorized to view votes"})
+			return
+		}
 	}
 
 	type agg struct {

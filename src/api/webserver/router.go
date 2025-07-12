@@ -74,6 +74,7 @@ func attachRoutes(r *gin.Engine, cfg config.Config, db *gorm.DB, rdb *redis.Clie
 	// Add in attachRoutes function
 	admin := v1.Group("/admin")
 	admin.Use(JWTMiddleware([]byte(cfg.JWTSecret)))
+	admin.Use(AdminMiddleware(db)) // Add admin middleware
 	{
 		adminH := NewAdmin(db)
 		admin.POST("/discord/channel", adminH.SetDiscordChannel)

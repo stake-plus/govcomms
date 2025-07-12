@@ -31,6 +31,7 @@ type Setting struct {
 type DaoMember struct {
 	Address string `gorm:"primaryKey;size:128"`
 	Discord string `gorm:"size:64"`
+	IsAdmin bool   `gorm:"default:false"` // Add this field
 }
 
 // Proposals/Referenda

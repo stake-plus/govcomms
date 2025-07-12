@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS `network_rpcs` (
 CREATE TABLE IF NOT EXISTS `dao_members` (
   `address` varchar(128) NOT NULL,
   `discord` varchar(64) DEFAULT NULL,
+  `is_admin` boolean DEFAULT false,
   PRIMARY KEY (`address`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

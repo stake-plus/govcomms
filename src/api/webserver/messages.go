@@ -154,6 +154,18 @@ func (m Messages) List(c *gin.Context) {
 		return
 	}
 
+	// Check if user is authorized for this referendum
+	userAddr := c.GetString("addr")
+	var auth types.RefProponent
+	if err := m.db.First(&auth, "ref_id = ? AND address = ?", ref.ID, userAddr).Error; err != nil {
+		// Check if user is a DAO member
+		var daoMember types.DaoMember
+		if err := m.db.First(&daoMember, "address = ?", userAddr).Error; err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"err": "not authorized to view this proposal"})
+			return
+		}
+	}
+
 	var msgs []types.RefMessage
 	m.db.Where("ref_id = ?", ref.ID).Order("created_at asc").Find(&msgs)
 
