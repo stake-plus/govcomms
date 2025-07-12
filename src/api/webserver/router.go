@@ -28,23 +28,21 @@ func attachRoutes(r *gin.Engine, cfg config.Config, db *gorm.DB, rdb *redis.Clie
 	if gcURL == "" {
 		gcURL = "http://localhost:3000"
 	}
-
 	if gcapiURL == "" {
 		gcapiURL = "http://localhost:443"
 	}
 
-	allowedOrigins := []string{"http://localhost:3000"} // Always allow localhost for dev
-	if gcURL != "" {
+	allowedOrigins := []string{
+		"http://localhost:3000",
+		"https://ocp.reeeeeeeeee.io",
+		"https://ocp.reeeeeeeeee.io:9001",
+	}
+
+	if gcURL != "" && !strings.Contains(strings.Join(allowedOrigins, ","), gcURL) {
 		allowedOrigins = append(allowedOrigins, gcURL)
 	}
-
-	if gcapiURL != "" {
+	if gcapiURL != "" && !strings.Contains(strings.Join(allowedOrigins, ","), gcapiURL) {
 		allowedOrigins = append(allowedOrigins, gcapiURL)
-	}
-
-	// Always allow localhost for development
-	if !strings.Contains(gcURL, "localhost") {
-		allowedOrigins = append(allowedOrigins, "http://localhost:3000")
 	}
 
 	r.Use(func(c *gin.Context) {
@@ -83,7 +81,6 @@ func attachRoutes(r *gin.Engine, cfg config.Config, db *gorm.DB, rdb *redis.Clie
 
 		secured := v1.Use(JWTMiddleware([]byte(cfg.JWTSecret)))
 		secured.Use(RateLimitMiddleware(apiLimiter))
-
 		secured.POST("/messages", RateLimitMiddleware(messageLimiter), msgH.Create)
 		secured.GET("/messages/:net/:id", msgH.List)
 		secured.POST("/votes", voteH.Cast)
