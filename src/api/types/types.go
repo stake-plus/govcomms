@@ -7,11 +7,12 @@ import "time"
 //
 
 type Network struct {
-	ID     uint8  `gorm:"primaryKey"`
-	Name   string `gorm:"size:32;unique;not null"`
-	Symbol string `gorm:"size:8;not null"`
-	URL    string `gorm:"size:256;not null"`
-	RPCs   []RPC  `gorm:"foreignKey:NetworkID"`
+	ID               uint8  `gorm:"primaryKey"`
+	Name             string `gorm:"size:32;unique;not null"`
+	Symbol           string `gorm:"size:8;not null"`
+	URL              string `gorm:"size:256;not null"`
+	DiscordChannelID string `gorm:"size:64"`
+	RPCs             []RPC  `gorm:"foreignKey:NetworkID"`
 }
 
 type RPC struct {

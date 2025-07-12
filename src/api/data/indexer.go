@@ -377,9 +377,6 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 			log.Printf("indexer polkadot: processed %d referenda (created: %d, updated: %d, errors: %d)",
 				processed, created, updated, errors)
 		}
-
-		// Small delay to not hammer the node
-		time.Sleep(2 * time.Millisecond)
 	}
 
 	// Index track information
