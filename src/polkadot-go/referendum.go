@@ -293,60 +293,10 @@ func decodeFinishedReferendum(decoder *scale.Decoder, status string) (*Referendu
 		info.TimedOutAt = since
 	}
 
-	// For Approved and Rejected, there might be additional tally data before the deposit
-	// This is why some refs decode properly and others don't
-	if status == "Approved" || status == "Rejected" {
-		// Some versions have tally data here
-		// Try to peek ahead to see if we have tally data (3 u128 values)
-		// If the next byte is 0 or 1 (Option indicator), it's the deposit
-		// Otherwise, it might be tally data
-
-		peekByte, err := decoder.ReadOneByte()
-		if err != nil {
-			// No more data, set defaults
-			info.Submission.Who = "Unknown"
-			info.Submission.Amount = "0"
-			return info, nil
-		}
-
-		// Put the byte back by creating a new decoder with the remaining data
-		remainingData := make([]byte, 1024) // Assuming enough buffer
-		n := 0
-		buf := make([]byte, 1)
-		for {
-			if err := decoder.Decode(&buf); err != nil {
-				break
-			}
-			remainingData[n] = buf[0]
-			n++
-			if n >= len(remainingData)-1 {
-				break
-			}
-		}
-		newData := append([]byte{peekByte}, remainingData[:n]...)
-		decoder = scale.NewDecoder(bytes.NewReader(newData))
-
-		// If it's not 0 or 1, assume we have tally data
-		if peekByte > 1 {
-			// Decode tally (3 x U128)
-			var ayes, nays, support types.U128
-			// Put the byte back and decode as U128
-			decoder = scale.NewDecoder(bytes.NewReader(newData))
-			if err := decoder.Decode(&ayes); err == nil {
-				decoder.Decode(&nays)
-				decoder.Decode(&support)
-				// We decoded tally, continue to deposit
-			} else {
-				// Failed to decode as tally, reset decoder
-				decoder = scale.NewDecoder(bytes.NewReader(newData))
-			}
-		}
-	}
-
 	// Deposit - Option<Deposit<T::AccountId, BalanceOf<T, I>>>
 	hasDeposit, err := decoder.ReadOneByte()
 	if err != nil {
-		// Some referenda might not have deposit info at all
+		// No more data, set defaults
 		info.Submission.Who = "Unknown"
 		info.Submission.Amount = "0"
 		return info, nil
@@ -355,15 +305,20 @@ func decodeFinishedReferendum(decoder *scale.Decoder, status string) (*Referendu
 	if hasDeposit == 1 {
 		var who types.AccountID
 		if err := decoder.Decode(&who); err != nil {
-			return nil, fmt.Errorf("decode %s deposit who: %w", status, err)
+			// If we can't decode the account, set defaults
+			info.Submission.Who = "Unknown"
+			info.Submission.Amount = "0"
+			return info, nil
 		}
 		info.Submission.Who = accountIDToSS58(who)
 
 		var amount types.U128
 		if err := decoder.Decode(&amount); err != nil {
-			return nil, fmt.Errorf("decode %s deposit amount: %w", status, err)
+			// If we can't decode the amount, at least we have the account
+			info.Submission.Amount = "0"
+		} else {
+			info.Submission.Amount = amount.String()
 		}
-		info.Submission.Amount = amount.String()
 	} else {
 		info.Submission.Who = "Unknown"
 		info.Submission.Amount = "0"
@@ -546,17 +501,49 @@ func decodeProposal(decoder *scale.Decoder, info *ReferendumInfo, refID uint32) 
 	default:
 		// Handle other legacy proposal types
 		log.Printf("Unknown proposal type %d for ref %d, attempting to skip", proposalType, refID)
-		// Try to skip based on common patterns
-		if proposalType >= 3 && proposalType <= 10 {
-			skipBytes(decoder, 32) // Most legacy types have a hash
-			if proposalType >= 11 && proposalType <= 14 {
-				skipBytes(decoder, 4) // Some also have length
+
+		// Based on historical data, different proposal types have different structures
+		switch proposalType {
+		case 3, 4, 5, 6, 7, 8, 9, 10:
+			// These types typically have just a hash
+			var hash types.Hash
+			if err := decoder.Decode(&hash); err == nil {
+				info.Proposal = hash.Hex()
+				info.ProposalLen = 0
+			} else {
+				// If we can't decode as hash, skip 32 bytes
+				skipBytes(decoder, 32)
 			}
-		} else {
-			skipBytes(decoder, 32) // Default skip
+		case 11, 12, 13, 14:
+			// These might have hash + length
+			var hash types.Hash
+			if err := decoder.Decode(&hash); err == nil {
+				info.Proposal = hash.Hex()
+				var length types.U32
+				if err := decoder.Decode(&length); err == nil {
+					info.ProposalLen = uint32(length)
+				}
+			} else {
+				// Skip both hash and length
+				skipBytes(decoder, 36)
+			}
+		default:
+			// For completely unknown types, try to decode as hash first
+			var hash types.Hash
+			if err := decoder.Decode(&hash); err != nil {
+				// If that fails, skip 32 bytes
+				skipBytes(decoder, 32)
+			} else {
+				info.Proposal = hash.Hex()
+				info.ProposalLen = 0
+			}
 		}
-		info.Proposal = ""
-		info.ProposalLen = 0
+
+		// If we still don't have a proposal, set empty values
+		if info.Proposal == "" {
+			info.Proposal = ""
+			info.ProposalLen = 0
+		}
 	}
 
 	return nil
