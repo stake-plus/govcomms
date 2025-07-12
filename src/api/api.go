@@ -28,39 +28,14 @@ var allModels = []interface{}{
 }
 
 func migrate(db *gorm.DB) {
-	// First, try to run migrations to update column sizes
+	// Disable foreign key constraints during migration
+	db.Exec("SET FOREIGN_KEY_CHECKS = 0")
+	defer db.Exec("SET FOREIGN_KEY_CHECKS = 1")
+
+	// Just create/update table structure, don't let GORM manage foreign keys
 	err := db.AutoMigrate(allModels...)
 	if err != nil {
-		log.Printf("auto-migrate failed (%v) — attempting to alter columns", err)
-		// Try to alter columns directly for existing tables
-		alterStatements := []string{
-			"ALTER TABLE refs MODIFY submitter VARCHAR(128)",
-			"ALTER TABLE refs MODIFY decision_deposit_who VARCHAR(128)",
-			"ALTER TABLE refs MODIFY submission_deposit_who VARCHAR(128)",
-			"ALTER TABLE ref_proponents MODIFY address VARCHAR(128)",
-			"ALTER TABLE ref_messages MODIFY author VARCHAR(128)",
-			"ALTER TABLE dao_members MODIFY address VARCHAR(128)",
-			"ALTER TABLE dao_votes MODIFY dao_member_id VARCHAR(128)",
-		}
-
-		for _, stmt := range alterStatements {
-			if err := db.Exec(stmt).Error; err != nil {
-				log.Printf("Failed to execute %s: %v", stmt, err)
-			}
-		}
-
-		// Try migrations again
-		if err := db.AutoMigrate(allModels...); err != nil {
-			log.Printf("auto-migrate still failed after column alterations, dropping & recreating schema")
-			// Drop and recreate
-			_ = db.Migrator().DropTable(
-				"dao_votes", "ref_subs", "ref_proponents", "ref_messages",
-				"refs", "network_rpcs", "dao_members", "networks",
-			)
-			if err := db.AutoMigrate(allModels...); err != nil {
-				log.Fatalf("migrate after drop: %v", err)
-			}
-		}
+		log.Printf("auto-migrate failed: %v", err)
 	}
 }
 

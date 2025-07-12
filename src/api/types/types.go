@@ -4,21 +4,19 @@ import "time"
 
 // Networks
 type Network struct {
-	ID               uint8        `gorm:"primaryKey"`
-	Name             string       `gorm:"size:32;unique;not null"`
-	Symbol           string       `gorm:"size:8;not null"`
-	URL              string       `gorm:"size:256;not null"`
-	DiscordChannelID string       `gorm:"size:64"`
-	RPCs             []NetworkRPC `gorm:"foreignKey:NetworkID"`
+	ID               uint8  `gorm:"primaryKey"`
+	Name             string `gorm:"size:32;unique;not null"`
+	Symbol           string `gorm:"size:8;not null"`
+	URL              string `gorm:"size:256;not null"`
+	DiscordChannelID string `gorm:"size:64"`
 }
 
 // Network RPC endpoints
 type NetworkRPC struct {
 	ID        uint32 `gorm:"primaryKey"`
 	NetworkID uint8
-	URL       string  `gorm:"size:256;not null"`
-	Active    bool    `gorm:"default:true"`
-	Network   Network `gorm:"foreignKey:NetworkID"`
+	URL       string `gorm:"size:256;not null"`
+	Active    bool   `gorm:"default:true"`
 }
 
 // DAO members
@@ -59,21 +57,16 @@ type Ref struct {
 	SubmissionDepositAmount string `gorm:"size:64"`
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
-	Network                 Network        `gorm:"foreignKey:NetworkID"`
-	Messages                []RefMessage   `gorm:"foreignKey:RefID"`
-	Proponents              []RefProponent `gorm:"foreignKey:RefID"`
 }
 
 // Messages between DAO and proponents
 type RefMessage struct {
-	ID            uint64 `gorm:"primaryKey"`
-	RefID         uint64 `gorm:"index;not null"`
-	Author        string `gorm:"size:128;not null"`
-	Body          string `gorm:"type:text;not null"`
-	Internal      bool   `gorm:"default:false"`
-	CreatedAt     time.Time
-	Ref           Ref      `gorm:"foreignKey:RefID"`
-	Subscriptions []RefSub `gorm:"foreignKey:MessageID"`
+	ID        uint64 `gorm:"primaryKey"`
+	RefID     uint64 `gorm:"index;not null"`
+	Author    string `gorm:"size:128;not null"`
+	Body      string `gorm:"type:text;not null"`
+	Internal  bool   `gorm:"default:false"`
+	CreatedAt time.Time
 }
 
 // Proposal participants
@@ -82,7 +75,6 @@ type RefProponent struct {
 	Address string `gorm:"primaryKey;size:128"`
 	Role    string `gorm:"size:32"` // submitter, voter, delegator, etc
 	Active  int8   `gorm:"default:1"`
-	Ref     Ref    `gorm:"foreignKey:RefID"`
 }
 
 // Email subscriptions
@@ -91,7 +83,6 @@ type RefSub struct {
 	MessageID uint64 `gorm:"index;not null"`
 	Email     string `gorm:"size:256;not null"`
 	SentAt    *time.Time
-	Message   RefMessage `gorm:"foreignKey:MessageID"`
 }
 
 // DAO votes (internal voting, not on-chain)
@@ -101,6 +92,17 @@ type DaoVote struct {
 	DaoMemberID string `gorm:"size:128;not null"`
 	Choice      int16  `gorm:"not null"`
 	CreatedAt   time.Time
-	Ref         Ref       `gorm:"foreignKey:RefID"`
-	DaoMember   DaoMember `gorm:"foreignKey:DaoMemberID"`
 }
+
+// For backward compatibility with existing code
+type Proposal = Ref
+type ProposalParticipant = RefProponent
+type Message = RefMessage
+type EmailSubscription = RefSub
+type Vote = DaoVote
+type RPC = NetworkRPC
+
+// Legacy structures no longer used
+type Track struct{}
+type Preimage struct{}
+type DiscordChannel struct{}
