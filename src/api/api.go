@@ -16,8 +16,12 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
-	db := data.MustMySQL(cfg.MySQLDSN)
+	// Connect to database first
+	mysqlDSN := os.Getenv("MYSQL_DSN")
+	if mysqlDSN == "" {
+		mysqlDSN = "govcomms:DK3mfv93jf4m@tcp(172.16.254.7:3306)/govcomms"
+	}
+	db := data.MustMySQL(mysqlDSN)
 
 	// Load settings from database
 	if err := data.LoadSettings(db); err != nil {
@@ -27,6 +31,9 @@ func main() {
 	// Ensure settings exist
 	var settingsCount int64
 	db.Model(&types.Setting{}).Count(&settingsCount)
+
+	// Load config with database
+	cfg := config.Load(db)
 
 	rdb := data.MustRedis(cfg.RedisURL)
 
@@ -44,6 +51,7 @@ func main() {
 	go data.IndexerService(ctx, db, time.Duration(cfg.PollInterval)*time.Second)
 
 	router := webserver.New(cfg, db, rdb)
+
 	httpSrv := &http.Server{
 		Addr:    ":" + cfg.Port,
 		Handler: router,
@@ -62,6 +70,7 @@ func main() {
 	<-sig
 
 	cancel()
+
 	shutCtx, cancelShut := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShut()
 	_ = httpSrv.Shutdown(shutCtx)
