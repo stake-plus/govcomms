@@ -85,7 +85,7 @@ func buildSr25519Message(nonce string) ([]byte, error) {
 	return msg, nil
 }
 
-// ──────────────── public API ────────────────
+// ─────────────────── public API ─────────────────────
 
 // verifySignature validates sr25519 signatures produced by polkadot-js signRaw.
 func verifySignature(address, sigHex, nonce string) error {
@@ -98,8 +98,11 @@ func verifySignature(address, sigHex, nonce string) error {
 		return fmt.Errorf("unexpected pubkey length %d", len(pub))
 	}
 
+	// Validate pubkey format before copying
 	var pubArr [32]byte
-	copy(pubArr[:], pub)
+	if copy(pubArr[:], pub) != 32 {
+		return fmt.Errorf("failed to copy pubkey")
+	}
 
 	var pk schnorrkel.PublicKey
 	if err = pk.Decode(pubArr); err != nil {
@@ -111,7 +114,6 @@ func verifySignature(address, sigHex, nonce string) error {
 	if err != nil {
 		return fmt.Errorf("decode sig hex: %w", err)
 	}
-
 	if len(rawSig) == 65 { // drop prefix (0x00)
 		rawSig = rawSig[1:]
 	}

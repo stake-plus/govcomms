@@ -27,7 +27,10 @@ func StartRemarkWatcher(ctx context.Context, rpcURL string, rdb *redis.Client) {
 		return
 	}
 	conn := pooled.Conn
-	defer pooled.Close()
+	defer func() {
+		pooled.Close()
+		log.Printf("remark watcher: connection closed")
+	}()
 
 	meta, spec, err := loadMetadata(conn)
 	if err != nil {
@@ -44,9 +47,16 @@ func StartRemarkWatcher(ctx context.Context, rpcURL string, rdb *redis.Client) {
 	}
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("remark watcher panic: %v", r)
+			}
+		}()
+
 		for {
 			select {
 			case <-ctx.Done():
+				log.Printf("remark watcher: context cancelled")
 				return
 			default:
 			}
@@ -63,6 +73,7 @@ func StartRemarkWatcher(ctx context.Context, rpcURL string, rdb *redis.Client) {
 			}
 
 			num, _ := strconv.ParseUint(strings.TrimPrefix(head.Number, "0x"), 16, 64)
+
 			var hashRes model.JsonRpcResult
 			if err := websocket.SendWsRequest(conn, &hashRes, rpc.ChainGetBlockHash(rand.Int(), int(num))); err != nil {
 				continue
@@ -101,7 +112,6 @@ func loadMetadata(c websocket.WsConn) (*metadata.Instant, int, error) {
 	if err := websocket.SendWsRequest(c, &ver, rpc.ChainGetRuntimeVersion(rand.Int())); err != nil {
 		return nil, 0, err
 	}
-
 	rv := ver.ToRuntimeVersion()
 	if rv == nil {
 		return nil, 0, fmt.Errorf("nil runtime version")
@@ -111,7 +121,6 @@ func loadMetadata(c websocket.WsConn) (*metadata.Instant, int, error) {
 	if err := websocket.SendWsRequest(c, &metaRes, rpc.StateGetMetadata(rand.Int())); err != nil {
 		return nil, 0, err
 	}
-
 	metaHex, err := metaRes.ToString()
 	if err != nil {
 		return nil, 0, err
@@ -167,6 +176,10 @@ func extractSigner(extHex string) (string, error) {
 	i := 1
 	if raw[0] >= 0x80 {
 		i = 2 // compact-u32 len > 1 byte
+	}
+
+	if i+35 > len(raw) {
+		return "", fmt.Errorf("extrinsic too short")
 	}
 
 	addr := raw[i+1 : i+35] // 32-byte pubkey + prefix/checksum

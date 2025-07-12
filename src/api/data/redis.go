@@ -29,6 +29,17 @@ func ConfirmNonce(ctx context.Context, rdb *redis.Client, addr string) error {
 	return rdb.Set(ctx, noncePrefix+addr, "CONFIRMED", 30*time.Minute).Err()
 }
 
+// GetNonce retrieves nonce without deleting
+func GetNonce(ctx context.Context, rdb *redis.Client, addr string) (string, error) {
+	return rdb.Get(ctx, noncePrefix+addr).Result()
+}
+
+// DelNonce deletes the nonce
+func DelNonce(ctx context.Context, rdb *redis.Client, addr string) error {
+	return rdb.Del(ctx, noncePrefix+addr).Err()
+}
+
+// GetAndDelNonce atomically gets and deletes (deprecated - use GetNonce + DelNonce)
 func GetAndDelNonce(ctx context.Context, rdb *redis.Client, addr string) (string, error) {
 	return rdb.GetDel(ctx, noncePrefix+addr).Result()
 }

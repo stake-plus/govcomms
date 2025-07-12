@@ -165,6 +165,7 @@ func (ni *NetworkIndexer) runIndexing(ctx context.Context) error {
 
 	// Get all referendum keys that actually exist
 	prefix := "0x" + polkadot.HexEncode(polkadot.Twox128([]byte("Referenda"))) + polkadot.HexEncode(polkadot.Twox128([]byte("ReferendumInfoFor")))
+
 	keys, err := ni.client.GetKeys(prefix, nil)
 	if err != nil {
 		return fmt.Errorf("failed to get keys: %w", err)
@@ -175,23 +176,28 @@ func (ni *NetworkIndexer) runIndexing(ctx context.Context) error {
 	// Extract referendum IDs from keys
 	existingRefs := make(map[uint32]bool)
 	prefixLen := len(prefix) - 2 // Remove "0x"
+
 	for _, key := range keys {
 		// Remove 0x prefix
 		keyHex := strings.TrimPrefix(key, "0x")
+
 		// The key format is: prefix + blake2_128(refID) + refID
 		// We need to extract the refID from the end
 		if len(keyHex) > prefixLen {
 			// Get the part after the prefix
 			remainder := keyHex[prefixLen:]
+
 			// The remainder should be: blake2_128_hash(16 bytes = 32 hex chars) + refID(4 bytes = 8 hex chars)
 			if len(remainder) >= 40 { // 32 + 8
 				// Extract the last 8 hex characters (4 bytes) which is the refID
 				refIDHex := remainder[len(remainder)-8:]
+
 				// Convert hex to bytes
 				refIDBytes, err := polkadot.DecodeHex(refIDHex)
 				if err != nil || len(refIDBytes) != 4 {
 					continue
 				}
+
 				// Convert to uint32 (little endian)
 				refID := binary.LittleEndian.Uint32(refIDBytes)
 				existingRefs[refID] = true
@@ -234,6 +240,7 @@ func (ni *NetworkIndexer) runIndexing(ctx context.Context) error {
 
 		// Get referendum info - the client handles historical lookups
 		info, err := ni.client.GetReferendumInfo(refID)
+
 		var ref types.Ref
 		dbErr := ni.db.Where("network_id = ? AND ref_id = ?", ni.networkID, refID).First(&ref).Error
 
@@ -242,6 +249,7 @@ func (ni *NetworkIndexer) runIndexing(ctx context.Context) error {
 			if !strings.Contains(err.Error(), "does not exist") {
 				log.Printf("%s indexer: failed to get info for ref %d: %v", ni.networkName, refID, err)
 			}
+
 			if dbErr == gorm.ErrRecordNotFound {
 				// Create with minimal info for cleared refs
 				ref = types.Ref{
@@ -252,6 +260,7 @@ func (ni *NetworkIndexer) runIndexing(ctx context.Context) error {
 					CreatedAt: time.Now(),
 					UpdatedAt: time.Now(),
 				}
+
 				if err := ni.db.Create(&ref).Error; err != nil {
 					log.Printf("%s indexer: failed to create ref %d: %v", ni.networkName, refID, err)
 					errors++
@@ -272,7 +281,7 @@ func (ni *NetworkIndexer) runIndexing(ctx context.Context) error {
 
 		// We have referendum info
 		if dbErr == gorm.ErrRecordNotFound {
-			// Create new
+			// Create new referendum with all related data
 			ref = types.Ref{
 				NetworkID:    ni.networkID,
 				RefID:        uint64(refID),
@@ -331,92 +340,77 @@ func (ni *NetworkIndexer) runIndexing(ctx context.Context) error {
 				ref.DecisionEnd = uint64(info.KilledAt)
 			}
 
-			if err := ni.db.Create(&ref).Error; err != nil {
-				log.Printf("%s indexer: failed to create ref %d: %v", ni.networkName, refID, err)
+			// Create proponents list
+			proponents := []types.RefProponent{}
+
+			// Add submitter
+			if info.Submission.Who != "" && info.Submission.Who != "Unknown" {
+				proponents = append(proponents, types.RefProponent{
+					Address: info.Submission.Who,
+					Role:    "submitter",
+					Active:  1,
+				})
+			}
+
+			// Add decision deposit provider if different
+			if info.DecisionDeposit != nil && info.DecisionDeposit.Who != info.Submission.Who {
+				proponents = append(proponents, types.RefProponent{
+					Address: info.DecisionDeposit.Who,
+					Role:    "decision_deposit",
+					Active:  1,
+				})
+			}
+
+			// Decode preimage to extract participants if available
+			var addresses []string
+			if info.Proposal != "" && info.ProposalLen > 0 {
+				preimageDecoder := polkadot.NewPreimageDecoder(ni.client)
+				decodedAddresses, err := preimageDecoder.FetchAndDecodePreimage(
+					info.Proposal,
+					info.ProposalLen,
+					uint32(ref.Submitted),
+				)
+				if err != nil {
+					log.Printf("Failed to decode preimage for ref %d: %v", refID, err)
+				} else {
+					addresses = decodedAddresses
+					log.Printf("Decoded %d addresses from preimage for ref %d", len(addresses), refID)
+				}
+			}
+
+			// Create referendum with all related data in a transaction
+			if err := ni.createReferendumWithProponents(ref, proponents, addresses); err != nil {
+				log.Printf("%s indexer: failed to create ref %d with proponents: %v", ni.networkName, refID, err)
 				errors++
 			} else {
 				created++
-
-				// Create proponents
-				proponents := []types.RefProponent{}
-
-				// Add submitter
-				if info.Submission.Who != "" && info.Submission.Who != "Unknown" {
-					proponents = append(proponents, types.RefProponent{
-						RefID:   ref.ID,
-						Address: info.Submission.Who,
-						Role:    "submitter",
-						Active:  1,
-					})
-				}
-
-				// Add decision deposit provider if different
-				if info.DecisionDeposit != nil && info.DecisionDeposit.Who != info.Submission.Who {
-					proponents = append(proponents, types.RefProponent{
-						RefID:   ref.ID,
-						Address: info.DecisionDeposit.Who,
-						Role:    "decision_deposit",
-						Active:  1,
-					})
-				}
-
-				// Create proponents
-				for _, p := range proponents {
-					if err := ni.db.Create(&p).Error; err != nil {
-						log.Printf("%s indexer: failed to create proponent: %v", ni.networkName, err)
-					}
-				}
-
-				// Add this after creating the proposal in the database
-				if info.Proposal != "" && info.ProposalLen > 0 && created > 0 {
-					// Decode preimage to extract participants
-					preimageDecoder := polkadot.NewPreimageDecoder(ni.client)
-					addresses, err := preimageDecoder.FetchAndDecodePreimage(
-						info.Proposal,
-						info.ProposalLen,
-						uint32(ref.Submitted),
-					)
-					if err != nil {
-						log.Printf("Failed to decode preimage for ref %d: %v", refID, err)
-					} else {
-						// Add all addresses as participants
-						for _, addr := range addresses {
-							if addr != "" && addr != ref.Submitter {
-								proponent := types.RefProponent{
-									RefID:   ref.ID,
-									Address: addr,
-									Role:    "recipient",
-									Active:  1,
-								}
-								if err := ni.db.Create(&proponent).Error; err != nil {
-									log.Printf("Failed to create recipient proponent: %v", err)
-								}
-							}
-						}
-						log.Printf("Added %d recipients from preimage for ref %d", len(addresses), refID)
-					}
-				}
 			}
+
 		} else if dbErr == nil {
 			// Update existing if changed
 			changed := false
+
 			if ref.Status != info.Status && info.Status != "" {
 				log.Printf("%s indexer: updating ref %d status from %s to %s", ni.networkName, refID, ref.Status, info.Status)
 				ref.Status = info.Status
 				changed = true
 			}
+
 			if info.Track > 0 && ref.TrackID != info.Track {
 				ref.TrackID = info.Track
 				changed = true
 			}
+
 			if info.Origin != "" && ref.Origin != info.Origin {
 				ref.Origin = info.Origin
 				changed = true
 			}
+
 			if info.Enactment != "" && ref.Enactment != info.Enactment {
 				ref.Enactment = info.Enactment
 				changed = true
 			}
+
 			if info.Status == "Approved" && !ref.Approved {
 				ref.Approved = true
 				changed = true
@@ -516,6 +510,43 @@ func (ni *NetworkIndexer) runIndexing(ctx context.Context) error {
 	return nil
 }
 
+// createReferendumWithProponents creates a referendum with all related data in a transaction
+func (ni *NetworkIndexer) createReferendumWithProponents(ref types.Ref, proponents []types.RefProponent, addresses []string) error {
+	// Use a transaction to ensure atomicity
+	return ni.db.Transaction(func(tx *gorm.DB) error {
+		// Create the referendum
+		if err := tx.Create(&ref).Error; err != nil {
+			return err
+		}
+
+		// Create proponents
+		for _, p := range proponents {
+			p.RefID = ref.ID // Ensure correct RefID
+			if err := tx.Create(&p).Error; err != nil {
+				return err
+			}
+		}
+
+		// Add recipients from preimage if available
+		for _, addr := range addresses {
+			if addr != "" && addr != ref.Submitter {
+				proponent := types.RefProponent{
+					RefID:   ref.ID,
+					Address: addr,
+					Role:    "recipient",
+					Active:  1,
+				}
+				if err := tx.Create(&proponent).Error; err != nil {
+					log.Printf("Failed to create recipient proponent: %v", err)
+					// Don't fail the transaction for recipient errors
+				}
+			}
+		}
+
+		return nil
+	})
+}
+
 // fetchHistoricalReferendumInfo tries to get referendum info from when it was ongoing
 func (ni *NetworkIndexer) fetchHistoricalReferendumInfo(refID uint32, currentInfo *polkadot.ReferendumInfo) *polkadot.ReferendumInfo {
 	// For all finished states, we want to look back to when they were Ongoing
@@ -568,6 +599,7 @@ func (ni *NetworkIndexer) fetchHistoricalReferendumInfo(refID uint32, currentInf
 		// If we found good data (Ongoing status with submitter info), use it
 		if historicalInfo != nil && historicalInfo.Status == "Ongoing" &&
 			historicalInfo.Submission.Who != "Unknown" && historicalInfo.Submission.Who != "" {
+
 			// Copy over the important fields but keep the current status
 			currentInfo.Track = historicalInfo.Track
 			currentInfo.Origin = historicalInfo.Origin
@@ -577,6 +609,7 @@ func (ni *NetworkIndexer) fetchHistoricalReferendumInfo(refID uint32, currentInf
 			currentInfo.Submitted = historicalInfo.Submitted
 			currentInfo.Submission = historicalInfo.Submission
 			currentInfo.DecisionDeposit = historicalInfo.DecisionDeposit
+
 			return currentInfo
 		}
 	}

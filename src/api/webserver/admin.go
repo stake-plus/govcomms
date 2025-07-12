@@ -23,6 +23,7 @@ func (a Admin) SetDiscordChannel(c *gin.Context) {
 		NetworkID        uint8  `json:"networkId" binding:"required,min=1,max=255"`
 		DiscordChannelID string `json:"discordChannelId" binding:"required,min=10,max=30"`
 	}
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
@@ -68,22 +69,8 @@ func AdminMiddleware(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// You could add an admin flag to dao_members table or check a specific role
-		// For now, let's assume only specific addresses are admins
-		// This should be stored in the database instead
-		adminAddresses := []string{
-			// Add admin addresses here or create an admins table
-		}
-
-		isAdmin := false
-		for _, addr := range adminAddresses {
-			if addr == userAddr {
-				isAdmin = true
-				break
-			}
-		}
-
-		if !isAdmin {
+		// Check if user has admin privileges
+		if !daoMember.IsAdmin {
 			c.JSON(http.StatusForbidden, gin.H{"err": "admin access required"})
 			c.Abort()
 			return

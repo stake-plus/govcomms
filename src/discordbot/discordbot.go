@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,6 +30,7 @@ type DiscordBot struct {
 	guildID         string
 	channels        map[uint8]string // networkID -> channelID
 	apiClient       *APIClient
+	rateLimiter     *UserRateLimiter
 }
 
 type APIClient struct {
@@ -45,6 +47,48 @@ type StreamMessage struct {
 	Network   string
 	NetworkID uint8
 	RefID     uint64
+}
+
+type UserRateLimiter struct {
+	users map[string]time.Time
+	mu    sync.Mutex
+	limit time.Duration
+}
+
+func NewUserRateLimiter(limit time.Duration) *UserRateLimiter {
+	return &UserRateLimiter{
+		users: make(map[string]time.Time),
+		limit: limit,
+	}
+}
+
+func (rl *UserRateLimiter) CanUse(userID string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	lastUse, exists := rl.users[userID]
+	if !exists || time.Since(lastUse) >= rl.limit {
+		rl.users[userID] = time.Now()
+		return true
+	}
+	return false
+}
+
+func (rl *UserRateLimiter) TimeUntilNext(userID string) time.Duration {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	lastUse, exists := rl.users[userID]
+	if !exists {
+		return 0
+	}
+
+	elapsed := time.Since(lastUse)
+	if elapsed >= rl.limit {
+		return 0
+	}
+
+	return rl.limit - elapsed
 }
 
 func NewDiscordBot(token, feedbackRoleID, guildID string, db *gorm.DB) (*DiscordBot, error) {
@@ -71,6 +115,7 @@ func NewDiscordBot(token, feedbackRoleID, guildID string, db *gorm.DB) (*Discord
 		guildID:         guildID,
 		channels:        make(map[uint8]string),
 		apiClient:       &APIClient{baseURL: apiURL},
+		rateLimiter:     NewUserRateLimiter(5 * time.Minute), // 5 minute rate limit
 	}
 
 	// Load channel configuration
@@ -129,9 +174,21 @@ func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.Mess
 		return
 	}
 
+	// Check rate limit first
+	if !b.rateLimiter.CanUse(m.Author.ID) {
+		timeLeft := b.rateLimiter.TimeUntilNext(m.Author.ID)
+		minutes := int(timeLeft.Minutes())
+		seconds := int(timeLeft.Seconds()) % 60
+
+		msg := fmt.Sprintf("Please wait %d minutes and %d seconds before using this command again.", minutes, seconds)
+		s.ChannelMessageSend(m.ChannelID, msg)
+		return
+	}
+
 	// Check if user has feedback role
 	member, err := s.GuildMember(b.guildID, m.Author.ID)
 	if err != nil {
+		log.Printf("Failed to get guild member: %v", err)
 		return
 	}
 
@@ -172,8 +229,14 @@ func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.Mess
 	}
 
 	refNum, err := strconv.Atoi(refParts[1])
-	if err != nil || refNum < 0 {
+	if err != nil || refNum < 0 || refNum > 1000000 {
 		s.ChannelMessageSend(m.ChannelID, "Invalid referendum number")
+		return
+	}
+
+	// Validate feedback message length
+	if len(feedbackMsg) < 10 || len(feedbackMsg) > 5000 {
+		s.ChannelMessageSend(m.ChannelID, "Feedback message must be between 10 and 5000 characters")
 		return
 	}
 
@@ -184,6 +247,11 @@ func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.Mess
 		return
 	}
 
+	// Check if DAO member has admin privileges for certain operations
+	if !daoMember.IsAdmin {
+		// Additional restrictions for non-admin members can be added here
+	}
+
 	// Get proposal
 	netID := uint8(1)
 	if network == "kusama" {
@@ -191,40 +259,57 @@ func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.Mess
 	}
 
 	var ref types.Ref
-	if err := b.db.First(&ref, "network_id = ? AND ref_id = ?", netID, refNum).Error; err != nil {
-		// Create proposal if it doesn't exist
-		ref = types.Ref{
-			NetworkID: netID,
-			RefID:     uint64(refNum),
-			Submitter: daoMember.Address,
-			Status:    "Unknown",
-			Title:     fmt.Sprintf("%s Referendum #%d", strings.Title(network), refNum),
+	err = b.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&ref, "network_id = ? AND ref_id = ?", netID, refNum).Error; err != nil {
+			// Create proposal if it doesn't exist and user is admin
+			if err == gorm.ErrRecordNotFound && daoMember.IsAdmin {
+				ref = types.Ref{
+					NetworkID: netID,
+					RefID:     uint64(refNum),
+					Submitter: daoMember.Address,
+					Status:    "Unknown",
+					Title:     fmt.Sprintf("%s Referendum #%d", strings.Title(network), refNum),
+				}
+				if err := tx.Create(&ref).Error; err != nil {
+					return err
+				}
+			} else {
+				return err
+			}
 		}
-		if err := b.db.Create(&ref).Error; err != nil {
-			s.ChannelMessageSend(m.ChannelID, "Failed to create proposal record. Please try again.")
-			return
+
+		// Create proponent record
+		proponent := types.RefProponent{
+			RefID:   ref.ID,
+			Address: daoMember.Address,
+			Role:    "dao_member",
+			Active:  1,
 		}
-	}
+		if err := tx.FirstOrCreate(&proponent, types.RefProponent{RefID: ref.ID, Address: daoMember.Address}).Error; err != nil {
+			return err
+		}
 
-	// Create proponent record
-	proponent := types.RefProponent{
-		RefID:   ref.ID,
-		Address: daoMember.Address,
-		Role:    "dao_member",
-		Active:  1,
-	}
-	b.db.FirstOrCreate(&proponent, types.RefProponent{RefID: ref.ID, Address: daoMember.Address})
+		// Store message
+		msg := types.RefMessage{
+			RefID:     ref.ID,
+			Author:    daoMember.Address,
+			Body:      feedbackMsg,
+			CreatedAt: time.Now(),
+			Internal:  true,
+		}
+		if err := tx.Create(&msg).Error; err != nil {
+			return err
+		}
 
-	// Store message
-	msg := types.RefMessage{
-		RefID:     ref.ID,
-		Author:    daoMember.Address,
-		Body:      feedbackMsg,
-		CreatedAt: time.Now(),
-		Internal:  true,
-	}
-	if err := b.db.Create(&msg).Error; err != nil {
-		s.ChannelMessageSend(m.ChannelID, "Failed to store message. Please try again.")
+		return nil
+	})
+
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			s.ChannelMessageSend(m.ChannelID, "Proposal not found and you don't have permission to create it.")
+		} else {
+			s.ChannelMessageSend(m.ChannelID, "Failed to store message. Please try again.")
+		}
 		return
 	}
 
@@ -246,14 +331,25 @@ func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.Mess
 		Color:       0x00ff00,
 		Fields: []*discordgo.MessageEmbedField{
 			{
+				Name:  "Message Count",
+				Value: fmt.Sprintf("This is message #%d for this proposal", msgCount),
+			},
+			{
 				Name:  "Continue Discussion",
 				Value: fmt.Sprintf("[Click here](%s) to continue the conversation", link),
 			},
+		},
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: fmt.Sprintf("Submitted by %s", m.Author.Username),
 		},
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
 
 	s.ChannelMessageSendEmbed(m.ChannelID, embed)
+
+	// Log the action
+	log.Printf("Feedback submitted by %s (%s) for %s: %d chars",
+		m.Author.Username, daoMember.Address, proposalRef, len(feedbackMsg))
 }
 
 func (b *DiscordBot) setupDefaultChannels(s *discordgo.Session) {
@@ -466,12 +562,13 @@ func main() {
 	// Connect to database using environment variable or default
 	mysqlDSN := os.Getenv("MYSQL_DSN")
 	if mysqlDSN == "" {
-		mysqlDSN = "govcomms:DK3mfv93jf4m@tcp(172.16.254.7:3306)/govcomms"
+		log.Fatal("MYSQL_DSN environment variable must be set")
 	}
+
 	db := data.MustMySQL(mysqlDSN)
 
 	// Ensure tables exist
-	if err := db.AutoMigrate(&types.Network{}, &types.DaoMember{}, &types.Ref{}, &types.RefMessage{}, &types.RefProponent{}); err != nil {
+	if err := db.AutoMigrate(&types.Network{}, &types.DaoMember{}, &types.Ref{}, &types.RefMessage{}, &types.RefProponent{}, &types.Setting{}); err != nil {
 		log.Fatalf("Failed to migrate tables: %v", err)
 	}
 

@@ -7,12 +7,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/microcosm-cc/bluemonday"
 	"github.com/redis/go-redis/v9"
 	"github.com/stake-plus/polkadot-gov-comms/src/api/data"
 	"github.com/stake-plus/polkadot-gov-comms/src/api/polkassembly"
@@ -21,9 +23,10 @@ import (
 )
 
 type Messages struct {
-	db  *gorm.DB
-	rdb *redis.Client
-	pa  *polkassembly.Client
+	db        *gorm.DB
+	rdb       *redis.Client
+	pa        *polkassembly.Client
+	sanitizer *bluemonday.Policy
 }
 
 func NewMessages(db *gorm.DB, rdb *redis.Client) Messages {
@@ -32,7 +35,19 @@ func NewMessages(db *gorm.DB, rdb *redis.Client) Messages {
 		baseURL := data.GetSetting("polkassembly_api")
 		paClient = polkassembly.NewClient(apiKey, baseURL)
 	}
-	return Messages{db: db, rdb: rdb, pa: paClient}
+
+	// Create a strict sanitizer for markdown content
+	sanitizer := bluemonday.StrictPolicy()
+	// Allow basic markdown formatting
+	sanitizer.AllowElements("p", "br", "strong", "em", "code", "pre", "blockquote")
+	sanitizer.AllowElements("ul", "ol", "li")
+	sanitizer.AllowElements("h1", "h2", "h3", "h4", "h5", "h6")
+	sanitizer.AllowAttrs("href").OnElements("a")
+	sanitizer.RequireParseableURLs(true)
+	sanitizer.AddTargetBlankToFullyQualifiedLinks(true)
+	sanitizer.RequireNoFollowOnLinks(true)
+
+	return Messages{db: db, rdb: rdb, pa: paClient, sanitizer: sanitizer}
 }
 
 func (m Messages) Create(c *gin.Context) {
@@ -42,13 +57,20 @@ func (m Messages) Create(c *gin.Context) {
 		Emails   []string `json:"emails" binding:"max=10"`
 		Title    string   `json:"title" binding:"max=255"`
 	}
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
 
-	// Sanitize input
-	req.Body = html.EscapeString(req.Body)
+	// Validate and sanitize input
+	if !isValidProposalRef(req.Proposal) {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "invalid proposal reference format"})
+		return
+	}
+
+	// Sanitize HTML/markdown content
+	req.Body = m.sanitizer.Sanitize(req.Body)
 	req.Title = html.EscapeString(req.Title)
 
 	// Validate UTF-8
@@ -57,10 +79,16 @@ func (m Messages) Create(c *gin.Context) {
 		return
 	}
 
+	// Validate body length after sanitization
+	if len(req.Body) < 1 || len(req.Body) > 10000 {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "body must be between 1 and 10000 characters"})
+		return
+	}
+
 	// Validate emails
 	for _, email := range req.Emails {
 		if !isValidEmail(email) {
-			c.JSON(http.StatusBadRequest, gin.H{"err": "invalid email format"})
+			c.JSON(http.StatusBadRequest, gin.H{"err": "invalid email format: " + email})
 			return
 		}
 	}
@@ -96,9 +124,15 @@ func (m Messages) Create(c *gin.Context) {
 	// Check if referendum exists
 	var ref types.Ref
 	err = m.db.First(&ref, "network_id = ? AND ref_id = ?", netID, refID).Error
-
 	if err == gorm.ErrRecordNotFound {
-		// Only allow creating new referendum if user is submitting it
+		// Check if user is allowed to create referendum
+		// Only allow if they are a DAO member or have a valid reason
+		var daoMember types.DaoMember
+		if err := m.db.First(&daoMember, "address = ?", userAddr).Error; err != nil {
+			c.JSON(http.StatusForbidden, gin.H{"err": "only DAO members can create new referendum entries"})
+			return
+		}
+
 		ref = types.Ref{
 			NetworkID: netID,
 			RefID:     refID,
@@ -131,7 +165,6 @@ func (m Messages) Create(c *gin.Context) {
 				c.JSON(http.StatusForbidden, gin.H{"err": "not authorized for this proposal"})
 				return
 			}
-
 			// DAO member but not a proponent - add them as a dao_member proponent
 			_ = m.db.Create(&types.RefProponent{
 				RefID:   ref.ID,
@@ -150,6 +183,7 @@ func (m Messages) Create(c *gin.Context) {
 		CreatedAt: time.Now(),
 		Internal:  false, // Messages from API are external
 	}
+
 	if err := m.db.Create(&msg).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
@@ -199,6 +233,13 @@ func (m Messages) Create(c *gin.Context) {
 func (m Messages) List(c *gin.Context) {
 	net := c.Param("net")
 	refNum, _ := strconv.ParseUint(c.Param("id"), 10, 64)
+
+	// Validate network parameter
+	if net != "polkadot" && net != "kusama" {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "invalid network"})
+		return
+	}
+
 	netID := uint8(1)
 	if net == "kusama" {
 		netID = 2
@@ -243,6 +284,13 @@ func (m Messages) List(c *gin.Context) {
 }
 
 func isValidEmail(email string) bool {
-	// Simple email validation
-	return strings.Contains(email, "@") && strings.Contains(email, ".") && len(email) < 256
+	// More robust email validation
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	return emailRegex.MatchString(email) && len(email) <= 255
+}
+
+func isValidProposalRef(ref string) bool {
+	// Validate proposal reference format
+	proposalRegex := regexp.MustCompile(`^(polkadot|kusama)/\d+$`)
+	return proposalRegex.MatchString(strings.ToLower(ref))
 }

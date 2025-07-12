@@ -39,18 +39,24 @@ func (a Auth) Challenge(c *gin.Context) {
 		Address string `json:"address" binding:"required,min=32,max=128"`
 		Method  string `json:"method"  binding:"required,oneof=walletconnect polkadotjs airgap"`
 	}
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
+		return
+	}
+
+	// Validate address format
+	if !isValidPolkadotAddress(req.Address) {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "invalid address format"})
 		return
 	}
 
 	// Log authentication attempt
 	log.Printf("Auth challenge for %s from IP %s using %s", req.Address, c.ClientIP(), req.Method)
 
-	// Remove the address validation - signature verification will catch invalid addresses
-
 	var nonce string
 	var err error
+
 	switch req.Method {
 	case "polkadotjs", "walletconnect":
 		// Polkadot{.js} expects raw HEX data for signRaw → generate 32-byte hex
@@ -66,6 +72,7 @@ func (a Auth) Challenge(c *gin.Context) {
 		return
 	}
 
+	// Set nonce with TTL
 	if err := data.SetNonce(c, a.rdb, req.Address, nonce); err != nil {
 		log.Printf("Failed to set nonce for %s: %v", req.Address, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"err": "failed to create challenge"})
@@ -84,29 +91,46 @@ func (a Auth) Verify(c *gin.Context) {
 		RefID     string `json:"refId,omitempty"`   // Add optional refId
 		Network   string `json:"network,omitempty"` // Add optional network
 	}
+
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
 
+	// Validate address format
+	if !isValidPolkadotAddress(req.Address) {
+		c.JSON(http.StatusBadRequest, gin.H{"err": "invalid address format"})
+		return
+	}
+
 	log.Printf("Verify attempt for %s using method %s", req.Address, req.Method)
 
-	// Verify the signature/nonce first
-	nonce, err := data.GetAndDelNonce(c, a.rdb, req.Address)
-	if err != nil {
-		log.Printf("Failed to get nonce for %s: %v", req.Address, err)
-		c.JSON(http.StatusUnauthorized, gin.H{"err": "challenge expired or not found"})
-		return
+	// For non-airgap methods, get nonce without deleting it first
+	var nonce string
+	var err error
+	if req.Method != "airgap" {
+		// Peek at the nonce without deleting
+		nonce, err = data.GetNonce(c, a.rdb, req.Address)
+		if err != nil {
+			log.Printf("Failed to get nonce for %s: %v", req.Address, err)
+			c.JSON(http.StatusUnauthorized, gin.H{"err": "challenge expired or not found"})
+			return
+		}
 	}
 
 	var token string
 	switch req.Method {
 	case "airgap":
-		if nonce != "CONFIRMED" {
+		// For airgap, check if nonce is confirmed
+		confirmedNonce, err := data.GetNonce(c, a.rdb, req.Address)
+		if err != nil || confirmedNonce != "CONFIRMED" {
 			log.Printf("Airgap remark not confirmed for %s", req.Address)
 			c.JSON(http.StatusUnauthorized, gin.H{"err": "remark not confirmed"})
 			return
 		}
+		// Delete the nonce after successful confirmation
+		data.DelNonce(c, a.rdb, req.Address)
+
 	default: // polkadotjs | walletconnect
 		log.Printf("Verifying signature for %s with nonce %s", req.Address, nonce)
 		if err := verifySignature(req.Address, req.Signature, nonce); err != nil {
@@ -114,10 +138,18 @@ func (a Auth) Verify(c *gin.Context) {
 			c.JSON(http.StatusUnauthorized, gin.H{"err": "bad signature"})
 			return
 		}
+		// Only delete nonce after successful verification
+		data.DelNonce(c, a.rdb, req.Address)
 	}
 
 	// If a specific referendum is provided, check authorization
 	if req.RefID != "" && req.Network != "" {
+		// Validate network
+		if req.Network != "polkadot" && req.Network != "kusama" {
+			c.JSON(http.StatusBadRequest, gin.H{"err": "invalid network"})
+			return
+		}
+
 		netID := uint8(1)
 		if req.Network == "kusama" {
 			netID = 2
@@ -159,9 +191,26 @@ func (a Auth) Verify(c *gin.Context) {
 func isValidPolkadotAddress(addr string) bool {
 	// Basic validation - starts with expected prefix and has reasonable length
 	if strings.HasPrefix(addr, "0x") {
-		return len(addr) == 66 // 0x + 64 hex chars
+		// Hex format validation
+		hexStr := strings.TrimPrefix(addr, "0x")
+		if len(hexStr) != 64 { // 32 bytes = 64 hex chars
+			return false
+		}
+		// Check if valid hex
+		_, err := hex.DecodeString(hexStr)
+		return err == nil
 	}
 	// SS58 addresses can vary in length (typically 47-50 chars)
-	// Kusama addresses starting with capital letters can be longer
-	return len(addr) >= 46 && len(addr) <= 52
+	// Polkadot addresses typically start with '1', Kusama with capital letters
+	if len(addr) < 46 || len(addr) > 52 {
+		return false
+	}
+	// Check for valid SS58 characters (base58)
+	validChars := "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+	for _, char := range addr {
+		if !strings.ContainsRune(validChars, char) {
+			return false
+		}
+	}
+	return true
 }
