@@ -121,8 +121,8 @@ const handleWalletConnectAuth = async () => {
 		const client = await WalletConnect.init({
 			projectId: config.walletConnectProjectId,
 			metadata: {
-				name: 'GovComms',
-				description: 'Connect with ChaosDAO',
+				name: config.walletConnectName,
+				description: config.walletConnectDescription,
 				url: window.location.origin,
 				icons: []
 			}
