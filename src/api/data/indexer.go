@@ -409,9 +409,6 @@ func fetchHistoricalReferendumInfo(client *polkadot.Client, refID uint32, curren
 		}
 	}
 
-	log.Printf("fetchHistoricalReferendumInfo: searching for ref %d (status: %s) at blocks: %v",
-		refID, currentInfo.Status, searchBlocks)
-
 	// Try each block
 	for _, targetBlock := range searchBlocks {
 		// Get block hash for the target block
@@ -429,8 +426,6 @@ func fetchHistoricalReferendumInfo(client *polkadot.Client, refID uint32, curren
 		// If we found good data (Ongoing status with submitter info), use it
 		if historicalInfo != nil && historicalInfo.Status == "Ongoing" &&
 			historicalInfo.Submission.Who != "Unknown" && historicalInfo.Submission.Who != "" {
-			log.Printf("Found historical Ongoing data for ref %d at block %d with submitter %s, track %d, origin %s",
-				refID, targetBlock, historicalInfo.Submission.Who, historicalInfo.Track, historicalInfo.Origin)
 
 			// Copy over the important fields but keep the current status
 			currentInfo.Track = historicalInfo.Track
@@ -446,7 +441,6 @@ func fetchHistoricalReferendumInfo(client *polkadot.Client, refID uint32, curren
 		}
 	}
 
-	log.Printf("fetchHistoricalReferendumInfo: couldn't find Ongoing data for ref %d", refID)
 	return nil
 }
 
