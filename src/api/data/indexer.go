@@ -136,7 +136,6 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 
 		// For finished referenda, always try to fetch historical data
 		if info.Status != "Ongoing" && (info.Submission.Who == "Unknown" || info.Origin == "") {
-			log.Printf("indexer polkadot: ref %d is %s but missing data, fetching historical", refID, info.Status)
 			historicalInfo := fetchHistoricalReferendumInfo(client, refID, info)
 			if historicalInfo != nil {
 				info = historicalInfo
@@ -208,7 +207,6 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 				errors++
 			} else {
 				created++
-				log.Printf("indexer polkadot: created ref %d with status %s on track %d origin %s", refID, info.Status, info.Track, info.Origin)
 
 				// Create proposal participants
 				participants := []types.ProposalParticipant{}
@@ -364,7 +362,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 		}
 
 		// Small delay to not hammer the node
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(2 * time.Millisecond)
 	}
 
 	// Index track information
