@@ -124,10 +124,10 @@ func createReferendumStorageKey(refID uint32) []byte {
 	return key
 }
 
-// accountIDToSS58 converts an AccountID to SS58 format for Polkadot (prefix 0)
+// accountIDToSS58 converts an AccountID to generic Substrate SS58 format (prefix 42)
 func accountIDToSS58(accountID types.AccountID) string {
-	// SS58 encoding with network prefix 0 for Polkadot
-	prefix := byte(0)
+	// SS58 encoding with network prefix 42 for generic Substrate addresses
+	prefix := byte(42)
 
 	// Create the payload: prefix + accountID + checksum
 	payload := make([]byte, 0, 35)

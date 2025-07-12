@@ -30,7 +30,7 @@ func decodeSS58(addr string) ([]byte, error) {
 	return raw[1:33], nil
 }
 
-// convertHexToSS58 converts a hex-encoded AccountID to SS58 format
+// convertHexToSS58 converts a hex-encoded AccountID to generic Substrate SS58 format
 func convertHexToSS58(hexAddr string) (string, error) {
 	// Remove 0x prefix if present
 	hexAddr = strings.TrimPrefix(hexAddr, "0x")
@@ -45,8 +45,8 @@ func convertHexToSS58(hexAddr string) (string, error) {
 		return "", fmt.Errorf("invalid account ID length: expected 32 bytes, got %d", len(accountID))
 	}
 
-	// SS58 encoding with network prefix 0 for Polkadot
-	prefix := byte(0)
+	// SS58 encoding with network prefix 42 for generic Substrate addresses
+	prefix := byte(42)
 
 	// Create the payload: prefix + accountID + checksum
 	payload := make([]byte, 0, 35)
