@@ -378,17 +378,27 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 
 		// Deposit - Option<Deposit<T::AccountId, BalanceOf<T, I>>>
 		hasDeposit, err := decoder.ReadOneByte()
-		if err == nil && hasDeposit == 1 {
+		if err != nil {
+			return nil, fmt.Errorf("read approved deposit option: %w", err)
+		}
+
+		if hasDeposit == 1 {
 			var who types.AccountID
-			if err := decoder.Decode(&who); err == nil {
-				info.Submission.Who = accountIDToSS58(who)
+			if err := decoder.Decode(&who); err != nil {
+				return nil, fmt.Errorf("decode approved deposit who: %w", err)
 			}
+			info.Submission.Who = accountIDToSS58(who)
+
 			var amount types.U128
-			if err := decoder.Decode(&amount); err == nil {
-				info.Submission.Amount = amount.String()
+			if err := decoder.Decode(&amount); err != nil {
+				return nil, fmt.Errorf("decode approved deposit amount: %w", err)
 			}
+			info.Submission.Amount = amount.String()
 		} else {
+			// For approved referenda without deposit info, we need to fetch historical data
+			// The referendum was likely created before the deposit was cleared
 			info.Submission.Who = "Unknown"
+			info.Submission.Amount = "0"
 		}
 
 		// Approved/Rejected/Cancelled/TimedOut don't store track directly
@@ -408,18 +418,27 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 
 		// Deposit - Option<Deposit<T::AccountId, BalanceOf<T, I>>>
 		hasDeposit, err := decoder.ReadOneByte()
-		if err == nil && hasDeposit == 1 {
+		if err != nil {
+			return nil, fmt.Errorf("read rejected deposit option: %w", err)
+		}
+
+		if hasDeposit == 1 {
 			var who types.AccountID
-			if err := decoder.Decode(&who); err == nil {
-				info.Submission.Who = accountIDToSS58(who)
+			if err := decoder.Decode(&who); err != nil {
+				return nil, fmt.Errorf("decode rejected deposit who: %w", err)
 			}
+			info.Submission.Who = accountIDToSS58(who)
+
 			var amount types.U128
-			if err := decoder.Decode(&amount); err == nil {
-				info.Submission.Amount = amount.String()
+			if err := decoder.Decode(&amount); err != nil {
+				return nil, fmt.Errorf("decode rejected deposit amount: %w", err)
 			}
+			info.Submission.Amount = amount.String()
 		} else {
 			info.Submission.Who = "Unknown"
+			info.Submission.Amount = "0"
 		}
+
 		info.Track = 0
 		return info, nil
 
@@ -435,18 +454,27 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 
 		// Deposit - Option<Deposit<T::AccountId, BalanceOf<T, I>>>
 		hasDeposit, err := decoder.ReadOneByte()
-		if err == nil && hasDeposit == 1 {
+		if err != nil {
+			return nil, fmt.Errorf("read cancelled deposit option: %w", err)
+		}
+
+		if hasDeposit == 1 {
 			var who types.AccountID
-			if err := decoder.Decode(&who); err == nil {
-				info.Submission.Who = accountIDToSS58(who)
+			if err := decoder.Decode(&who); err != nil {
+				return nil, fmt.Errorf("decode cancelled deposit who: %w", err)
 			}
+			info.Submission.Who = accountIDToSS58(who)
+
 			var amount types.U128
-			if err := decoder.Decode(&amount); err == nil {
-				info.Submission.Amount = amount.String()
+			if err := decoder.Decode(&amount); err != nil {
+				return nil, fmt.Errorf("decode cancelled deposit amount: %w", err)
 			}
+			info.Submission.Amount = amount.String()
 		} else {
 			info.Submission.Who = "Unknown"
+			info.Submission.Amount = "0"
 		}
+
 		info.Track = 0
 		return info, nil
 
@@ -462,30 +490,27 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 
 		// Deposit - Option<Deposit<T::AccountId, BalanceOf<T, I>>>
 		hasDeposit, err := decoder.ReadOneByte()
-		if err == nil && hasDeposit == 1 {
+		if err != nil {
+			return nil, fmt.Errorf("read timedout deposit option: %w", err)
+		}
+
+		if hasDeposit == 1 {
 			var who types.AccountID
-			if err := decoder.Decode(&who); err == nil {
-				info.Submission.Who = accountIDToSS58(who)
+			if err := decoder.Decode(&who); err != nil {
+				return nil, fmt.Errorf("decode timedout deposit who: %w", err)
 			}
+			info.Submission.Who = accountIDToSS58(who)
+
 			var amount types.U128
-			if err := decoder.Decode(&amount); err == nil {
-				info.Submission.Amount = amount.String()
+			if err := decoder.Decode(&amount); err != nil {
+				return nil, fmt.Errorf("decode timedout deposit amount: %w", err)
 			}
+			info.Submission.Amount = amount.String()
 		} else {
 			info.Submission.Who = "Unknown"
+			info.Submission.Amount = "0"
 		}
-		info.Track = 0
-		return info, nil
 
-	case 5: // Killed
-		info.Status = "Killed"
-
-		// Since - BlockNumberFor<T, I>
-		var since uint32
-		if err := decoder.Decode(&since); err != nil {
-			return nil, fmt.Errorf("decode killed since: %w", err)
-		}
-		info.KilledAt = since
 		info.Track = 0
 		return info, nil
 
