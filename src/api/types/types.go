@@ -3,7 +3,7 @@ package types
 import "time"
 
 //
-// ──── NETWORKS / RPC ENDPOINTS ─────────────────────────────────────────────────
+// ──── NETWORKS / RPC ENDPOINTS ──────────────────────────────────────────────
 //
 
 type Network struct {
@@ -22,7 +22,7 @@ type RPC struct {
 }
 
 //
-// ──── GOVERNANCE ────────────────────────────────────────────────────────────────
+// ──── GOVERNANCE ─────────────────────────────────────────────────────────────
 //
 
 type Proposal struct {
@@ -42,12 +42,8 @@ type Proposal struct {
 	ConfirmStart            uint64    // Block number when confirm started
 	ConfirmEnd              uint64    // Block number when confirm ends
 	Approved                bool
-	Support                 string `gorm:"size:64"` // Percentage or amount
-	Approval                string `gorm:"size:64"` // Percentage
-	Ayes                    string `gorm:"size:64"`
-	Nays                    string `gorm:"size:64"`
-	Turnout                 string `gorm:"size:64"`
-	Electorate              string `gorm:"size:64"`
+	TallyAyes               string `gorm:"size:64"` // On-chain tally
+	TallyNays               string `gorm:"size:64"` // On-chain tally
 	PreimageHash            string `gorm:"size:128"`
 	PreimageLen             uint32
 	DecisionDepositWho      string `gorm:"size:128"`

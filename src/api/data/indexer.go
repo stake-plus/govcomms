@@ -67,7 +67,6 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 			}
 		}
 	}
-
 	log.Printf("indexer polkadot: found %d existing referenda", len(existingRefs))
 
 	// Convert map to sorted slice for ordered processing
@@ -91,14 +90,6 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 	errors := 0
 	processed := 0
 
-	// Log raw data for a few specific referendums to debug
-	debugRefs := []uint32{1000, 1001, 1002, 1003, 1004}
-	for _, refID := range debugRefs {
-		if _, exists := existingRefs[refID]; exists {
-			log.Printf("indexer polkadot: debugging ref %d", refID)
-		}
-	}
-
 	// Process each existing referendum in order
 	for _, refID := range refIDs {
 		select {
@@ -109,9 +100,8 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 
 		processed++
 
-		// Get referendum info
+		// Get referendum info - the client handles historical lookups
 		info, err := client.GetReferendumInfo(refID)
-
 		var proposal types.Proposal
 		dbErr := db.Where("network_id = ? AND ref_id = ?", 1, refID).First(&proposal).Error
 
@@ -120,6 +110,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 			if !strings.Contains(err.Error(), "does not exist") {
 				log.Printf("indexer polkadot: failed to get info for ref %d: %v", refID, err)
 			}
+
 			if dbErr == gorm.ErrRecordNotFound {
 				// Create with minimal info for cleared refs
 				proposal = types.Proposal{
@@ -173,18 +164,10 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 				proposal.DecisionDepositAmount = info.DecisionDeposit.Amount
 			}
 
-			// Set tally info
-			if info.Tally.Support != "" {
-				proposal.Support = info.Tally.Support
-			}
-			if info.Tally.Ayes != "" {
-				proposal.Ayes = info.Tally.Ayes
-			}
-			if info.Tally.Nays != "" {
-				proposal.Nays = info.Tally.Nays
-			}
-			if info.Tally.Approval != "" {
-				proposal.Approval = info.Tally.Approval
+			// Set tally info for ongoing referenda
+			if info.Status == "Ongoing" && info.Tally.Ayes != "" {
+				proposal.TallyAyes = info.Tally.Ayes
+				proposal.TallyNays = info.Tally.Nays
 			}
 
 			// Set decision timing if available
@@ -285,22 +268,16 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 				changed = true
 			}
 
-			// Update tally info
-			if info.Tally.Support != "" && proposal.Support != info.Tally.Support {
-				proposal.Support = info.Tally.Support
-				changed = true
-			}
-			if info.Tally.Ayes != "" && proposal.Ayes != info.Tally.Ayes {
-				proposal.Ayes = info.Tally.Ayes
-				changed = true
-			}
-			if info.Tally.Nays != "" && proposal.Nays != info.Tally.Nays {
-				proposal.Nays = info.Tally.Nays
-				changed = true
-			}
-			if info.Tally.Approval != "" && proposal.Approval != info.Tally.Approval {
-				proposal.Approval = info.Tally.Approval
-				changed = true
+			// Update tally info for ongoing referenda
+			if info.Status == "Ongoing" && info.Tally.Ayes != "" {
+				if proposal.TallyAyes != info.Tally.Ayes {
+					proposal.TallyAyes = info.Tally.Ayes
+					changed = true
+				}
+				if proposal.TallyNays != info.Tally.Nays {
+					proposal.TallyNays = info.Tally.Nays
+					changed = true
+				}
 			}
 
 			// Update submitter if we now have it

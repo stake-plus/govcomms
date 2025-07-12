@@ -20,22 +20,34 @@ var allModels = []interface{}{
 	&types.Network{}, &types.RPC{},
 	&types.Proposal{}, &types.ProposalParticipant{},
 	&types.Message{}, &types.DaoMember{}, &types.Vote{},
-	&types.EmailSubscription{}, &types.Track{},
+	&types.EmailSubscription{}, &types.Track{}, &types.Preimage{},
 }
 
 func migrate(db *gorm.DB) {
 	// First, try to run migrations to update column sizes
 	err := db.AutoMigrate(allModels...)
 	if err != nil {
-		log.Printf("auto-migrate failed (%v) – attempting to alter columns", err)
+		log.Printf("auto-migrate failed (%v) — attempting to alter columns", err)
 
 		// Try to alter columns directly for existing tables
 		alterStatements := []string{
 			"ALTER TABLE proposals MODIFY submitter VARCHAR(128)",
+			"ALTER TABLE proposals MODIFY decision_deposit_who VARCHAR(128)",
+			"ALTER TABLE proposals MODIFY submission_deposit_who VARCHAR(128)",
+			"ALTER TABLE proposals ADD COLUMN IF NOT EXISTS tally_ayes VARCHAR(64)",
+			"ALTER TABLE proposals ADD COLUMN IF NOT EXISTS tally_nays VARCHAR(64)",
+			"ALTER TABLE proposals DROP COLUMN IF EXISTS support",
+			"ALTER TABLE proposals DROP COLUMN IF EXISTS approval",
+			"ALTER TABLE proposals DROP COLUMN IF EXISTS ayes",
+			"ALTER TABLE proposals DROP COLUMN IF EXISTS nays",
+			"ALTER TABLE proposals DROP COLUMN IF EXISTS turnout",
+			"ALTER TABLE proposals DROP COLUMN IF EXISTS electorate",
 			"ALTER TABLE proposal_participants MODIFY address VARCHAR(128)",
 			"ALTER TABLE messages MODIFY author VARCHAR(128)",
 			"ALTER TABLE dao_members MODIFY address VARCHAR(128)",
 			"ALTER TABLE votes MODIFY voter_addr VARCHAR(128)",
+			"ALTER TABLE preimages MODIFY hash VARCHAR(128)",
+			"ALTER TABLE preimages MODIFY provider VARCHAR(128)",
 		}
 
 		for _, stmt := range alterStatements {
@@ -52,8 +64,9 @@ func migrate(db *gorm.DB) {
 			_ = db.Migrator().DropTable(
 				"email_subscriptions", "messages", "votes",
 				"proposal_participants", "proposals", "dao_members",
-				"tracks", "rpcs", "networks",
+				"tracks", "rpcs", "networks", "preimages",
 			)
+
 			if err := db.AutoMigrate(allModels...); err != nil {
 				log.Fatalf("migrate after drop: %v", err)
 			}

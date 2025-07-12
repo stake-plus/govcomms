@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"log"
 	"math/big"
 
 	"github.com/centrifuge/go-substrate-rpc-client/v4/scale"
+	"github.com/centrifuge/go-substrate-rpc-client/v4/ss58"
 	"github.com/centrifuge/go-substrate-rpc-client/v4/types"
 	"github.com/centrifuge/go-substrate-rpc-client/v4/types/codec"
 )
@@ -24,21 +24,84 @@ func (c *Client) GetReferendumInfo(refID uint32) (*ReferendumInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get storage: %w", err)
 	}
+
 	if !ok || len(raw) == 0 {
 		return nil, fmt.Errorf("referendum %d does not exist", refID)
 	}
 
-	// Decode the referendum data
+	// Try to decode the referendum data
 	info, err := decodeReferendumInfo(raw, refID)
-	if err != nil {
-		// Log error for debugging but don't spam logs
-		if refID < 10 || refID > 1660 {
-			log.Printf("Failed to decode ref %d: %v", refID, err)
-		}
-		return nil, err
+	if err == nil {
+		return info, nil
 	}
 
-	return info, nil
+	// If decode failed, check if it's a cleared referendum
+	// For cleared refs, the data is just the variant byte + block number
+	if len(raw) >= 5 {
+		decoder := scale.NewDecoder(bytes.NewReader(raw))
+
+		// Read variant
+		variant, err := decoder.ReadOneByte()
+		if err == nil && variant >= 1 && variant <= 5 {
+			// This is a cleared referendum, get the block number
+			var blockNum uint32
+			if err := decoder.Decode(&blockNum); err == nil {
+				// Now fetch historical data
+				targetBlock := uint64(blockNum) - 1
+				blockHash, err := c.GetBlockHash(&targetBlock)
+				if err != nil {
+					return nil, fmt.Errorf("get block hash for %d: %w", targetBlock, err)
+				}
+
+				// Query at historical block
+				var histRaw types.StorageDataRaw
+				var hash types.Hash
+
+				err = codec.DecodeFromHex(blockHash, &hash)
+				if err != nil {
+					return nil, fmt.Errorf("decode block hash: %w", err)
+				}
+
+				ok, err := c.api.RPC.State.GetStorage(storageKey, &histRaw, hash)
+				if err != nil {
+					return nil, fmt.Errorf("get storage at block %d: %w", targetBlock, err)
+				}
+				if !ok || len(histRaw) == 0 {
+					return nil, fmt.Errorf("referendum %d not found at block %d", refID, targetBlock)
+				}
+
+				// Decode the historical data
+				histInfo, err := decodeReferendumInfo(histRaw, refID)
+				if err != nil {
+					return nil, fmt.Errorf("decode historical data: %w", err)
+				}
+
+				// Update the status based on the variant we got
+				switch variant {
+				case 1:
+					histInfo.Status = "Approved"
+					histInfo.ApprovedAt = blockNum
+				case 2:
+					histInfo.Status = "Rejected"
+					histInfo.RejectedAt = blockNum
+				case 3:
+					histInfo.Status = "Cancelled"
+					histInfo.CancelledAt = blockNum
+				case 4:
+					histInfo.Status = "TimedOut"
+					histInfo.TimedOutAt = blockNum
+				case 5:
+					histInfo.Status = "Killed"
+					histInfo.KilledAt = blockNum
+				}
+
+				return histInfo, nil
+			}
+		}
+	}
+
+	// Return original error
+	return nil, fmt.Errorf("decode referendum %d: %w", refID, err)
 }
 
 // createReferendumStorageKey creates the storage key for a referendum
@@ -59,6 +122,12 @@ func createReferendumStorageKey(refID uint32) []byte {
 	key = append(key, hashedKey...)
 
 	return key
+}
+
+// accountIDToSS58 converts an AccountID to SS58 format
+func accountIDToSS58(accountID types.AccountID) string {
+	// Use network 0 for Polkadot
+	return ss58.Encode(accountID[:], 0)
 }
 
 // decodeReferendumInfo decodes referendum data based on the structure from the documentation
@@ -123,6 +192,7 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 			}
 			info.Proposal = hash.Hex()
 			info.ProposalLen = uint32(length)
+
 		case 1: // Legacy
 			var hash types.Hash
 			if err := decoder.Decode(&hash); err != nil {
@@ -130,6 +200,7 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 			}
 			info.Proposal = hash.Hex()
 			info.ProposalLen = 0
+
 		case 2: // Inline
 			// Read bounded vec
 			var length types.UCompact
@@ -145,6 +216,7 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 			hash := Blake2_256(callData)
 			info.Proposal = codec.HexEncodeToString(hash)
 			info.ProposalLen = callLen
+
 		default:
 			return nil, fmt.Errorf("unknown proposal type: %d", proposalType)
 		}
@@ -154,10 +226,12 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read enactment variant: %w", err)
 		}
+
 		var enactmentValue uint32
 		if err := decoder.Decode(&enactmentValue); err != nil {
 			return nil, fmt.Errorf("decode enactment value: %w", err)
 		}
+
 		if enactmentVariant == 0 {
 			info.Enactment = fmt.Sprintf("At(%d)", enactmentValue)
 		} else {
@@ -176,7 +250,7 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		if err := decoder.Decode(&submitter); err != nil {
 			return nil, fmt.Errorf("decode submitter: %w", err)
 		}
-		info.Submission.Who = submitter.ToHexString()
+		info.Submission.Who = accountIDToSS58(submitter)
 
 		var amount types.U128
 		if err := decoder.Decode(&amount); err != nil {
@@ -189,13 +263,14 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read decision deposit option: %w", err)
 		}
+
 		if hasDecisionDeposit == 1 {
 			info.DecisionDeposit = &Deposit{}
 			var decisionWho types.AccountID
 			if err := decoder.Decode(&decisionWho); err != nil {
 				return nil, fmt.Errorf("decode decision deposit who: %w", err)
 			}
-			info.DecisionDeposit.Who = decisionWho.ToHexString()
+			info.DecisionDeposit.Who = accountIDToSS58(decisionWho)
 
 			var decisionAmount types.U128
 			if err := decoder.Decode(&decisionAmount); err != nil {
@@ -209,6 +284,7 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read deciding option: %w", err)
 		}
+
 		if hasDeciding == 1 {
 			info.Decision = &DecisionStatus{}
 			var since uint32
@@ -222,6 +298,7 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 			if err != nil {
 				return nil, fmt.Errorf("read confirming option: %w", err)
 			}
+
 			if hasConfirming == 1 {
 				var confirming uint32
 				if err := decoder.Decode(&confirming); err != nil {
@@ -273,6 +350,7 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 
 	case 1: // Approved
 		info.Status = "Approved"
+
 		// Since - BlockNumberFor<T, I>
 		var since uint32
 		if err := decoder.Decode(&since); err != nil {
@@ -285,7 +363,7 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		if err == nil && hasDeposit == 1 {
 			var who types.AccountID
 			if err := decoder.Decode(&who); err == nil {
-				info.Submission.Who = who.ToHexString()
+				info.Submission.Who = accountIDToSS58(who)
 			}
 			var amount types.U128
 			if err := decoder.Decode(&amount); err == nil {
@@ -303,6 +381,7 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 
 	case 2: // Rejected
 		info.Status = "Rejected"
+
 		// Since - BlockNumberFor<T, I>
 		var since uint32
 		if err := decoder.Decode(&since); err != nil {
@@ -315,7 +394,7 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		if err == nil && hasDeposit == 1 {
 			var who types.AccountID
 			if err := decoder.Decode(&who); err == nil {
-				info.Submission.Who = who.ToHexString()
+				info.Submission.Who = accountIDToSS58(who)
 			}
 			var amount types.U128
 			if err := decoder.Decode(&amount); err == nil {
@@ -326,11 +405,11 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		}
 
 		info.Track = 0
-
 		return info, nil
 
 	case 3: // Cancelled
 		info.Status = "Cancelled"
+
 		// Since - BlockNumberFor<T, I>
 		var since uint32
 		if err := decoder.Decode(&since); err != nil {
@@ -343,7 +422,7 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		if err == nil && hasDeposit == 1 {
 			var who types.AccountID
 			if err := decoder.Decode(&who); err == nil {
-				info.Submission.Who = who.ToHexString()
+				info.Submission.Who = accountIDToSS58(who)
 			}
 			var amount types.U128
 			if err := decoder.Decode(&amount); err == nil {
@@ -354,11 +433,11 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		}
 
 		info.Track = 0
-
 		return info, nil
 
 	case 4: // TimedOut
 		info.Status = "TimedOut"
+
 		// Since - BlockNumberFor<T, I>
 		var since uint32
 		if err := decoder.Decode(&since); err != nil {
@@ -371,7 +450,7 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		if err == nil && hasDeposit == 1 {
 			var who types.AccountID
 			if err := decoder.Decode(&who); err == nil {
-				info.Submission.Who = who.ToHexString()
+				info.Submission.Who = accountIDToSS58(who)
 			}
 			var amount types.U128
 			if err := decoder.Decode(&amount); err == nil {
@@ -382,20 +461,18 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		}
 
 		info.Track = 0
-
 		return info, nil
 
 	case 5: // Killed
 		info.Status = "Killed"
+
 		// Since - BlockNumberFor<T, I>
 		var since uint32
 		if err := decoder.Decode(&since); err != nil {
 			return nil, fmt.Errorf("decode killed since: %w", err)
 		}
 		info.KilledAt = since
-
 		info.Track = 0
-
 		return info, nil
 
 	default:

@@ -50,7 +50,6 @@ func (c *Client) GetStorage(key string, at *string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
 	storageKey := types.NewStorageKey(keyBytes)
 
 	if at != nil {
@@ -178,4 +177,36 @@ func (c *Client) GetKeys(prefix string, at *string) ([]string, error) {
 func (c *Client) RPC(method string, params []interface{}) (json.RawMessage, error) {
 	// This is a compatibility stub
 	return nil, fmt.Errorf("generic RPC not implemented, use specific methods")
+}
+
+// GetReferendumInfoAt gets referendum info at a specific block
+func (c *Client) GetReferendumInfoAt(refID uint32, blockHash string) (*ReferendumInfo, error) {
+	// Create storage key for ReferendumInfoFor
+	key := createReferendumStorageKey(refID)
+
+	// Query storage at specific block
+	var raw types.StorageDataRaw
+	var hash types.Hash
+
+	err := codec.DecodeFromHex(blockHash, &hash)
+	if err != nil {
+		return nil, fmt.Errorf("decode block hash: %w", err)
+	}
+
+	storageKey := types.NewStorageKey(key)
+	ok, err := c.api.RPC.State.GetStorage(storageKey, &raw, hash)
+	if err != nil {
+		return nil, fmt.Errorf("get storage at block: %w", err)
+	}
+	if !ok || len(raw) == 0 {
+		return nil, fmt.Errorf("referendum %d does not exist at block %s", refID, blockHash)
+	}
+
+	// Decode the referendum data
+	info, err := decodeReferendumInfo(raw, refID)
+	if err != nil {
+		return nil, fmt.Errorf("decode referendum info: %w", err)
+	}
+
+	return info, nil
 }
