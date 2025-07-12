@@ -54,8 +54,8 @@ func Load(db *gorm.DB) Config {
 	enableSSL := sslCert != "" && sslKey != ""
 
 	return Config{
-		MySQLDSN:     getenv("MYSQL_DSN", "govcomms:DK3mfv93jf4m@tcp(172.16.254.7:3306)/govcomms"),
-		RedisURL:     getenv("REDIS_URL", "redis://172.16.254.7:6379/0"),
+		MySQLDSN:     getenv("MYSQL_DSN", "govcomms:DK3mfv93jf4m@tcp(127.0.0.1:3306)/govcomms"),
+		RedisURL:     getenv("REDIS_URL", "redis://127.0.0.1:6379/0"),
 		JWTSecret:    jwtSecret,
 		Port:         getenv("PORT", "8080"),
 		PollInterval: pi,
