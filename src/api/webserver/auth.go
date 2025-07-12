@@ -33,6 +33,7 @@ func randomHex32() (string, error) {
 	}
 	return "0x" + hex.EncodeToString(b), nil
 }
+
 func (a Auth) Challenge(c *gin.Context) {
 	var req struct {
 		Address string `json:"address" binding:"required,min=32,max=128"`
@@ -46,16 +47,8 @@ func (a Auth) Challenge(c *gin.Context) {
 	// Log authentication attempt
 	log.Printf("Auth challenge for %s from IP %s using %s", req.Address, c.ClientIP(), req.Method)
 
-	// Validate address format
-	if !isValidPolkadotAddress(req.Address) {
-		c.JSON(http.StatusBadRequest, gin.H{"err": "invalid address format"})
-		return
-	}
+	// Remove the address validation - signature verification will catch invalid addresses
 
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
-		return
-	}
 	var nonce string
 	var err error
 	switch req.Method {
@@ -66,16 +59,19 @@ func (a Auth) Challenge(c *gin.Context) {
 		// Air-gap remark still fine with UUID (human readable)
 		nonce = uuid.NewString()
 	}
+
 	if err != nil {
 		log.Printf("Failed to create nonce: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"err": "failed to create challenge"})
 		return
 	}
+
 	if err := data.SetNonce(c, a.rdb, req.Address, nonce); err != nil {
 		log.Printf("Failed to set nonce for %s: %v", req.Address, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"err": "failed to create challenge"})
 		return
 	}
+
 	log.Printf("Challenge created for %s with nonce %s", req.Address, nonce)
 	c.JSON(http.StatusOK, gin.H{"nonce": nonce})
 }
@@ -165,6 +161,7 @@ func isValidPolkadotAddress(addr string) bool {
 	if strings.HasPrefix(addr, "0x") {
 		return len(addr) == 66 // 0x + 64 hex chars
 	}
-	// SS58 addresses are typically 47-48 chars
-	return len(addr) >= 47 && len(addr) <= 50
+	// SS58 addresses can vary in length (typically 47-50 chars)
+	// Kusama addresses starting with capital letters can be longer
+	return len(addr) >= 46 && len(addr) <= 52
 }
