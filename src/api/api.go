@@ -52,18 +52,43 @@ func main() {
 
 	router := webserver.New(cfg, db, rdb)
 
+	// Create HTTP server
 	httpSrv := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: router,
+		Addr:         ":" + cfg.Port,
+		Handler:      router,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
+	// Start server
 	go func() {
-		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		var err error
+		if cfg.EnableSSL {
+			log.Printf("Starting HTTPS server on port %s", cfg.Port)
+
+			// Create TLS reloader
+			tlsReloader, err := webserver.NewTLSReloader(cfg.SSLCert, cfg.SSLKey)
+			if err != nil {
+				log.Fatalf("Failed to create TLS reloader: %v", err)
+			}
+
+			// Use custom TLS config
+			httpSrv.TLSConfig = tlsReloader.GetConfig()
+
+			// ListenAndServeTLS with empty cert/key paths since we're using GetCertificate
+			err = httpSrv.ListenAndServeTLS("", "")
+		} else {
+			log.Printf("Starting HTTP server on port %s", cfg.Port)
+			err = httpSrv.ListenAndServe()
+		}
+
+		if err != nil && err != http.ErrServerClosed {
 			log.Fatalf("http: %v", err)
 		}
 	}()
 
-	log.Printf("GovComms API listening on %s", cfg.Port)
+	log.Printf("GovComms API listening on %s (SSL: %v)", cfg.Port, cfg.EnableSSL)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)

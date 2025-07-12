@@ -15,6 +15,9 @@ type Config struct {
 	JWTSecret    string
 	Port         string
 	PollInterval int
+	SSLCert      string
+	SSLKey       string
+	EnableSSL    bool
 }
 
 func getenv(key, def string) string {
@@ -43,11 +46,23 @@ func Load(db *gorm.DB) Config {
 		jwtSecret = getenv("JWT_SECRET", "9eafd87a084c0cf4ededa3b0ad774b77be9bb1b1a5696b9e5b11d59b71fa57ce")
 	}
 
+	// Check if SSL is enabled
+	enableSSL := false
+	sslCert := getenv("SSL_CERT", "")
+	sslKey := getenv("SSL_KEY", "")
+
+	if sslCert != "" && sslKey != "" {
+		enableSSL = true
+	}
+
 	return Config{
 		MySQLDSN:     getenv("MYSQL_DSN", "govcomms:DK3mfv93jf4m@tcp(172.16.254.7:3306)/govcomms"),
 		RedisURL:     getenv("REDIS_URL", "redis://172.16.254.7:6379/0"),
 		JWTSecret:    jwtSecret,
-		Port:         getenv("PORT", "443"),
+		Port:         getenv("PORT", "8080"),
 		PollInterval: pi,
+		SSLCert:      sslCert,
+		SSLKey:       sslKey,
+		EnableSSL:    enableSSL,
 	}
 }
