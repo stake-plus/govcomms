@@ -55,7 +55,7 @@ func attachRoutes(r *gin.Engine, cfg config.Config, db *gorm.DB, rdb *redis.Clie
 		AllowCredentials: true,
 	}))
 
-	authH := NewAuth(rdb, []byte(cfg.JWTSecret))
+	authH := NewAuth(rdb, []byte(cfg.JWTSecret), db)
 	msgH := NewMessages(db, rdb)
 	voteH := NewVotes(db)
 

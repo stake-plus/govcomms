@@ -23,21 +23,30 @@ export const api = {
     return res.json();
   },
 
-  verify: async (address: string, method: string, signature?: string) => {
-    const res = await fetch(`${API_URL}/auth/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address, method, signature })
-    });
-    if (!res.ok) {
-      const error = await res.json().catch(() => ({ err: 'Failed to verify' }));
-      if (res.status === 401) {
-        throw new ApiError(res.status, 'Not authorized for this referendum', error);
-      }
-      throw new ApiError(res.status, error.err || 'Failed to verify');
-    }
-    return res.json();
-  },
+verify: async (address: string, method: string, signature?: string, refId?: string, network?: string) => {
+	const res = await fetch(`${API_URL}/auth/verify`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ 
+			address, 
+			method, 
+			signature,
+			refId,
+			network
+		})
+	});
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ err: 'Failed to verify' }));
+		if (res.status === 403) {
+			throw new ApiError(res.status, error.message || 'Not authorized for this referendum', error);
+		}
+		if (res.status === 401) {
+			throw new ApiError(res.status, 'Authentication failed', error);
+		}
+		throw new ApiError(res.status, error.err || 'Failed to verify');
+	}
+	return res.json();
+},
 
   getMessages: async (network: string, refId: string, token: string) => {
     const res = await fetch(`${API_URL}/messages/${network}/${refId}`, {
