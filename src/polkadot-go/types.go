@@ -34,24 +34,44 @@ type Block struct {
 	Extrinsics []string `json:"extrinsics"`
 }
 
+// StorageChangeSet represents changes to storage
+type StorageChangeSet struct {
+	Block   string     `json:"block"`
+	Changes [][]string `json:"changes"`
+}
+
 // ReferendumInfo represents the info for a referendum
 type ReferendumInfo struct {
-	Status     string
-	Track      uint16
-	Origin     string
-	Proposal   string
-	Enactment  string
-	Submitted  uint32
-	Submission Submission
-	Decision   *DecisionStatus
-	Tally      Tally
+	Status          string
+	Track           uint16
+	Origin          string
+	Proposal        string // Preimage hash
+	ProposalLen     uint32 // Preimage length
+	Enactment       string
+	Submitted       uint32
+	Submission      Submission
+	DecisionDeposit *Deposit
+	Decision        *DecisionStatus
+	Tally           Tally
+	InQueue         bool
+	// For finished referenda
+	ApprovedAt  uint32
+	RejectedAt  uint32
+	CancelledAt uint32
+	TimedOutAt  uint32
+	KilledAt    uint32
 }
 
 // Submission info
 type Submission struct {
 	Who    string
-	Track  uint16
-	Origin string
+	Amount string
+}
+
+// Deposit info
+type Deposit struct {
+	Who    string
+	Amount string
 }
 
 // DecisionStatus for ongoing referenda
@@ -62,7 +82,74 @@ type DecisionStatus struct {
 
 // Tally represents vote counts
 type Tally struct {
-	Ayes    string
-	Nays    string
-	Support string
+	Ayes     string
+	Nays     string
+	Support  string
+	Approval string // Calculated percentage
+}
+
+// BoundedCall represents a proposal
+type BoundedCall struct {
+	Hash string
+	Len  uint32
+	Data []byte
+}
+
+// TrackInfo contains track configuration
+type TrackInfo struct {
+	Name               string
+	MaxDeciding        uint32
+	DecisionDeposit    string
+	PreparePeriod      uint32
+	DecisionPeriod     uint32
+	ConfirmPeriod      uint32
+	MinEnactmentPeriod uint32
+	MinApproval        string
+	MinSupport         string
+}
+
+// AccountVote represents how an account has voted
+type AccountVote struct {
+	VoteType   string // Casting or Delegating
+	Vote       *VoteInfo
+	Delegating *DelegatingInfo
+}
+
+// VoteInfo for direct votes
+type VoteInfo struct {
+	RefID   uint32
+	Vote    Vote
+	Balance string
+}
+
+// Vote represents the actual vote
+type Vote struct {
+	Aye        bool
+	Conviction uint8
+}
+
+// DelegatingInfo for delegated votes
+type DelegatingInfo struct {
+	Target     string
+	Conviction uint8
+	Balance    string
+	Prior      PriorLock
+}
+
+// PriorLock info
+type PriorLock struct {
+	Unlocking uint64
+}
+
+// CastingInfo contains direct voting information
+type CastingInfo struct {
+	Votes       []VoteInfo
+	Delegations Delegations
+	Prior       PriorLock
+}
+
+// Delegations tracks delegated voting power
+type Delegations struct {
+	Votes   string
+	Capital string
 }

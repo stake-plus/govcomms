@@ -2,21 +2,15 @@ package polkadot
 
 import (
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"math/big"
-	"strings"
-)
 
-// DecodeHex decodes a hex string, handling 0x prefix
-func DecodeHex(hexStr string) ([]byte, error) {
-	hexStr = strings.TrimPrefix(hexStr, "0x")
-	return hex.DecodeString(hexStr)
-}
+	"github.com/centrifuge/go-substrate-rpc-client/v4/types/codec"
+)
 
 // DecodeU32 decodes a little-endian u32 from hex
 func DecodeU32(hexStr string) (uint32, error) {
-	data, err := DecodeHex(hexStr)
+	data, err := codec.HexDecodeString(hexStr)
 	if err != nil {
 		return 0, err
 	}
@@ -28,7 +22,7 @@ func DecodeU32(hexStr string) (uint32, error) {
 
 // DecodeU64 decodes a little-endian u64 from hex
 func DecodeU64(hexStr string) (uint64, error) {
-	data, err := DecodeHex(hexStr)
+	data, err := codec.HexDecodeString(hexStr)
 	if err != nil {
 		return 0, err
 	}
@@ -40,7 +34,7 @@ func DecodeU64(hexStr string) (uint64, error) {
 
 // DecodeU128 decodes a little-endian u128 from hex
 func DecodeU128(hexStr string) (*big.Int, error) {
-	data, err := DecodeHex(hexStr)
+	data, err := codec.HexDecodeString(hexStr)
 	if err != nil {
 		return nil, err
 	}
@@ -91,15 +85,5 @@ func DecodeCompact(data []byte) (uint64, int, error) {
 		}
 		return result, n + 1, nil
 	}
-
 	return 0, 0, fmt.Errorf("invalid compact encoding")
-}
-
-// DecodeBlockNumber decodes a block number from hex header
-func DecodeBlockNumber(hexStr string) (uint64, error) {
-	// Block numbers in headers are hex encoded
-	hexStr = strings.TrimPrefix(hexStr, "0x")
-	blockNum := new(big.Int)
-	blockNum.SetString(hexStr, 16)
-	return blockNum.Uint64(), nil
 }

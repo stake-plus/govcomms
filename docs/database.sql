@@ -9,115 +9,151 @@ DROP TABLE IF EXISTS tracks;
 DROP TABLE IF EXISTS rpcs;
 DROP TABLE IF EXISTS networks;
 
--- Networks table
-CREATE TABLE networks (
-    id TINYINT UNSIGNED PRIMARY KEY,
-    name VARCHAR(32) UNIQUE NOT NULL,
-    symbol VARCHAR(8) NOT NULL,
-    url VARCHAR(256) NOT NULL
-);
+-- Networks
+CREATE TABLE IF NOT EXISTS `networks` (
+  `id` tinyint unsigned NOT NULL,
+  `name` varchar(32) NOT NULL,
+  `symbol` varchar(8) NOT NULL,
+  `url` varchar(256) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_network_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Tracks table
-CREATE TABLE tracks (
-    id SMALLINT UNSIGNED PRIMARY KEY,
-    network_id TINYINT UNSIGNED NOT NULL,
-    name VARCHAR(64) NOT NULL,
-    max_deciding INT UNSIGNED,
-    decision_deposit VARCHAR(64),
-    prepare_period INT UNSIGNED,
-    decision_period INT UNSIGNED,
-    confirm_period INT UNSIGNED,
-    min_enactment_period INT UNSIGNED,
-    min_approval VARCHAR(32),
-    min_support VARCHAR(32),
-    INDEX idx_network (network_id),
-    FOREIGN KEY (network_id) REFERENCES networks(id)
-);
+-- RPC endpoints
+CREATE TABLE IF NOT EXISTS `rpcs` (
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `network_id` tinyint unsigned NOT NULL,
+  `url` varchar(256) NOT NULL,
+  `active` boolean DEFAULT true,
+  PRIMARY KEY (`id`),
+  KEY `idx_rpc_network` (`network_id`),
+  CONSTRAINT `fk_rpc_network` FOREIGN KEY (`network_id`) REFERENCES `networks` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Proposals table (enhanced)
-CREATE TABLE proposals (
-    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-    network_id TINYINT UNSIGNED NOT NULL,
-    ref_id BIGINT UNSIGNED NOT NULL,
-    submitter VARCHAR(64) NOT NULL,
-    title VARCHAR(255),
-    status VARCHAR(32),
-    track_id SMALLINT UNSIGNED,
-    origin VARCHAR(64),
-    enactment VARCHAR(32),
-    submitted BIGINT UNSIGNED,
-    submitted_at TIMESTAMP NULL,
-    decision_start BIGINT UNSIGNED,
-    decision_end BIGINT UNSIGNED,
-    confirm_start BIGINT UNSIGNED,
-    confirm_end BIGINT UNSIGNED,
-    approved BOOLEAN DEFAULT FALSE,
-    support VARCHAR(64),
-    approval VARCHAR(64),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_network_ref (network_id, ref_id),
-    INDEX idx_track (track_id),
-    FOREIGN KEY (network_id) REFERENCES networks(id),
-    FOREIGN KEY (track_id) REFERENCES tracks(id)
-);
+-- Proposals/Referenda
+CREATE TABLE IF NOT EXISTS `proposals` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `network_id` tinyint unsigned NOT NULL,
+  `ref_id` bigint unsigned NOT NULL,
+  `submitter` varchar(128) NOT NULL,
+  `title` varchar(255) DEFAULT NULL,
+  `status` varchar(32) DEFAULT NULL,
+  `track_id` smallint unsigned DEFAULT NULL,
+  `origin` varchar(64) DEFAULT NULL,
+  `enactment` varchar(32) DEFAULT NULL,
+  `submitted` bigint unsigned DEFAULT 0,
+  `submitted_at` timestamp NULL DEFAULT NULL,
+  `decision_start` bigint unsigned DEFAULT 0,
+  `decision_end` bigint unsigned DEFAULT 0,
+  `confirm_start` bigint unsigned DEFAULT 0,
+  `confirm_end` bigint unsigned DEFAULT 0,
+  `approved` boolean DEFAULT false,
+  `support` varchar(64) DEFAULT NULL,
+  `approval` varchar(64) DEFAULT NULL,
+  `ayes` varchar(64) DEFAULT NULL,
+  `nays` varchar(64) DEFAULT NULL,
+  `turnout` varchar(64) DEFAULT NULL,
+  `electorate` varchar(64) DEFAULT NULL,
+  `preimage_hash` varchar(128) DEFAULT NULL,
+  `preimage_len` int unsigned DEFAULT NULL,
+  `decision_deposit_who` varchar(128) DEFAULT NULL,
+  `decision_deposit_amount` varchar(64) DEFAULT NULL,
+  `submission_deposit_who` varchar(128) DEFAULT NULL,
+  `submission_deposit_amount` varchar(64) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_proposal_network_ref` (`network_id`, `ref_id`),
+  KEY `idx_proposal_status` (`status`),
+  KEY `idx_proposal_track` (`track_id`),
+  KEY `idx_proposal_submitter` (`submitter`),
+  CONSTRAINT `fk_proposal_network` FOREIGN KEY (`network_id`) REFERENCES `networks` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Proposal participants table
-CREATE TABLE proposal_participants (
-    proposal_id BIGINT UNSIGNED NOT NULL,
-    address VARCHAR(64) NOT NULL,
-    PRIMARY KEY (proposal_id, address),
-    FOREIGN KEY (proposal_id) REFERENCES proposals(id)
-);
+-- Proposal participants (anyone who interacted with the proposal)
+CREATE TABLE IF NOT EXISTS `proposal_participants` (
+  `proposal_id` bigint unsigned NOT NULL,
+  `address` varchar(128) NOT NULL,
+  `role` varchar(32) DEFAULT NULL COMMENT 'submitter, voter, delegator, etc',
+  PRIMARY KEY (`proposal_id`, `address`),
+  KEY `idx_participant_address` (`address`),
+  CONSTRAINT `fk_participant_proposal` FOREIGN KEY (`proposal_id`) REFERENCES `proposals` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- DAO members table
-CREATE TABLE dao_members (
-    address VARCHAR(64) PRIMARY KEY,
-    discord VARCHAR(64)
-);
+-- Messages between DAO and proponents
+CREATE TABLE IF NOT EXISTS `messages` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `proposal_id` bigint unsigned NOT NULL,
+  `author` varchar(128) NOT NULL,
+  `body` text NOT NULL,
+  `internal` boolean DEFAULT false,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_message_proposal` (`proposal_id`),
+  KEY `idx_message_author` (`author`),
+  CONSTRAINT `fk_message_proposal` FOREIGN KEY (`proposal_id`) REFERENCES `proposals` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Messages table
-CREATE TABLE messages (
-    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-    proposal_id BIGINT UNSIGNED NOT NULL,
-    author VARCHAR(64) NOT NULL,
-    body TEXT NOT NULL,
-    internal BOOLEAN DEFAULT FALSE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_proposal (proposal_id),
-    FOREIGN KEY (proposal_id) REFERENCES proposals(id)
-);
+-- DAO members
+CREATE TABLE IF NOT EXISTS `dao_members` (
+  `address` varchar(128) NOT NULL,
+  `discord` varchar(64) DEFAULT NULL,
+  PRIMARY KEY (`address`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Votes table (enhanced)
-CREATE TABLE votes (
-    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-    proposal_id BIGINT UNSIGNED NOT NULL,
-    voter_addr VARCHAR(64) NOT NULL,
-    choice VARCHAR(8) NOT NULL,
-    conviction SMALLINT DEFAULT 0,
-    balance VARCHAR(64),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_proposal (proposal_id),
-    FOREIGN KEY (proposal_id) REFERENCES proposals(id)
-);
+-- Votes (for internal DAO voting, not on-chain votes)
+CREATE TABLE IF NOT EXISTS `votes` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `proposal_id` bigint unsigned NOT NULL,
+  `voter_addr` varchar(128) NOT NULL,
+  `choice` varchar(8) NOT NULL,
+  `conviction` smallint DEFAULT 0,
+  `balance` varchar(64) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_vote_proposal_voter` (`proposal_id`, `voter_addr`),
+  CONSTRAINT `fk_vote_proposal` FOREIGN KEY (`proposal_id`) REFERENCES `proposals` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Email subscriptions table
-CREATE TABLE email_subscriptions (
-    id BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-    message_id BIGINT UNSIGNED NOT NULL,
-    email VARCHAR(256) NOT NULL,
-    sent_at TIMESTAMP NULL,
-    FOREIGN KEY (message_id) REFERENCES messages(id)
-);
+-- Email subscriptions
+CREATE TABLE IF NOT EXISTS `email_subscriptions` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `message_id` bigint unsigned NOT NULL,
+  `email` varchar(256) NOT NULL,
+  `sent_at` timestamp NULL DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_subscription_message` (`message_id`),
+  CONSTRAINT `fk_subscription_message` FOREIGN KEY (`message_id`) REFERENCES `messages` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- RPCs table
-CREATE TABLE rpcs (
-    id INT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
-    network_id TINYINT UNSIGNED NOT NULL,
-    url VARCHAR(256) NOT NULL,
-    active BOOLEAN DEFAULT TRUE,
-    FOREIGN KEY (network_id) REFERENCES networks(id)
-);
+-- Tracks information
+CREATE TABLE IF NOT EXISTS `tracks` (
+  `id` smallint unsigned NOT NULL,
+  `network_id` tinyint unsigned NOT NULL,
+  `name` varchar(64) NOT NULL,
+  `max_deciding` int unsigned DEFAULT NULL,
+  `decision_deposit` varchar(64) DEFAULT NULL,
+  `prepare_period` int unsigned DEFAULT NULL,
+  `decision_period` int unsigned DEFAULT NULL,
+  `confirm_period` int unsigned DEFAULT NULL,
+  `min_enactment_period` int unsigned DEFAULT NULL,
+  `min_approval` varchar(32) DEFAULT NULL,
+  `min_support` varchar(32) DEFAULT NULL,
+  PRIMARY KEY (`id`, `network_id`),
+  KEY `idx_track_network` (`network_id`),
+  CONSTRAINT `fk_track_network` FOREIGN KEY (`network_id`) REFERENCES `networks` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Preimages
+CREATE TABLE IF NOT EXISTS `preimages` (
+  `hash` varchar(128) NOT NULL,
+  `data` longtext DEFAULT NULL,
+  `length` int unsigned DEFAULT NULL,
+  `provider` varchar(128) DEFAULT NULL,
+  `deposit` varchar(64) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`hash`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Insert initial data
 INSERT INTO networks (id, name, symbol, url) VALUES 

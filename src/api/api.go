@@ -24,18 +24,40 @@ var allModels = []interface{}{
 }
 
 func migrate(db *gorm.DB) {
+	// First, try to run migrations to update column sizes
 	err := db.AutoMigrate(allModels...)
-	if err == nil {
-		return
-	}
-	log.Printf("auto‑migrate failed (%v) — dropping & recreating schema", err)
-	_ = db.Migrator().DropTable(
-		"email_subscriptions", "messages", "votes",
-		"proposal_participants", "proposals", "dao_members",
-		"tracks", "rpcs", "networks",
-	)
-	if err := db.AutoMigrate(allModels...); err != nil {
-		log.Fatalf("migrate after drop: %v", err)
+	if err != nil {
+		log.Printf("auto-migrate failed (%v) – attempting to alter columns", err)
+
+		// Try to alter columns directly for existing tables
+		alterStatements := []string{
+			"ALTER TABLE proposals MODIFY submitter VARCHAR(128)",
+			"ALTER TABLE proposal_participants MODIFY address VARCHAR(128)",
+			"ALTER TABLE messages MODIFY author VARCHAR(128)",
+			"ALTER TABLE dao_members MODIFY address VARCHAR(128)",
+			"ALTER TABLE votes MODIFY voter_addr VARCHAR(128)",
+		}
+
+		for _, stmt := range alterStatements {
+			if err := db.Exec(stmt).Error; err != nil {
+				log.Printf("Failed to execute %s: %v", stmt, err)
+			}
+		}
+
+		// Try migrations again
+		if err := db.AutoMigrate(allModels...); err != nil {
+			log.Printf("auto-migrate still failed after column alterations, dropping & recreating schema")
+
+			// Drop and recreate
+			_ = db.Migrator().DropTable(
+				"email_subscriptions", "messages", "votes",
+				"proposal_participants", "proposals", "dao_members",
+				"tracks", "rpcs", "networks",
+			)
+			if err := db.AutoMigrate(allModels...); err != nil {
+				log.Fatalf("migrate after drop: %v", err)
+			}
+		}
 	}
 }
 
@@ -44,6 +66,7 @@ func ensurePolkadotRPC(db *gorm.DB, url string) {
 	db.Model(&types.RPC{}).
 		Where("network_id = ? AND url <> ?", 1, url).
 		Update("active", false)
+
 	var rpc types.RPC
 	if err := db.FirstOrCreate(&rpc, types.RPC{
 		NetworkID: 1,

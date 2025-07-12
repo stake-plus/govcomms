@@ -1,10 +1,12 @@
 package polkadot
 
 import (
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 
 	"github.com/OneOfOne/xxhash"
+	"golang.org/x/crypto/blake2b"
 )
 
 // StorageKey creates a storage key for a pallet and item
@@ -16,8 +18,8 @@ func StorageKey(pallet, item string) string {
 // StorageKeyWithHashedKey creates a storage key with a hashed key parameter
 func StorageKeyWithHashedKey(pallet, item string, keyData []byte) string {
 	key := append(Twox128([]byte(pallet)), Twox128([]byte(item))...)
-	// Hash the key data and append it
-	hashedKey := append(Twox64(keyData), keyData...)
+	// For Blake2_128_Concat hasher
+	hashedKey := append(Blake2_128(keyData), keyData...)
 	key = append(key, hashedKey...)
 	return "0x" + hex.EncodeToString(key)
 }
@@ -46,22 +48,91 @@ func Twox128(data []byte) []byte {
 func Twox64(data []byte) []byte {
 	hash := xxhash.NewS64(0)
 	hash.Write(data)
-
 	out := make([]byte, 8)
 	binary.LittleEndian.PutUint64(out, hash.Sum64())
 	return out
 }
 
-// Blake2_128 implements Blake2 128-bit hash
+// Blake2_128 implements Blake2b 128-bit hash
 func Blake2_128(data []byte) []byte {
-	// For now, using xxhash as placeholder - you'd want proper blake2
-	return Twox128(data)
+	h, err := blake2b.New(16, nil)
+	if err != nil {
+		panic(err)
+	}
+	h.Write(data)
+	return h.Sum(nil)
 }
 
-// Blake2_256 implements Blake2 256-bit hash
+// Blake2_256 implements Blake2b 256-bit hash
 func Blake2_256(data []byte) []byte {
-	// For now, using xxhash as placeholder - you'd want proper blake2
-	hash1 := Twox128(data)
-	hash2 := Twox128(append(data, 0x01))
-	return append(hash1, hash2...)
+	h, err := blake2b.New256(nil)
+	if err != nil {
+		panic(err)
+	}
+	h.Write(data)
+	return h.Sum(nil)
+}
+
+// HexEncode encodes bytes to hex string without 0x prefix
+func HexEncode(data []byte) string {
+	return hex.EncodeToString(data)
+}
+
+// generateRandomBytes generates random bytes of given length
+func generateRandomBytes(n int) ([]byte, error) {
+	b := make([]byte, n)
+	_, err := rand.Read(b)
+	return b, err
+}
+
+// Interface for hashers
+type Hasher interface {
+	Hash(data []byte) []byte
+	IsBlake2() bool
+	RequiresConcat() bool
+}
+
+// Blake2_128Concat hasher
+type Blake2_128Concat struct{}
+
+func (h Blake2_128Concat) Hash(data []byte) []byte {
+	return append(Blake2_128(data), data...)
+}
+
+func (h Blake2_128Concat) IsBlake2() bool {
+	return true
+}
+
+func (h Blake2_128Concat) RequiresConcat() bool {
+	return true
+}
+
+// Twox64Concat hasher
+type Twox64Concat struct{}
+
+func (h Twox64Concat) Hash(data []byte) []byte {
+	return append(Twox64(data), data...)
+}
+
+func (h Twox64Concat) IsBlake2() bool {
+	return false
+}
+
+func (h Twox64Concat) RequiresConcat() bool {
+	return true
+}
+
+// Identity hasher (no hashing)
+type Identity struct{}
+
+func (h Identity) Hash(data []byte) []byte {
+	return data
+}
+
+func (h Identity) IsBlake2() bool {
+	return false
+}
+
+func (h Identity) RequiresConcat() bool {
+	return false
 }
