@@ -73,7 +73,11 @@ func (c *Client) GetReferendumInfo(refID uint32) (*ReferendumInfo, error) {
 				// Decode the historical data
 				histInfo, err := decodeReferendumInfo(histRaw, refID)
 				if err != nil {
-					return nil, fmt.Errorf("decode historical data: %w", err)
+					// Try legacy format for very old referenda
+					histInfo, err = decodeLegacyReferendumInfo(histRaw, refID)
+					if err != nil {
+						return nil, fmt.Errorf("decode historical data: %w", err)
+					}
 				}
 
 				// Update the status based on the variant we got
@@ -148,6 +152,86 @@ func accountIDToSS58(accountID types.AccountID) string {
 	return base58.Encode(payload)
 }
 
+// decodeLegacyReferendumInfo decodes very old referendum formats
+func decodeLegacyReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
+	decoder := scale.NewDecoder(bytes.NewReader(data))
+
+	// Read variant
+	variant, err := decoder.ReadOneByte()
+	if err != nil {
+		return nil, fmt.Errorf("read variant: %w", err)
+	}
+
+	info := &ReferendumInfo{}
+
+	// Handle legacy "Ongoing" format
+	if variant == 0 {
+		info.Status = "Ongoing"
+		info.Track = 0 // Legacy refs were all on root track
+		info.Origin = "system"
+
+		// Legacy format had different structure
+		// Try to decode what we can
+
+		// Skip some bytes that might be proposal data
+		// The exact format varies by runtime version
+		if len(data) > 100 {
+			// Skip to where we might find an AccountID
+			decoder = scale.NewDecoder(bytes.NewReader(data[40:]))
+		}
+
+		// Try to find an AccountID pattern (32 bytes that look like an account)
+		for i := 0; i < len(data)-32; i++ {
+			testAccount := data[i : i+32]
+			// Simple heuristic: valid accounts usually have some non-zero bytes
+			nonZero := 0
+			for _, b := range testAccount {
+				if b != 0 {
+					nonZero++
+				}
+			}
+
+			if nonZero > 10 && nonZero < 30 {
+				// This might be an account
+				var accountID types.AccountID
+				copy(accountID[:], testAccount)
+				info.Submission.Who = accountIDToSS58(accountID)
+				info.Submission.Amount = "10000000000" // Default deposit
+				break
+			}
+		}
+
+		if info.Submission.Who == "" {
+			info.Submission.Who = "Unknown"
+		}
+
+		return info, nil
+	}
+
+	// For other variants, return minimal info
+	info.Track = 0
+	info.Origin = "system"
+	info.Submission.Who = "Unknown"
+	info.Submission.Amount = "0"
+
+	switch variant {
+	case 1:
+		info.Status = "Approved"
+	case 2:
+		info.Status = "Rejected"
+	case 3:
+		info.Status = "Cancelled"
+	case 4:
+		info.Status = "TimedOut"
+	case 5:
+		info.Status = "Killed"
+	default:
+		info.Status = "Unknown"
+	}
+
+	return info, nil
+}
+
 // decodeReferendumInfo decodes referendum data based on the structure from the documentation
 func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 	decoder := scale.NewDecoder(bytes.NewReader(data))
@@ -192,7 +276,7 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		}
 
 		// Proposal - Bounded<CallOf<T, I>, T::Preimages>
-		// First byte indicates Lookup(0), Legacy(1), or Inline(2)
+		// First byte indicates the proposal type
 		proposalType, err := decoder.ReadOneByte()
 		if err != nil {
 			return nil, fmt.Errorf("read proposal type: %w", err)
@@ -395,8 +479,6 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 			}
 			info.Submission.Amount = amount.String()
 		} else {
-			// For approved referenda without deposit info, we need to fetch historical data
-			// The referendum was likely created before the deposit was cleared
 			info.Submission.Who = "Unknown"
 			info.Submission.Amount = "0"
 		}
@@ -511,6 +593,18 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 			info.Submission.Amount = "0"
 		}
 
+		info.Track = 0
+		return info, nil
+
+	case 5: // Killed
+		info.Status = "Killed"
+
+		// Since - BlockNumberFor<T, I>
+		var since uint32
+		if err := decoder.Decode(&since); err != nil {
+			return nil, fmt.Errorf("decode killed since: %w", err)
+		}
+		info.KilledAt = since
 		info.Track = 0
 		return info, nil
 

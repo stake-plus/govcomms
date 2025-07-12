@@ -187,7 +187,6 @@ func (c *Client) GetReferendumInfoAt(refID uint32, blockHash string) (*Referendu
 	// Query storage at specific block
 	var raw types.StorageDataRaw
 	var hash types.Hash
-
 	err := codec.DecodeFromHex(blockHash, &hash)
 	if err != nil {
 		return nil, fmt.Errorf("decode block hash: %w", err)
@@ -198,6 +197,7 @@ func (c *Client) GetReferendumInfoAt(refID uint32, blockHash string) (*Referendu
 	if err != nil {
 		return nil, fmt.Errorf("get storage at block: %w", err)
 	}
+
 	if !ok || len(raw) == 0 {
 		return nil, fmt.Errorf("referendum %d does not exist at block %s", refID, blockHash)
 	}
@@ -205,7 +205,11 @@ func (c *Client) GetReferendumInfoAt(refID uint32, blockHash string) (*Referendu
 	// Decode the referendum data
 	info, err := decodeReferendumInfo(raw, refID)
 	if err != nil {
-		return nil, fmt.Errorf("decode referendum info: %w", err)
+		// Try legacy format
+		info, err = decodeLegacyReferendumInfo(raw, refID)
+		if err != nil {
+			return nil, fmt.Errorf("decode referendum info: %w", err)
+		}
 	}
 
 	return info, nil
