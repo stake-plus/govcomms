@@ -113,8 +113,8 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 			if dbErr == gorm.ErrRecordNotFound {
 				// Create with minimal info for cleared refs
 				ref = types.Ref{
-					NetworkID: 1,
 					RefID:     uint64(refID),
+					NetworkID: 1,
 					Status:    "Cleared",
 					Submitter: "Unknown",
 					CreatedAt: time.Now(),
