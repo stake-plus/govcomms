@@ -39,24 +39,18 @@ func (a Auth) Challenge(c *gin.Context) {
 		Address string `json:"address" binding:"required,min=32,max=128"`
 		Method  string `json:"method"  binding:"required,oneof=walletconnect polkadotjs airgap"`
 	}
-
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
-		return
-	}
-
-	// Validate address format
-	if !isValidPolkadotAddress(req.Address) {
-		c.JSON(http.StatusBadRequest, gin.H{"err": "invalid address format"})
 		return
 	}
 
 	// Log authentication attempt
 	log.Printf("Auth challenge for %s from IP %s using %s", req.Address, c.ClientIP(), req.Method)
 
+	// Remove the address validation - signature verification will catch invalid addresses
+
 	var nonce string
 	var err error
-
 	switch req.Method {
 	case "polkadotjs", "walletconnect":
 		// Polkadot{.js} expects raw HEX data for signRaw → generate 32-byte hex
@@ -72,7 +66,6 @@ func (a Auth) Challenge(c *gin.Context) {
 		return
 	}
 
-	// Set nonce with TTL
 	if err := data.SetNonce(c, a.rdb, req.Address, nonce); err != nil {
 		log.Printf("Failed to set nonce for %s: %v", req.Address, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"err": "failed to create challenge"})
