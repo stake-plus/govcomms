@@ -1,12 +1,11 @@
--- Drop existing tables if needed
-DROP TABLE IF EXISTS email_subscriptions;
-DROP TABLE IF EXISTS messages;
-DROP TABLE IF EXISTS votes;
-DROP TABLE IF EXISTS proposal_participants;
-DROP TABLE IF EXISTS proposals;
+-- Drop existing tables if needed (in correct order due to foreign keys)
+DROP TABLE IF EXISTS dao_votes;
+DROP TABLE IF EXISTS ref_subs;
+DROP TABLE IF EXISTS ref_proponents;
+DROP TABLE IF EXISTS ref_messages;
+DROP TABLE IF EXISTS refs;
+DROP TABLE IF EXISTS network_rpcs;
 DROP TABLE IF EXISTS dao_members;
-DROP TABLE IF EXISTS tracks;
-DROP TABLE IF EXISTS rpcs;
 DROP TABLE IF EXISTS networks;
 
 -- Networks
@@ -15,13 +14,13 @@ CREATE TABLE IF NOT EXISTS `networks` (
   `name` varchar(32) NOT NULL,
   `symbol` varchar(8) NOT NULL,
   `url` varchar(256) NOT NULL,
-  `discord_channel_id` varchar(256) NOT NULL,
+  `discord_channel_id` varchar(64) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `idx_network_name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- RPC endpoints
-CREATE TABLE IF NOT EXISTS `rpcs` (
+CREATE TABLE IF NOT EXISTS `network_rpcs` (
   `id` int unsigned NOT NULL AUTO_INCREMENT,
   `network_id` tinyint unsigned NOT NULL,
   `url` varchar(256) NOT NULL,
@@ -31,8 +30,15 @@ CREATE TABLE IF NOT EXISTS `rpcs` (
   CONSTRAINT `fk_rpc_network` FOREIGN KEY (`network_id`) REFERENCES `networks` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- DAO members (moved before refs to avoid foreign key issues)
+CREATE TABLE IF NOT EXISTS `dao_members` (
+  `address` varchar(128) NOT NULL,
+  `discord` varchar(64) DEFAULT NULL,
+  PRIMARY KEY (`address`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Proposals/Referenda
-CREATE TABLE IF NOT EXISTS `proposals` (
+CREATE TABLE IF NOT EXISTS `refs` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `network_id` tinyint unsigned NOT NULL,
   `ref_id` bigint unsigned NOT NULL,
@@ -71,114 +77,61 @@ CREATE TABLE IF NOT EXISTS `proposals` (
   CONSTRAINT `fk_proposal_network` FOREIGN KEY (`network_id`) REFERENCES `networks` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Proposal participants (anyone who interacted with the proposal)
-CREATE TABLE IF NOT EXISTS `proposal_participants` (
-  `proposal_id` bigint unsigned NOT NULL,
-  `address` varchar(128) NOT NULL,
-  `role` varchar(32) DEFAULT NULL COMMENT 'submitter, voter, delegator, etc',
-  PRIMARY KEY (`proposal_id`, `address`),
-  KEY `idx_participant_address` (`address`),
-  CONSTRAINT `fk_participant_proposal` FOREIGN KEY (`proposal_id`) REFERENCES `proposals` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
 -- Messages between DAO and proponents
-CREATE TABLE IF NOT EXISTS `messages` (
+CREATE TABLE IF NOT EXISTS `ref_messages` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `proposal_id` bigint unsigned NOT NULL,
+  `ref_id` bigint unsigned NOT NULL,
   `author` varchar(128) NOT NULL,
   `body` text NOT NULL,
   `internal` boolean DEFAULT false,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
-  KEY `idx_message_proposal` (`proposal_id`),
+  KEY `idx_message_proposal` (`ref_id`),
   KEY `idx_message_author` (`author`),
-  CONSTRAINT `fk_message_proposal` FOREIGN KEY (`proposal_id`) REFERENCES `proposals` (`id`) ON DELETE CASCADE
+  CONSTRAINT `fk_message_proposal` FOREIGN KEY (`ref_id`) REFERENCES `refs` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- DAO members
-CREATE TABLE IF NOT EXISTS `dao_members` (
+-- Proposal participants (anyone who interacted with the proposal)
+CREATE TABLE IF NOT EXISTS `ref_proponents` (
+  `ref_id` bigint unsigned NOT NULL,
   `address` varchar(128) NOT NULL,
-  `discord` varchar(64) DEFAULT NULL,
-  PRIMARY KEY (`address`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- Votes (for internal DAO voting, not on-chain votes)
-CREATE TABLE IF NOT EXISTS `votes` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `proposal_id` bigint unsigned NOT NULL,
-  `voter_addr` varchar(128) NOT NULL,
-  `choice` varchar(8) NOT NULL,
-  `conviction` smallint DEFAULT 0,
-  `balance` varchar(64) DEFAULT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `idx_vote_proposal_voter` (`proposal_id`, `voter_addr`),
-  CONSTRAINT `fk_vote_proposal` FOREIGN KEY (`proposal_id`) REFERENCES `proposals` (`id`) ON DELETE CASCADE
+  `role` varchar(32) DEFAULT NULL COMMENT 'submitter, voter, delegator, etc',
+  `active` tinyint DEFAULT '1',
+  PRIMARY KEY (`ref_id`, `address`),
+  KEY `idx_participant_address` (`address`),
+  CONSTRAINT `fk_participant_proposal` FOREIGN KEY (`ref_id`) REFERENCES `refs` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Email subscriptions
-CREATE TABLE IF NOT EXISTS `email_subscriptions` (
+CREATE TABLE IF NOT EXISTS `ref_subs` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `message_id` bigint unsigned NOT NULL,
   `email` varchar(256) NOT NULL,
   `sent_at` timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `idx_subscription_message` (`message_id`),
-  CONSTRAINT `fk_subscription_message` FOREIGN KEY (`message_id`) REFERENCES `messages` (`id`) ON DELETE CASCADE
+  CONSTRAINT `fk_subscription_message` FOREIGN KEY (`message_id`) REFERENCES `ref_messages` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Tracks information
-CREATE TABLE IF NOT EXISTS `tracks` (
-  `id` smallint unsigned NOT NULL,
-  `network_id` tinyint unsigned NOT NULL,
-  `name` varchar(64) NOT NULL,
-  `max_deciding` int unsigned DEFAULT NULL,
-  `decision_deposit` varchar(64) DEFAULT NULL,
-  `prepare_period` int unsigned DEFAULT NULL,
-  `decision_period` int unsigned DEFAULT NULL,
-  `confirm_period` int unsigned DEFAULT NULL,
-  `min_enactment_period` int unsigned DEFAULT NULL,
-  `min_approval` varchar(32) DEFAULT NULL,
-  `min_support` varchar(32) DEFAULT NULL,
-  PRIMARY KEY (`id`, `network_id`),
-  KEY `idx_track_network` (`network_id`),
-  CONSTRAINT `fk_track_network` FOREIGN KEY (`network_id`) REFERENCES `networks` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- Preimages
-CREATE TABLE IF NOT EXISTS `preimages` (
-  `hash` varchar(128) NOT NULL,
-  `data` longtext DEFAULT NULL,
-  `length` int unsigned DEFAULT NULL,
-  `provider` varchar(128) DEFAULT NULL,
-  `deposit` varchar(64) DEFAULT NULL,
+-- Votes (for internal DAO voting, not on-chain votes)
+CREATE TABLE IF NOT EXISTS `dao_votes` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `ref_id` bigint unsigned NOT NULL,
+  `dao_member_id` varchar(128) NOT NULL,
+  `choice` int(2) NOT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`hash`)
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_vote_proposal_voter` (`ref_id`, `dao_member_id`),
+  KEY `idx_vote_dao_member` (`dao_member_id`),
+  CONSTRAINT `fk_vote_proposal` FOREIGN KEY (`ref_id`) REFERENCES `refs` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_vote_dao_member` FOREIGN KEY (`dao_member_id`) REFERENCES `dao_members` (`address`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Insert initial data
-INSERT INTO networks (id, name, symbol, url) VALUES 
-    (1, 'Polkadot', 'DOT', 'https://polkadot.network', '1234'),
-    (2, 'Kusama', 'KSM', 'https://kusama.network', '1234');
+INSERT INTO networks (id, name, symbol, url, discord_channel_id) VALUES 
+    (1, 'Polkadot', 'DOT', 'https://polkadot.network', '1293381448815870023'),
+    (2, 'Kusama', 'KSM', 'https://kusama.network', '1293381492310937600');
 
-INSERT INTO rpcs (id, network_id, url, active) VALUES
-    (1, 1, 'wss://polkadot.dotters.network/', 1),
-    (2, 2, 'wss://kusama.dotters.network/', 1);
-
--- Insert Polkadot tracks (OpenGov)
-INSERT INTO tracks (id, network_id, name, max_deciding, decision_deposit, prepare_period, decision_period, confirm_period, min_enactment_period) VALUES
-    (0, 1, 'Root', 1, '100000000000000', 1200, 201600, 14400, 14400),
-    (1, 1, 'Whitelisted Caller', 100, '10000000000000', 300, 201600, 300, 300),
-    (10, 1, 'Staking Admin', 10, '50000000000000', 1200, 201600, 1800, 300),
-    (11, 1, 'Treasurer', 10, '10000000000000', 1200, 201600, 1800, 14400),
-    (12, 1, 'Lease Admin', 10, '50000000000000', 1200, 201600, 1800, 300),
-    (13, 1, 'Fellowship Admin', 10, '50000000000000', 1200, 201600, 1800, 300),
-    (14, 1, 'General Admin', 10, '50000000000000', 1200, 201600, 1800, 300),
-    (15, 1, 'Auction Admin', 10, '50000000000000', 1200, 201600, 1800, 300),
-    (20, 1, 'Referendum Canceller', 1000, '100000000000000', 1200, 100800, 1800, 300),
-    (21, 1, 'Referendum Killer', 1000, '250000000000000', 1200, 201600, 1800, 300),
-    (30, 1, 'Small Tipper', 200, '10000000000000', 100, 100800, 100, 100),
-    (31, 1, 'Big Tipper', 100, '100000000000000', 100, 100800, 600, 100),
-    (32, 1, 'Small Spender', 50, '100000000000000', 2400, 201600, 7200, 14400),
-    (33, 1, 'Medium Spender', 50, '2000000000000000', 2400, 201600, 14400, 14400),
-    (34, 1, 'Big Spender', 50, '10000000000000000', 2400, 201600, 28800, 14400);
+INSERT INTO network_rpcs (network_id, url, active) VALUES
+    (1, 'wss://polkadot.dotters.network/', 1),
+    (2, 'wss://kusama.dotters.network/', 1);

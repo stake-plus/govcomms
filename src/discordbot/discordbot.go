@@ -66,6 +66,7 @@ func NewDiscordBot(token, feedbackRoleID, guildID, apiURL string, rdb *redis.Cli
 
 	dg.AddHandler(bot.handleMessageCreate)
 	dg.AddHandler(bot.handleReady)
+
 	dg.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsMessageContent
 
 	return bot, nil
@@ -80,13 +81,13 @@ func (b *DiscordBot) Stop() error {
 }
 
 func (b *DiscordBot) loadChannelConfig() error {
-	var channels []types.DiscordChannel
-	if err := b.db.Where("guild_id = ? AND channel_type = ?", b.guildID, "referenda").Find(&channels).Error; err != nil {
+	var networks []types.Network
+	if err := b.db.Where("discord_channel_id IS NOT NULL AND discord_channel_id != ''").Find(&networks).Error; err != nil {
 		return err
 	}
 
-	for _, ch := range channels {
-		b.channels[ch.NetworkID] = ch.ChannelID
+	for _, net := range networks {
+		b.channels[net.ID] = net.DiscordChannelID
 	}
 
 	if len(b.channels) == 0 {
@@ -175,36 +176,38 @@ func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.Mess
 		netID = 2
 	}
 
-	var prop types.Proposal
-	if err := b.db.First(&prop, "network_id = ? AND ref_id = ?", netID, refNum).Error; err != nil {
+	var ref types.Ref
+	if err := b.db.First(&ref, "network_id = ? AND ref_id = ?", netID, refNum).Error; err != nil {
 		// Create proposal if it doesn't exist
-		prop = types.Proposal{
+		ref = types.Ref{
 			NetworkID: netID,
 			RefID:     uint64(refNum),
 			Submitter: daoMember.Address,
 			Status:    "Unknown",
 			Title:     fmt.Sprintf("%s Referendum #%d", strings.Title(network), refNum),
 		}
-		if err := b.db.Create(&prop).Error; err != nil {
+		if err := b.db.Create(&ref).Error; err != nil {
 			s.ChannelMessageSend(m.ChannelID, "Failed to create proposal record. Please try again.")
 			return
 		}
 	}
 
-	// Create participant record
-	participant := types.ProposalParticipant{
-		ProposalID: prop.ID,
-		Address:    daoMember.Address,
-		Role:       "dao_member",
+	// Create proponent record
+	proponent := types.RefProponent{
+		RefID:   ref.ID,
+		Address: daoMember.Address,
+		Role:    "dao_member",
+		Active:  1,
 	}
-	b.db.FirstOrCreate(&participant, types.ProposalParticipant{ProposalID: prop.ID, Address: daoMember.Address})
+	b.db.FirstOrCreate(&proponent, types.RefProponent{RefID: ref.ID, Address: daoMember.Address})
 
 	// Store message
-	msg := types.Message{
-		ProposalID: prop.ID,
-		Author:     daoMember.Address,
-		Body:       feedbackMsg,
-		CreatedAt:  time.Now(),
+	msg := types.RefMessage{
+		RefID:     ref.ID,
+		Author:    daoMember.Address,
+		Body:      feedbackMsg,
+		CreatedAt: time.Now(),
+		Internal:  true,
 	}
 	if err := b.db.Create(&msg).Error; err != nil {
 		s.ChannelMessageSend(m.ChannelID, "Failed to store message. Please try again.")
@@ -213,7 +216,7 @@ func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.Mess
 
 	// Check if this is the first message
 	var msgCount int64
-	b.db.Model(&types.Message{}).Where("proposal_id = ?", prop.ID).Count(&msgCount)
+	b.db.Model(&types.RefMessage{}).Where("ref_id = ?", ref.ID).Count(&msgCount)
 
 	// Store link to frontend
 	link := fmt.Sprintf("%s/%s/%d", b.apiURL, network, refNum)
@@ -247,6 +250,7 @@ func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.Mess
 		},
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
+
 	s.ChannelMessageSendEmbed(m.ChannelID, embed)
 }
 
@@ -259,7 +263,6 @@ func (b *DiscordBot) setupDefaultChannels(s *discordgo.Session) {
 
 	for _, ch := range channels {
 		lowerName := strings.ToLower(ch.Name)
-
 		if strings.Contains(lowerName, "polkadot") && strings.Contains(lowerName, "referendum") {
 			b.channels[1] = ch.ID
 			b.saveChannelConfig(1, ch.ID)
@@ -273,14 +276,7 @@ func (b *DiscordBot) setupDefaultChannels(s *discordgo.Session) {
 }
 
 func (b *DiscordBot) saveChannelConfig(networkID uint8, channelID string) {
-	channel := types.DiscordChannel{
-		GuildID:     b.guildID,
-		ChannelID:   channelID,
-		NetworkID:   networkID,
-		ChannelType: "referenda",
-		CreatedAt:   time.Now(),
-	}
-	b.db.Create(&channel)
+	b.db.Model(&types.Network{}).Where("id = ?", networkID).Update("discord_channel_id", channelID)
 }
 
 func (b *DiscordBot) findReferendumThread(channelID string, refNum int) (*discordgo.Channel, error) {
@@ -479,9 +475,9 @@ func main() {
 	rdb := data.MustRedis(cfg.RedisURL)
 	db := data.MustMySQL(cfg.MySQLDSN)
 
-	// Add DiscordChannel to migration
-	if err := db.AutoMigrate(&types.DiscordChannel{}); err != nil {
-		log.Fatalf("Failed to migrate discord channels: %v", err)
+	// Ensure tables exist
+	if err := db.AutoMigrate(&types.Network{}, &types.DaoMember{}, &types.Ref{}, &types.RefMessage{}, &types.RefProponent{}); err != nil {
+		log.Fatalf("Failed to migrate tables: %v", err)
 	}
 
 	bot, err := NewDiscordBot(token, feedbackRoleID, guildID, apiURL, rdb, db)

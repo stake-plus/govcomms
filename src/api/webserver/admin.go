@@ -18,32 +18,20 @@ func NewAdmin(db *gorm.DB) Admin {
 
 func (a Admin) SetDiscordChannel(c *gin.Context) {
 	var req struct {
-		GuildID     string `json:"guildId" binding:"required"`
-		ChannelID   string `json:"channelId" binding:"required"`
-		NetworkID   uint8  `json:"networkId" binding:"required"`
-		ChannelType string `json:"channelType" binding:"required"`
+		NetworkID        uint8  `json:"networkId" binding:"required"`
+		DiscordChannelID string `json:"discordChannelId" binding:"required"`
 	}
-
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
 	}
 
-	channel := types.DiscordChannel{
-		GuildID:     req.GuildID,
-		ChannelID:   req.ChannelID,
-		NetworkID:   req.NetworkID,
-		ChannelType: req.ChannelType,
-	}
-
-	// Upsert
-	if err := a.db.Where("guild_id = ? AND network_id = ? AND channel_type = ?",
-		req.GuildID, req.NetworkID, req.ChannelType).
-		Assign(channel).
-		FirstOrCreate(&channel).Error; err != nil {
+	// Update network's discord channel
+	if err := a.db.Model(&types.Network{}).Where("id = ?", req.NetworkID).
+		Update("discord_channel_id", req.DiscordChannelID).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"id": channel.ID})
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }

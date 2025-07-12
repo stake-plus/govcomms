@@ -17,11 +17,14 @@ import (
 )
 
 var allModels = []interface{}{
-	&types.Network{}, &types.RPC{},
-	&types.Proposal{}, &types.ProposalParticipant{},
-	&types.Message{}, &types.DaoMember{}, &types.Vote{},
-	&types.EmailSubscription{}, &types.Track{}, &types.Preimage{},
-	&types.DiscordChannel{}, // Add this
+	&types.Network{},
+	&types.NetworkRPC{},
+	&types.DaoMember{},
+	&types.Ref{},
+	&types.RefMessage{},
+	&types.RefProponent{},
+	&types.RefSub{},
+	&types.DaoVote{},
 }
 
 func migrate(db *gorm.DB) {
@@ -29,26 +32,15 @@ func migrate(db *gorm.DB) {
 	err := db.AutoMigrate(allModels...)
 	if err != nil {
 		log.Printf("auto-migrate failed (%v) — attempting to alter columns", err)
-
 		// Try to alter columns directly for existing tables
 		alterStatements := []string{
-			"ALTER TABLE proposals MODIFY submitter VARCHAR(128)",
-			"ALTER TABLE proposals MODIFY decision_deposit_who VARCHAR(128)",
-			"ALTER TABLE proposals MODIFY submission_deposit_who VARCHAR(128)",
-			"ALTER TABLE proposals ADD COLUMN IF NOT EXISTS tally_ayes VARCHAR(64)",
-			"ALTER TABLE proposals ADD COLUMN IF NOT EXISTS tally_nays VARCHAR(64)",
-			"ALTER TABLE proposals DROP COLUMN IF EXISTS support",
-			"ALTER TABLE proposals DROP COLUMN IF EXISTS approval",
-			"ALTER TABLE proposals DROP COLUMN IF EXISTS ayes",
-			"ALTER TABLE proposals DROP COLUMN IF EXISTS nays",
-			"ALTER TABLE proposals DROP COLUMN IF EXISTS turnout",
-			"ALTER TABLE proposals DROP COLUMN IF EXISTS electorate",
-			"ALTER TABLE proposal_participants MODIFY address VARCHAR(128)",
-			"ALTER TABLE messages MODIFY author VARCHAR(128)",
+			"ALTER TABLE refs MODIFY submitter VARCHAR(128)",
+			"ALTER TABLE refs MODIFY decision_deposit_who VARCHAR(128)",
+			"ALTER TABLE refs MODIFY submission_deposit_who VARCHAR(128)",
+			"ALTER TABLE ref_proponents MODIFY address VARCHAR(128)",
+			"ALTER TABLE ref_messages MODIFY author VARCHAR(128)",
 			"ALTER TABLE dao_members MODIFY address VARCHAR(128)",
-			"ALTER TABLE votes MODIFY voter_addr VARCHAR(128)",
-			"ALTER TABLE preimages MODIFY hash VARCHAR(128)",
-			"ALTER TABLE preimages MODIFY provider VARCHAR(128)",
+			"ALTER TABLE dao_votes MODIFY dao_member_id VARCHAR(128)",
 		}
 
 		for _, stmt := range alterStatements {
@@ -60,14 +52,11 @@ func migrate(db *gorm.DB) {
 		// Try migrations again
 		if err := db.AutoMigrate(allModels...); err != nil {
 			log.Printf("auto-migrate still failed after column alterations, dropping & recreating schema")
-
 			// Drop and recreate
 			_ = db.Migrator().DropTable(
-				"email_subscriptions", "messages", "votes",
-				"proposal_participants", "proposals", "dao_members",
-				"tracks", "rpcs", "networks", "preimages",
+				"dao_votes", "ref_subs", "ref_proponents", "ref_messages",
+				"refs", "network_rpcs", "dao_members", "networks",
 			)
-
 			if err := db.AutoMigrate(allModels...); err != nil {
 				log.Fatalf("migrate after drop: %v", err)
 			}
@@ -77,12 +66,12 @@ func migrate(db *gorm.DB) {
 
 func ensurePolkadotRPC(db *gorm.DB, url string) {
 	// Upsert active Polkadot RPC; disable all others for the network.
-	db.Model(&types.RPC{}).
+	db.Model(&types.NetworkRPC{}).
 		Where("network_id = ? AND url <> ?", 1, url).
 		Update("active", false)
 
-	var rpc types.RPC
-	if err := db.FirstOrCreate(&rpc, types.RPC{
+	var rpc types.NetworkRPC
+	if err := db.FirstOrCreate(&rpc, types.NetworkRPC{
 		NetworkID: 1,
 		URL:       url,
 	}).Error; err == nil {
@@ -92,6 +81,7 @@ func ensurePolkadotRPC(db *gorm.DB, url string) {
 
 func main() {
 	cfg := config.Load()
+
 	db := data.MustMySQL(cfg.MySQLDSN)
 	migrate(db)
 
@@ -99,6 +89,7 @@ func main() {
 	_ = db.FirstOrCreate(&types.Network{ID: 1}, types.Network{
 		ID: 1, Name: "Polkadot", Symbol: "DOT", URL: "https://polkadot.network",
 	}).Error
+
 	ensurePolkadotRPC(db, cfg.RPCURL)
 
 	rdb := data.MustRedis(cfg.RedisURL)
@@ -122,7 +113,6 @@ func main() {
 			log.Fatalf("http: %v", err)
 		}
 	}()
-
 	log.Printf("GovComms API listening on %s", cfg.Port)
 
 	sig := make(chan os.Signal, 1)

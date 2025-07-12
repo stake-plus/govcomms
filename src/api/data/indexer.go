@@ -47,24 +47,20 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 	for _, key := range keys {
 		// Remove 0x prefix
 		keyHex := strings.TrimPrefix(key, "0x")
-
 		// The key format is: prefix + blake2_128(refID) + refID
 		// We need to extract the refID from the end
 		if len(keyHex) > prefixLen {
 			// Get the part after the prefix
 			remainder := keyHex[prefixLen:]
-
 			// The remainder should be: blake2_128_hash(16 bytes = 32 hex chars) + refID(4 bytes = 8 hex chars)
 			if len(remainder) >= 40 { // 32 + 8
 				// Extract the last 8 hex characters (4 bytes) which is the refID
 				refIDHex := remainder[len(remainder)-8:]
-
 				// Convert hex to bytes
 				refIDBytes, err := polkadot.DecodeHex(refIDHex)
 				if err != nil || len(refIDBytes) != 4 {
 					continue
 				}
-
 				// Convert to uint32 (little endian)
 				refID := binary.LittleEndian.Uint32(refIDBytes)
 				existingRefs[refID] = true
@@ -86,7 +82,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 
 	// Check what we have in database
 	var dbCount int64
-	db.Model(&types.Proposal{}).Where("network_id = ?", 1).Count(&dbCount)
+	db.Model(&types.Ref{}).Where("network_id = ?", 1).Count(&dbCount)
 	log.Printf("indexer polkadot: database has %d proposals", dbCount)
 
 	created := 0
@@ -106,8 +102,8 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 
 		// Get referendum info - the client handles historical lookups
 		info, err := client.GetReferendumInfo(refID)
-		var proposal types.Proposal
-		dbErr := db.Where("network_id = ? AND ref_id = ?", 1, refID).First(&proposal).Error
+		var ref types.Ref
+		dbErr := db.Where("network_id = ? AND ref_id = ?", 1, refID).First(&ref).Error
 
 		if err != nil {
 			// Only log errors for refs we expect to work
@@ -116,7 +112,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 			}
 			if dbErr == gorm.ErrRecordNotFound {
 				// Create with minimal info for cleared refs
-				proposal = types.Proposal{
+				ref = types.Ref{
 					NetworkID: 1,
 					RefID:     uint64(refID),
 					Status:    "Cleared",
@@ -124,8 +120,8 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 					CreatedAt: time.Now(),
 					UpdatedAt: time.Now(),
 				}
-				if err := db.Create(&proposal).Error; err != nil {
-					log.Printf("indexer polkadot: failed to create proposal %d: %v", refID, err)
+				if err := db.Create(&ref).Error; err != nil {
+					log.Printf("indexer polkadot: failed to create ref %d: %v", refID, err)
 					errors++
 				} else {
 					created++
@@ -145,7 +141,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 		// We have referendum info
 		if dbErr == gorm.ErrRecordNotFound {
 			// Create new
-			proposal = types.Proposal{
+			ref = types.Ref{
 				NetworkID:    1,
 				RefID:        uint64(refID),
 				Status:       info.Status,
@@ -162,77 +158,79 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 
 			// Set submitter info
 			if info.Submission.Who != "" {
-				proposal.Submitter = info.Submission.Who
-				proposal.SubmissionDepositWho = info.Submission.Who
-				proposal.SubmissionDepositAmount = info.Submission.Amount
+				ref.Submitter = info.Submission.Who
+				ref.SubmissionDepositWho = info.Submission.Who
+				ref.SubmissionDepositAmount = info.Submission.Amount
 			} else {
-				proposal.Submitter = "Unknown"
+				ref.Submitter = "Unknown"
 			}
 
 			// Set decision deposit if available
 			if info.DecisionDeposit != nil {
-				proposal.DecisionDepositWho = info.DecisionDeposit.Who
-				proposal.DecisionDepositAmount = info.DecisionDeposit.Amount
+				ref.DecisionDepositWho = info.DecisionDeposit.Who
+				ref.DecisionDepositAmount = info.DecisionDeposit.Amount
 			}
 
 			// Set tally info for ongoing referenda
 			if info.Status == "Ongoing" && info.Tally.Ayes != "" {
-				proposal.TallyAyes = info.Tally.Ayes
-				proposal.TallyNays = info.Tally.Nays
+				ref.Ayes = info.Tally.Ayes
+				ref.Nays = info.Tally.Nays
+				ref.Support = info.Tally.Support
 			}
 
 			// Set decision timing if available
 			if info.Decision != nil {
-				proposal.DecisionStart = uint64(info.Decision.Since)
+				ref.DecisionStart = uint64(info.Decision.Since)
 				if info.Decision.Confirming != nil {
-					proposal.ConfirmStart = uint64(*info.Decision.Confirming)
+					ref.ConfirmStart = uint64(*info.Decision.Confirming)
 				}
 			}
 
 			// Set end times for finished referenda
 			if info.ApprovedAt > 0 {
-				proposal.DecisionEnd = uint64(info.ApprovedAt)
+				ref.DecisionEnd = uint64(info.ApprovedAt)
 			} else if info.RejectedAt > 0 {
-				proposal.DecisionEnd = uint64(info.RejectedAt)
+				ref.DecisionEnd = uint64(info.RejectedAt)
 			} else if info.CancelledAt > 0 {
-				proposal.DecisionEnd = uint64(info.CancelledAt)
+				ref.DecisionEnd = uint64(info.CancelledAt)
 			} else if info.TimedOutAt > 0 {
-				proposal.DecisionEnd = uint64(info.TimedOutAt)
+				ref.DecisionEnd = uint64(info.TimedOutAt)
 			} else if info.KilledAt > 0 {
-				proposal.DecisionEnd = uint64(info.KilledAt)
+				ref.DecisionEnd = uint64(info.KilledAt)
 			}
 
-			if err := db.Create(&proposal).Error; err != nil {
-				log.Printf("indexer polkadot: failed to create proposal %d: %v", refID, err)
+			if err := db.Create(&ref).Error; err != nil {
+				log.Printf("indexer polkadot: failed to create ref %d: %v", refID, err)
 				errors++
 			} else {
 				created++
-
-				// Create proposal participants
-				participants := []types.ProposalParticipant{}
+				// Create proponents
+				proponents := []types.RefProponent{}
 
 				// Add submitter
 				if info.Submission.Who != "" && info.Submission.Who != "Unknown" {
-					participants = append(participants, types.ProposalParticipant{
-						ProposalID: proposal.ID,
-						Address:    info.Submission.Who,
-						Role:       "submitter",
+					proponents = append(proponents, types.RefProponent{
+						RefID:   ref.ID,
+						Address: info.Submission.Who,
+						Role:    "submitter",
+						Active:  1,
 					})
 				}
 
 				// Add decision deposit provider if different
 				if info.DecisionDeposit != nil && info.DecisionDeposit.Who != info.Submission.Who {
-					participants = append(participants, types.ProposalParticipant{
-						ProposalID: proposal.ID,
-						Address:    info.DecisionDeposit.Who,
-						Role:       "decision_deposit",
+					proponents = append(proponents, types.RefProponent{
+						RefID:   ref.ID,
+						Address: info.DecisionDeposit.Who,
+						Role:    "decision_deposit",
+						Active:  1,
 					})
 				}
 
-				// Create participants
-				for _, p := range participants {
+				// Create proponents
+				for _, p := range proponents {
 					if err := db.Create(&p).Error; err != nil {
-						log.Printf("indexer polkadot: failed to create participant: %v", err)
+						log.Printf("indexer polkadot: failed to create proponent: %v", err)
 					}
 				}
 
@@ -243,21 +241,22 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 					addresses, err := preimageDecoder.FetchAndDecodePreimage(
 						info.Proposal,
 						info.ProposalLen,
-						uint32(proposal.Submitted),
+						uint32(ref.Submitted),
 					)
 					if err != nil {
 						log.Printf("Failed to decode preimage for ref %d: %v", refID, err)
 					} else {
 						// Add all addresses as participants
 						for _, addr := range addresses {
-							if addr != "" && addr != proposal.Submitter {
-								participant := types.ProposalParticipant{
-									ProposalID: proposal.ID,
-									Address:    addr,
-									Role:       "recipient",
+							if addr != "" && addr != ref.Submitter {
+								proponent := types.RefProponent{
+									RefID:   ref.ID,
+									Address: addr,
+									Role:    "recipient",
+									Active:  1,
 								}
-								if err := db.Create(&participant).Error; err != nil {
-									log.Printf("Failed to create recipient participant: %v", err)
+								if err := db.Create(&proponent).Error; err != nil {
+									log.Printf("Failed to create recipient proponent: %v", err)
 								}
 							}
 						}
@@ -268,103 +267,102 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 		} else if dbErr == nil {
 			// Update existing if changed
 			changed := false
-
-			if proposal.Status != info.Status && info.Status != "" {
-				log.Printf("indexer polkadot: updating ref %d status from %s to %s", refID, proposal.Status, info.Status)
-				proposal.Status = info.Status
+			if ref.Status != info.Status && info.Status != "" {
+				log.Printf("indexer polkadot: updating ref %d status from %s to %s", refID, ref.Status, info.Status)
+				ref.Status = info.Status
 				changed = true
 			}
-
-			if info.Track > 0 && proposal.TrackID != info.Track {
-				proposal.TrackID = info.Track
+			if info.Track > 0 && ref.TrackID != info.Track {
+				ref.TrackID = info.Track
 				changed = true
 			}
-
-			if info.Origin != "" && proposal.Origin != info.Origin {
-				proposal.Origin = info.Origin
+			if info.Origin != "" && ref.Origin != info.Origin {
+				ref.Origin = info.Origin
 				changed = true
 			}
-
-			if info.Enactment != "" && proposal.Enactment != info.Enactment {
-				proposal.Enactment = info.Enactment
+			if info.Enactment != "" && ref.Enactment != info.Enactment {
+				ref.Enactment = info.Enactment
 				changed = true
 			}
-
-			if info.Status == "Approved" && !proposal.Approved {
-				proposal.Approved = true
+			if info.Status == "Approved" && !ref.Approved {
+				ref.Approved = true
 				changed = true
 			}
 
 			// Update tally info for ongoing referenda
 			if info.Status == "Ongoing" && info.Tally.Ayes != "" {
-				if proposal.TallyAyes != info.Tally.Ayes {
-					proposal.TallyAyes = info.Tally.Ayes
+				if ref.Ayes != info.Tally.Ayes {
+					ref.Ayes = info.Tally.Ayes
 					changed = true
 				}
-				if proposal.TallyNays != info.Tally.Nays {
-					proposal.TallyNays = info.Tally.Nays
+				if ref.Nays != info.Tally.Nays {
+					ref.Nays = info.Tally.Nays
+					changed = true
+				}
+				if ref.Support != info.Tally.Support {
+					ref.Support = info.Tally.Support
 					changed = true
 				}
 			}
 
 			// Update submitter if we now have it
-			if info.Submission.Who != "" && info.Submission.Who != "Unknown" && (proposal.Submitter == "Unknown" || proposal.Submitter == "") {
-				proposal.Submitter = info.Submission.Who
-				proposal.SubmissionDepositWho = info.Submission.Who
-				proposal.SubmissionDepositAmount = info.Submission.Amount
+			if info.Submission.Who != "" && info.Submission.Who != "Unknown" && (ref.Submitter == "Unknown" || ref.Submitter == "") {
+				ref.Submitter = info.Submission.Who
+				ref.SubmissionDepositWho = info.Submission.Who
+				ref.SubmissionDepositAmount = info.Submission.Amount
 				changed = true
 			}
 
 			// Update decision deposit if we now have it
-			if info.DecisionDeposit != nil && proposal.DecisionDepositWho == "" {
-				proposal.DecisionDepositWho = info.DecisionDeposit.Who
-				proposal.DecisionDepositAmount = info.DecisionDeposit.Amount
+			if info.DecisionDeposit != nil && ref.DecisionDepositWho == "" {
+				ref.DecisionDepositWho = info.DecisionDeposit.Who
+				ref.DecisionDepositAmount = info.DecisionDeposit.Amount
 				changed = true
 			}
 
 			// Update preimage info
-			if info.Proposal != "" && proposal.PreimageHash == "" {
-				proposal.PreimageHash = info.Proposal
-				proposal.PreimageLen = info.ProposalLen
+			if info.Proposal != "" && ref.PreimageHash == "" {
+				ref.PreimageHash = info.Proposal
+				ref.PreimageLen = info.ProposalLen
 				changed = true
 			}
 
-			if info.Submitted > 0 && proposal.Submitted == 0 {
-				proposal.Submitted = uint64(info.Submitted)
+			if info.Submitted > 0 && ref.Submitted == 0 {
+				ref.Submitted = uint64(info.Submitted)
 				changed = true
 			}
 
 			// Update decision timing
-			if info.Decision != nil && proposal.DecisionStart == 0 {
-				proposal.DecisionStart = uint64(info.Decision.Since)
+			if info.Decision != nil && ref.DecisionStart == 0 {
+				ref.DecisionStart = uint64(info.Decision.Since)
 				if info.Decision.Confirming != nil {
-					proposal.ConfirmStart = uint64(*info.Decision.Confirming)
+					ref.ConfirmStart = uint64(*info.Decision.Confirming)
 				}
 				changed = true
 			}
 
 			// Update end times
-			if info.ApprovedAt > 0 && proposal.DecisionEnd == 0 {
-				proposal.DecisionEnd = uint64(info.ApprovedAt)
+			if info.ApprovedAt > 0 && ref.DecisionEnd == 0 {
+				ref.DecisionEnd = uint64(info.ApprovedAt)
 				changed = true
-			} else if info.RejectedAt > 0 && proposal.DecisionEnd == 0 {
-				proposal.DecisionEnd = uint64(info.RejectedAt)
+			} else if info.RejectedAt > 0 && ref.DecisionEnd == 0 {
+				ref.DecisionEnd = uint64(info.RejectedAt)
 				changed = true
-			} else if info.CancelledAt > 0 && proposal.DecisionEnd == 0 {
-				proposal.DecisionEnd = uint64(info.CancelledAt)
+			} else if info.CancelledAt > 0 && ref.DecisionEnd == 0 {
+				ref.DecisionEnd = uint64(info.CancelledAt)
 				changed = true
-			} else if info.TimedOutAt > 0 && proposal.DecisionEnd == 0 {
-				proposal.DecisionEnd = uint64(info.TimedOutAt)
+			} else if info.TimedOutAt > 0 && ref.DecisionEnd == 0 {
+				ref.DecisionEnd = uint64(info.TimedOutAt)
 				changed = true
-			} else if info.KilledAt > 0 && proposal.DecisionEnd == 0 {
-				proposal.DecisionEnd = uint64(info.KilledAt)
+			} else if info.KilledAt > 0 && ref.DecisionEnd == 0 {
+				ref.DecisionEnd = uint64(info.KilledAt)
 				changed = true
 			}
 
 			if changed {
-				proposal.UpdatedAt = time.Now()
-				if err := db.Save(&proposal).Error; err != nil {
-					log.Printf("indexer polkadot: failed to update proposal %d: %v", refID, err)
+				ref.UpdatedAt = time.Now()
+				if err := db.Save(&ref).Error; err != nil {
+					log.Printf("indexer polkadot: failed to update ref %d: %v", refID, err)
 					errors++
 				} else {
 					updated++
@@ -379,10 +377,7 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 		}
 	}
 
-	// Index track information
-	indexTracks(db, client)
-
-	log.Printf("indexer polkadot: sync complete - processed %d, created %d, updated %d, errors %d proposals",
+	log.Printf("indexer polkadot: sync complete - processed %d, created %d, updated %d, errors %d refs",
 		processed, created, updated, errors)
 }
 
@@ -438,7 +433,6 @@ func fetchHistoricalReferendumInfo(client *polkadot.Client, refID uint32, curren
 		// If we found good data (Ongoing status with submitter info), use it
 		if historicalInfo != nil && historicalInfo.Status == "Ongoing" &&
 			historicalInfo.Submission.Who != "Unknown" && historicalInfo.Submission.Who != "" {
-
 			// Copy over the important fields but keep the current status
 			currentInfo.Track = historicalInfo.Track
 			currentInfo.Origin = historicalInfo.Origin
@@ -448,53 +442,11 @@ func fetchHistoricalReferendumInfo(client *polkadot.Client, refID uint32, curren
 			currentInfo.Submitted = historicalInfo.Submitted
 			currentInfo.Submission = historicalInfo.Submission
 			currentInfo.DecisionDeposit = historicalInfo.DecisionDeposit
-
 			return currentInfo
 		}
 	}
 
 	return nil
-}
-
-// indexTracks indexes track configuration
-func indexTracks(db *gorm.DB, client *polkadot.Client) {
-	// Common tracks for Polkadot
-	tracks := []types.Track{
-		{ID: 0, NetworkID: 1, Name: "Root"},
-		{ID: 1, NetworkID: 1, Name: "WhitelistedCaller"},
-		{ID: 10, NetworkID: 1, Name: "StakingAdmin"},
-		{ID: 11, NetworkID: 1, Name: "Treasurer"},
-		{ID: 12, NetworkID: 1, Name: "LeaseAdmin"},
-		{ID: 13, NetworkID: 1, Name: "FellowshipAdmin"},
-		{ID: 14, NetworkID: 1, Name: "GeneralAdmin"},
-		{ID: 15, NetworkID: 1, Name: "AuctionAdmin"},
-		{ID: 20, NetworkID: 1, Name: "ReferendumCanceller"},
-		{ID: 21, NetworkID: 1, Name: "ReferendumKiller"},
-		{ID: 30, NetworkID: 1, Name: "SmallTipper"},
-		{ID: 31, NetworkID: 1, Name: "BigTipper"},
-		{ID: 32, NetworkID: 1, Name: "SmallSpender"},
-		{ID: 33, NetworkID: 1, Name: "MediumSpender"},
-		{ID: 34, NetworkID: 1, Name: "BigSpender"},
-		{ID: 1000, NetworkID: 1, Name: "WishForChange"},
-	}
-
-	for _, track := range tracks {
-		// Try to get detailed track info from chain
-		if info, err := client.GetTrackInfo(track.ID); err == nil {
-			track.MaxDeciding = info.MaxDeciding
-			track.DecisionDeposit = info.DecisionDeposit
-			track.PreparePeriod = info.PreparePeriod
-			track.DecisionPeriod = info.DecisionPeriod
-			track.ConfirmPeriod = info.ConfirmPeriod
-			track.MinEnactmentPeriod = info.MinEnactmentPeriod
-			track.MinApproval = info.MinApproval
-			track.MinSupport = info.MinSupport
-		}
-
-		if err := db.FirstOrCreate(&track, types.Track{ID: track.ID, NetworkID: track.NetworkID}).Error; err != nil {
-			log.Printf("indexer polkadot: failed to create track %d: %v", track.ID, err)
-		}
-	}
 }
 
 // IndexerService runs the indexer periodically

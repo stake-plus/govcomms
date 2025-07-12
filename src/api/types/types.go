@@ -2,49 +2,55 @@ package types
 
 import "time"
 
-//
-// ──── NETWORKS / RPC ENDPOINTS ──────────────────────────────────────────────
-//
-
+// Networks
 type Network struct {
-	ID               uint8  `gorm:"primaryKey"`
-	Name             string `gorm:"size:32;unique;not null"`
-	Symbol           string `gorm:"size:8;not null"`
-	URL              string `gorm:"size:256;not null"`
-	DiscordChannelID string `gorm:"size:64"`
-	RPCs             []RPC  `gorm:"foreignKey:NetworkID"`
+	ID               uint8        `gorm:"primaryKey"`
+	Name             string       `gorm:"size:32;unique;not null"`
+	Symbol           string       `gorm:"size:8;not null"`
+	URL              string       `gorm:"size:256;not null"`
+	DiscordChannelID string       `gorm:"size:64"`
+	RPCs             []NetworkRPC `gorm:"foreignKey:NetworkID"`
 }
 
-type RPC struct {
+// Network RPC endpoints
+type NetworkRPC struct {
 	ID        uint32 `gorm:"primaryKey"`
 	NetworkID uint8
-	URL       string `gorm:"size:256;not null"`
-	Active    bool   `gorm:"default:true"`
+	URL       string  `gorm:"size:256;not null"`
+	Active    bool    `gorm:"default:true"`
+	Network   Network `gorm:"foreignKey:NetworkID"`
 }
 
-//
-// ──── GOVERNANCE ─────────────────────────────────────────────────────────────
-//
+// DAO members
+type DaoMember struct {
+	Address string `gorm:"primaryKey;size:128"`
+	Discord string `gorm:"size:64"`
+}
 
-type Proposal struct {
-	ID                      uint64    `gorm:"primaryKey"`
-	NetworkID               uint8     `gorm:"index;not null"`
-	RefID                   uint64    `gorm:"not null"`
-	Submitter               string    `gorm:"size:128;not null"`
-	Title                   string    `gorm:"size:255"`
-	Status                  string    `gorm:"size:32"`
-	TrackID                 uint16    `gorm:"index"`
-	Origin                  string    `gorm:"size:64"`
-	Enactment               string    `gorm:"size:32"`
-	Submitted               uint64    // Block number when submitted
-	SubmittedAt             time.Time // Timestamp when submitted
-	DecisionStart           uint64    // Block number when decision started
-	DecisionEnd             uint64    // Block number when decision ends
-	ConfirmStart            uint64    // Block number when confirm started
-	ConfirmEnd              uint64    // Block number when confirm ends
-	Approved                bool
-	TallyAyes               string `gorm:"size:64"` // On-chain tally
-	TallyNays               string `gorm:"size:64"` // On-chain tally
+// Proposals/Referenda
+type Ref struct {
+	ID                      uint64 `gorm:"primaryKey"`
+	NetworkID               uint8  `gorm:"index;not null"`
+	RefID                   uint64 `gorm:"not null"`
+	Submitter               string `gorm:"size:128;not null"`
+	Title                   string `gorm:"size:255"`
+	Status                  string `gorm:"size:32"`
+	TrackID                 uint16 `gorm:"index"`
+	Origin                  string `gorm:"size:64"`
+	Enactment               string `gorm:"size:32"`
+	Submitted               uint64 `gorm:"default:0"`
+	SubmittedAt             *time.Time
+	DecisionStart           uint64 `gorm:"default:0"`
+	DecisionEnd             uint64 `gorm:"default:0"`
+	ConfirmStart            uint64 `gorm:"default:0"`
+	ConfirmEnd              uint64 `gorm:"default:0"`
+	Approved                bool   `gorm:"default:false"`
+	Support                 string `gorm:"size:64"`
+	Approval                string `gorm:"size:64"`
+	Ayes                    string `gorm:"size:64"`
+	Nays                    string `gorm:"size:64"`
+	Turnout                 string `gorm:"size:64"`
+	Electorate              string `gorm:"size:64"`
 	PreimageHash            string `gorm:"size:128"`
 	PreimageLen             uint32
 	DecisionDepositWho      string `gorm:"size:128"`
@@ -53,77 +59,48 @@ type Proposal struct {
 	SubmissionDepositAmount string `gorm:"size:64"`
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
+	Network                 Network        `gorm:"foreignKey:NetworkID"`
+	Messages                []RefMessage   `gorm:"foreignKey:RefID"`
+	Proponents              []RefProponent `gorm:"foreignKey:RefID"`
 }
 
-type ProposalParticipant struct {
-	ProposalID uint64 `gorm:"primaryKey"`
-	Address    string `gorm:"primaryKey;size:128"`
-	Role       string `gorm:"size:32"` // submitter, dao_member, feedback_provider
+// Messages between DAO and proponents
+type RefMessage struct {
+	ID            uint64 `gorm:"primaryKey"`
+	RefID         uint64 `gorm:"index;not null"`
+	Author        string `gorm:"size:128;not null"`
+	Body          string `gorm:"type:text;not null"`
+	Internal      bool   `gorm:"default:false"`
+	CreatedAt     time.Time
+	Ref           Ref      `gorm:"foreignKey:RefID"`
+	Subscriptions []RefSub `gorm:"foreignKey:MessageID"`
 }
 
-type Message struct {
-	ID         uint64 `gorm:"primaryKey"`
-	ProposalID uint64 `gorm:"index;not null"`
-	Author     string `gorm:"size:128;not null"`
-	Body       string `gorm:"type:text;not null"`
-	Internal   bool
-	CreatedAt  time.Time
-	Emails     []EmailSubscription `gorm:"foreignKey:MessageID"`
-}
-
-type DaoMember struct {
+// Proposal participants
+type RefProponent struct {
+	RefID   uint64 `gorm:"primaryKey"`
 	Address string `gorm:"primaryKey;size:128"`
-	Discord string `gorm:"size:64"`
+	Role    string `gorm:"size:32"` // submitter, voter, delegator, etc
+	Active  int8   `gorm:"default:1"`
+	Ref     Ref    `gorm:"foreignKey:RefID"`
 }
 
-// Internal DAO vote tracking (not on-chain votes)
-type Vote struct {
-	ID         uint64 `gorm:"primaryKey"`
-	ProposalID uint64 `gorm:"index;not null"`
-	VoterAddr  string `gorm:"size:128;not null"`
-	Choice     string `gorm:"size:8;not null"` // aye|nay|abstain
-	Conviction int16
-	Balance    string `gorm:"size:64"` // Vote weight/balance
-	CreatedAt  time.Time
-}
-
-type EmailSubscription struct {
+// Email subscriptions
+type RefSub struct {
 	ID        uint64 `gorm:"primaryKey"`
-	MessageID uint64
+	MessageID uint64 `gorm:"index;not null"`
 	Email     string `gorm:"size:256;not null"`
 	SentAt    *time.Time
+	Message   RefMessage `gorm:"foreignKey:MessageID"`
 }
 
-// Track information for different referendum tracks
-type Track struct {
-	ID                 uint16 `gorm:"primaryKey"`
-	NetworkID          uint8  `gorm:"index;not null"`
-	Name               string `gorm:"size:64;not null"`
-	MaxDeciding        uint32
-	DecisionDeposit    string `gorm:"size:64"`
-	PreparePeriod      uint32
-	DecisionPeriod     uint32
-	ConfirmPeriod      uint32
-	MinEnactmentPeriod uint32
-	MinApproval        string `gorm:"size:32"`
-	MinSupport         string `gorm:"size:32"`
-}
-
-// Preimage stores proposal content
-type Preimage struct {
-	Hash      string `gorm:"primaryKey;size:128"`
-	Data      string `gorm:"type:longtext"`
-	Length    uint32
-	Provider  string `gorm:"size:128"`
-	Deposit   string `gorm:"size:64"`
-	CreatedAt time.Time
-}
-
-type DiscordChannel struct {
+// DAO votes (internal voting, not on-chain)
+type DaoVote struct {
 	ID          uint64 `gorm:"primaryKey"`
-	GuildID     string `gorm:"size:64;not null"`
-	ChannelID   string `gorm:"size:64;not null"`
-	NetworkID   uint8  `gorm:"not null"`
-	ChannelType string `gorm:"size:32;not null"` // "referenda", "feedback"
+	RefID       uint64 `gorm:"index;not null"`
+	DaoMemberID string `gorm:"size:128;not null"`
+	Choice      int16  `gorm:"not null"`
 	CreatedAt   time.Time
+	Ref         Ref       `gorm:"foreignKey:RefID"`
+	DaoMember   DaoMember `gorm:"foreignKey:DaoMemberID"`
 }
