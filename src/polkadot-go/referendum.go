@@ -9,6 +9,7 @@ import (
 	"github.com/centrifuge/go-substrate-rpc-client/v4/scale"
 	"github.com/centrifuge/go-substrate-rpc-client/v4/types"
 	"github.com/centrifuge/go-substrate-rpc-client/v4/types/codec"
+	"github.com/mr-tron/base58"
 )
 
 // GetReferendumInfo fetches and decodes referendum info
@@ -55,7 +56,6 @@ func (c *Client) GetReferendumInfo(refID uint32) (*ReferendumInfo, error) {
 				// Query at historical block
 				var histRaw types.StorageDataRaw
 				var hash types.Hash
-
 				err = codec.DecodeFromHex(blockHash, &hash)
 				if err != nil {
 					return nil, fmt.Errorf("decode block hash: %w", err)
@@ -65,6 +65,7 @@ func (c *Client) GetReferendumInfo(refID uint32) (*ReferendumInfo, error) {
 				if err != nil {
 					return nil, fmt.Errorf("get storage at block %d: %w", targetBlock, err)
 				}
+
 				if !ok || len(histRaw) == 0 {
 					return nil, fmt.Errorf("referendum %d not found at block %d", refID, targetBlock)
 				}
@@ -123,16 +124,28 @@ func createReferendumStorageKey(refID uint32) []byte {
 	return key
 }
 
-// accountIDToSS58 converts an AccountID to SS58 format for Polkadot
+// accountIDToSS58 converts an AccountID to SS58 format for Polkadot (prefix 0)
 func accountIDToSS58(accountID types.AccountID) string {
-	// Use the EncodeToHexString method which returns the hex representation
-	// For display, we'll use the SS58 format
-	addr, err := types.NewAddressFromAccountID(accountID[:])
-	if err != nil {
-		// Fallback to hex if SS58 encoding fails
-		return accountID.ToHexString()
-	}
-	return addr.AsAccountID.ToHexString()
+	// SS58 encoding with network prefix 0 for Polkadot
+	prefix := byte(0)
+
+	// Create the payload: prefix + accountID + checksum
+	payload := make([]byte, 0, 35)
+	payload = append(payload, prefix)
+	payload = append(payload, accountID[:]...)
+
+	// Calculate SS58 checksum
+	checksumInput := []byte("SS58PRE")
+	checksumInput = append(checksumInput, prefix)
+	checksumInput = append(checksumInput, accountID[:]...)
+
+	checksum := Blake2_256(checksumInput)
+
+	// Append first 2 bytes of checksum
+	payload = append(payload, checksum[0:2]...)
+
+	// Base58 encode
+	return base58.Encode(payload)
 }
 
 // decodeReferendumInfo decodes referendum data based on the structure from the documentation
@@ -381,7 +394,6 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		// Approved/Rejected/Cancelled/TimedOut don't store track directly
 		// but we can infer Root track (0) for these old referendums
 		info.Track = 0
-
 		return info, nil
 
 	case 2: // Rejected
@@ -408,7 +420,6 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		} else {
 			info.Submission.Who = "Unknown"
 		}
-
 		info.Track = 0
 		return info, nil
 
@@ -436,7 +447,6 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		} else {
 			info.Submission.Who = "Unknown"
 		}
-
 		info.Track = 0
 		return info, nil
 
@@ -464,7 +474,6 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		} else {
 			info.Submission.Who = "Unknown"
 		}
-
 		info.Track = 0
 		return info, nil
 

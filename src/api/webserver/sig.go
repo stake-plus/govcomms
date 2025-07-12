@@ -10,9 +10,10 @@ import (
 	schnorrkel "github.com/ChainSafe/go-schnorrkel"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/mr-tron/base58"
+	"golang.org/x/crypto/blake2b"
 )
 
-// ───────────────────────── helpers ─────────────────────────
+// ─────────────────── helpers ─────────────────────
 
 // decodeSS58 extracts the 32-byte pubkey from an SS58 (or 0x…) address.
 func decodeSS58(addr string) ([]byte, error) {
@@ -29,6 +30,45 @@ func decodeSS58(addr string) ([]byte, error) {
 	return raw[1:33], nil
 }
 
+// convertHexToSS58 converts a hex-encoded AccountID to SS58 format
+func convertHexToSS58(hexAddr string) (string, error) {
+	// Remove 0x prefix if present
+	hexAddr = strings.TrimPrefix(hexAddr, "0x")
+
+	// Decode hex to bytes
+	accountID, err := hex.DecodeString(hexAddr)
+	if err != nil {
+		return "", fmt.Errorf("invalid hex address: %w", err)
+	}
+
+	if len(accountID) != 32 {
+		return "", fmt.Errorf("invalid account ID length: expected 32 bytes, got %d", len(accountID))
+	}
+
+	// SS58 encoding with network prefix 0 for Polkadot
+	prefix := byte(0)
+
+	// Create the payload: prefix + accountID + checksum
+	payload := make([]byte, 0, 35)
+	payload = append(payload, prefix)
+	payload = append(payload, accountID...)
+
+	// Calculate SS58 checksum
+	checksumInput := []byte("SS58PRE")
+	checksumInput = append(checksumInput, prefix)
+	checksumInput = append(checksumInput, accountID...)
+
+	h, _ := blake2b.New(64, nil)
+	h.Write(checksumInput)
+	checksum := h.Sum(nil)
+
+	// Append first 2 bytes of checksum
+	payload = append(payload, checksum[0:2]...)
+
+	// Base58 encode
+	return base58.Encode(payload), nil
+}
+
 // buildSr25519Message reproduces exactly what polkadot-js signs.
 func buildSr25519Message(nonce string) ([]byte, error) {
 	hexPart := strings.TrimPrefix(nonce, "0x")
@@ -36,14 +76,16 @@ func buildSr25519Message(nonce string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid nonce hex: %w", err)
 	}
+
 	msg := make([]byte, 0, len(nonceBytes)+14)
 	msg = append(msg, []byte("<Bytes>")...)
 	msg = append(msg, nonceBytes...)
 	msg = append(msg, []byte("</Bytes>")...)
+
 	return msg, nil
 }
 
-// ─────────────────────── public API ───────────────────────
+// ──────────────── public API ────────────────
 
 // verifySignature validates sr25519 signatures produced by polkadot-js signRaw.
 func verifySignature(address, sigHex, nonce string) error {
@@ -55,8 +97,10 @@ func verifySignature(address, sigHex, nonce string) error {
 	if len(pub) != 32 {
 		return fmt.Errorf("unexpected pubkey length %d", len(pub))
 	}
+
 	var pubArr [32]byte
 	copy(pubArr[:], pub)
+
 	var pk schnorrkel.PublicKey
 	if err = pk.Decode(pubArr); err != nil {
 		return fmt.Errorf("decode pubkey: %w", err)
@@ -67,14 +111,17 @@ func verifySignature(address, sigHex, nonce string) error {
 	if err != nil {
 		return fmt.Errorf("decode sig hex: %w", err)
 	}
+
 	if len(rawSig) == 65 { // drop prefix (0x00)
 		rawSig = rawSig[1:]
 	}
 	if len(rawSig) != 64 {
 		return fmt.Errorf("unexpected sig length %d", len(rawSig))
 	}
+
 	var sigArr [64]byte
 	copy(sigArr[:], rawSig)
+
 	var sig schnorrkel.Signature
 	if err = sig.Decode(sigArr); err != nil {
 		return fmt.Errorf("decode sig: %w", err)
@@ -85,6 +132,7 @@ func verifySignature(address, sigHex, nonce string) error {
 	if err != nil {
 		return err
 	}
+
 	ctx := schnorrkel.NewSigningContext([]byte("substrate"), message)
 
 	// 4. verify
@@ -95,6 +143,7 @@ func verifySignature(address, sigHex, nonce string) error {
 	if !ok {
 		return errors.New("signature verification failed")
 	}
+
 	return nil
 }
 
