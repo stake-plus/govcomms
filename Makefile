@@ -1,66 +1,89 @@
-# ---------------------------------------------------------------------------
-# Build script for the GovComms API
-#
-# `substrate-api-rpc/keyring` compiles SR‑25519 code with CGO.  We must:
-#   * enable CGO (`CGO_ENABLED=1`)
-#   * point Go to a working C compiler (`CC`)
-#
-# GNU make defines a built‑in variable **CC** whose default value is `cc`.
-# Using `?=` (set if empty) therefore never overrides it.  Here we **force**
-# the value we need with `:=`, then export it so the Go tool‑chain sees it.
-# ---------------------------------------------------------------------------
+# Variables
+API_BINARY = bin/api
+DISCORD_BINARY = bin/discordbot
+FRONTEND_DIR = public
+SRC_API = src/api
+SRC_DISCORD = src/discordbot
+SRC_FRONTEND = src/frontend
 
-# Detect host OS
-ifeq ($(OS),Windows_NT)
-  MKDIRBIN = if not exist $(BIN_DIR) mkdir $(BIN_DIR)
-  DELBIN   = if exist     $(BIN_DIR) rmdir /S /Q $(BIN_DIR)
-  EXT      = .exe
-  CC       := gcc               # <- override built‑in “cc” on Windows
-else
-  MKDIRBIN = mkdir -p $(BIN_DIR)
-  DELBIN   = rm -rf $(BIN_DIR)
-  EXT      =
-  CC       ?= cc                # use system compiler on *nix
-endif
+# Default target
+all: clean api discord frontend
 
-# ---------------------------------------------------------------------------
-# General build constants
-# ---------------------------------------------------------------------------
-BIN_DIR := bin
-SEP     := /
-APP     := govcomms-api
+# Build API
+api:
+	@echo "Building API..."
+	@mkdir -p bin
+	cd $(SRC_API) && go build -o ../../$(API_BINARY) .
+	@echo "API built: $(API_BINARY)"
 
-# Go build flags
-GOTAGS          ?= sr25519
-GO_LDFLAGS      ?=
-GO_BUILD_FLAGS  ?=
+# Build Discord bot
+discord:
+	@echo "Building Discord bot..."
+	@mkdir -p bin
+	cd $(SRC_DISCORD) && go build -o ../../$(DISCORD_BINARY) .
+	@echo "Discord bot built: $(DISCORD_BINARY)"
 
-# Ensure CGO is enabled and the compiler is exported
-export CGO_ENABLED := 1
-export CC
-# (CXX not needed by Go, but you can `export CXX` similarly if desired)
+# Build frontend
+frontend:
+	@echo "Building frontend..."
+	@mkdir -p $(FRONTEND_DIR)
+	cd $(SRC_FRONTEND) && npm install && npm run build
+	@cp -r $(SRC_FRONTEND)/dist/* $(FRONTEND_DIR)/
+	@echo "Frontend built: $(FRONTEND_DIR)"
 
-# ---------------------------------------------------------------------------
-# Phony targets
-# ---------------------------------------------------------------------------
-.PHONY: all clean deps build
-
-# Default workflow: clean → deps → build
-all: clean deps build
-
-deps:
-	go mod tidy
-	go get -u ./...
-
-# Ensure bin/ exists
-$(BIN_DIR):
-	$(MKDIRBIN)
-
-# Compile the API binary
-build: $(BIN_DIR)
-	go build $(GO_BUILD_FLAGS) -tags '$(GOTAGS)' -ldflags '$(GO_LDFLAGS)' \
-		-o $(BIN_DIR)$(SEP)$(APP)$(EXT) ./src/api
-
-# Remove build artefacts
+# Clean build artifacts
 clean:
-	-$(DELBIN)
+	@echo "Cleaning..."
+	@rm -rf bin $(FRONTEND_DIR)
+	@echo "Clean complete"
+
+# Development targets
+dev-api:
+	cd $(SRC_API) && go run .
+
+dev-discord:
+	cd $(SRC_DISCORD) && go run .
+
+dev-frontend:
+	cd $(SRC_FRONTEND) && npm run dev
+
+# Install dependencies
+deps:
+	@echo "Installing Go dependencies..."
+	cd $(SRC_API) && go mod download
+	cd $(SRC_DISCORD) && go mod download
+	@echo "Installing frontend dependencies..."
+	cd $(SRC_FRONTEND) && npm install
+
+# Run tests
+test:
+	cd $(SRC_API) && go test ./...
+	cd $(SRC_DISCORD) && go test ./...
+	cd $(SRC_FRONTEND) && npm test
+
+# Create systemd service files
+install-services:
+	@echo "Creating systemd service files..."
+	@sudo cp scripts/govcomms-api.service /etc/systemd/system/
+	@sudo cp scripts/govcomms-discord.service /etc/systemd/system/
+	@sudo systemctl daemon-reload
+	@echo "Services installed. Run 'make start-services' to start them."
+
+# Start services
+start-services:
+	@sudo systemctl start govcomms-api
+	@sudo systemctl start govcomms-discord
+	@sudo systemctl enable govcomms-api
+	@sudo systemctl enable govcomms-discord
+
+# Stop services
+stop-services:
+	@sudo systemctl stop govcomms-api
+	@sudo systemctl stop govcomms-discord
+
+# Check service status
+status:
+	@sudo systemctl status govcomms-api
+	@sudo systemctl status govcomms-discord
+
+.PHONY: all api discord frontend clean dev-api dev-discord dev-frontend deps test install-services start-services stop-services status

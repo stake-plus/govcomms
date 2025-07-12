@@ -1,0 +1,22 @@
+[Unit]
+Description=GovComms API Server
+After=network.target mysql.service redis.service
+
+[Service]
+Type=simple
+User=govcomms
+Group=govcomms
+WorkingDirectory=/opt/govcomms
+ExecStart=/opt/govcomms/bin/api
+Restart=always
+RestartSec=10
+Environment="MYSQL_DSN=govcomms:password@tcp(localhost:3306)/govcomms"
+Environment="REDIS_URL=redis://localhost:6379/0"
+Environment="PORT=443"
+
+# Logging
+StandardOutput=append:/var/log/govcomms/api.log
+StandardError=append:/var/log/govcomms/api-error.log
+
+[Install]
+WantedBy=multi-user.target 

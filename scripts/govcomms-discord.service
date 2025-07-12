@@ -1,0 +1,23 @@
+[Unit]
+Description=GovComms Discord Bot
+After=network.target govcomms-api.service
+
+[Service]
+Type=simple
+User=govcomms
+Group=govcomms
+WorkingDirectory=/opt/govcomms
+ExecStart=/opt/govcomms/bin/discordbot
+Restart=always
+RestartSec=10
+Environment="DISCORD_TOKEN=your_discord_token"
+Environment="FEEDBACK_ROLE_ID=your_role_id"
+Environment="GUILD_ID=your_guild_id"
+Environment="MYSQL_DSN=govcomms:password@tcp(localhost:3306)/govcomms"
+
+# Logging
+StandardOutput=append:/var/log/govcomms/discord.log
+StandardError=append:/var/log/govcomms/discord-error.log
+
+[Install]
+WantedBy=multi-user.target
