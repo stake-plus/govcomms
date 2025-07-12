@@ -50,6 +50,7 @@ func (m Messages) Create(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"err": "bad proposalRef"})
 		return
 	}
+
 	refID, _ := strconv.ParseUint(parts[1], 10, 64)
 	netID := uint8(1)
 	network := "polkadot"
@@ -58,49 +59,72 @@ func (m Messages) Create(c *gin.Context) {
 		network = "kusama"
 	}
 
-	// ensure ref exists
+	// Get user address from JWT
+	userAddr := c.GetString("addr")
+
+	// Check if referendum exists
 	var ref types.Ref
 	err := m.db.First(&ref, "network_id = ? AND ref_id = ?", netID, refID).Error
-	if err != nil && err == gorm.ErrRecordNotFound {
+
+	if err == gorm.ErrRecordNotFound {
+		// Only allow creating new referendum if user is submitting it
 		ref = types.Ref{
 			NetworkID: netID,
 			RefID:     refID,
-			Submitter: c.GetString("addr"),
+			Submitter: userAddr,
 			Status:    "Unknown",
 			Title:     req.Title,
 		}
-		if err = m.db.Create(&ref).Error; err == nil {
-			_ = m.db.FirstOrCreate(&types.DaoMember{Address: ref.Submitter}).Error
-			_ = m.db.FirstOrCreate(&types.RefProponent{
-				RefID: ref.ID, Address: ref.Submitter, Role: "submitter", Active: 1,
+		if err = m.db.Create(&ref).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+			return
+		}
+
+		// Create submitter as proponent
+		_ = m.db.Create(&types.RefProponent{
+			RefID:   ref.ID,
+			Address: userAddr,
+			Role:    "submitter",
+			Active:  1,
+		}).Error
+	} else if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
+		return
+	} else {
+		// Referendum exists - check authorization
+		var auth types.RefProponent
+		if err := m.db.First(&auth, "ref_id = ? AND address = ? AND active = ?", ref.ID, userAddr, 1).Error; err != nil {
+			// Not a proponent - check if DAO member
+			var daoMember types.DaoMember
+			if err := m.db.First(&daoMember, "address = ?", userAddr).Error; err != nil {
+				c.JSON(http.StatusForbidden, gin.H{"err": "not authorized for this proposal"})
+				return
+			}
+
+			// DAO member but not a proponent - add them as a dao_member proponent
+			_ = m.db.Create(&types.RefProponent{
+				RefID:   ref.ID,
+				Address: userAddr,
+				Role:    "dao_member",
+				Active:  1,
 			}).Error
 		}
 	}
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
-		return
-	}
 
-	// check authorization
-	var auth types.RefProponent
-	if err := m.db.First(&auth,
-		"ref_id = ? AND address = ?", ref.ID, c.GetString("addr")).Error; err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"err": "not authorised for this proposal"})
-		return
-	}
-
-	// store message
+	// Store message
 	msg := types.RefMessage{
 		RefID:     ref.ID,
-		Author:    c.GetString("addr"),
+		Author:    userAddr,
 		Body:      req.Body,
 		CreatedAt: time.Now(),
+		Internal:  false, // Messages from API are external
 	}
 	if err := m.db.Create(&msg).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
 	}
 
+	// Store email subscriptions
 	for _, e := range req.Emails {
 		_ = m.db.Create(&types.RefSub{MessageID: msg.ID, Email: e}).Error
 	}
@@ -109,6 +133,7 @@ func (m Messages) Create(c *gin.Context) {
 	var msgCount int64
 	m.db.Model(&types.RefMessage{}).Where("ref_id = ?", ref.ID).Count(&msgCount)
 
+	// If first message and we have Polkassembly client, post it
 	if msgCount == 1 && m.pa != nil {
 		frontendURL := data.GetSetting("gc_url")
 		if frontendURL == "" {
