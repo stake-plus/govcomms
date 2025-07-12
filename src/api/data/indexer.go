@@ -502,6 +502,8 @@ func (ni *NetworkIndexer) runIndexing(ctx context.Context) error {
 			log.Printf("%s indexer: processed %d referenda (created: %d, updated: %d, errors: %d)",
 				ni.networkName, processed, created, updated, errors)
 		}
+
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	log.Printf("%s indexer: sync complete - processed %d, created %d, updated %d, errors %d refs",
