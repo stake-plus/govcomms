@@ -13,59 +13,25 @@ import (
 	"github.com/stake-plus/polkadot-gov-comms/src/api/data"
 	"github.com/stake-plus/polkadot-gov-comms/src/api/types"
 	"github.com/stake-plus/polkadot-gov-comms/src/api/webserver"
-	"gorm.io/gorm"
 )
-
-var allModels = []interface{}{
-	&types.Network{},
-	&types.NetworkRPC{},
-	&types.DaoMember{},
-	&types.Ref{},
-	&types.RefMessage{},
-	&types.RefProponent{},
-	&types.RefSub{},
-	&types.DaoVote{},
-}
-
-func migrate(db *gorm.DB) {
-	// Disable foreign key constraints during migration
-	db.Exec("SET FOREIGN_KEY_CHECKS = 0")
-	defer db.Exec("SET FOREIGN_KEY_CHECKS = 1")
-
-	// Just create/update table structure, don't let GORM manage foreign keys
-	err := db.AutoMigrate(allModels...)
-	if err != nil {
-		log.Printf("auto-migrate failed: %v", err)
-	}
-}
-
-func ensurePolkadotRPC(db *gorm.DB, url string) {
-	// Upsert active Polkadot RPC; disable all others for the network.
-	db.Model(&types.NetworkRPC{}).
-		Where("network_id = ? AND url <> ?", 1, url).
-		Update("active", false)
-
-	var rpc types.NetworkRPC
-	if err := db.FirstOrCreate(&rpc, types.NetworkRPC{
-		NetworkID: 1,
-		URL:       url,
-	}).Error; err == nil {
-		db.Model(&rpc).Update("active", true)
-	}
-}
 
 func main() {
 	cfg := config.Load()
 
 	db := data.MustMySQL(cfg.MySQLDSN)
-	migrate(db)
 
-	// Seed Polkadot network
-	_ = db.FirstOrCreate(&types.Network{ID: 1}, types.Network{
-		ID: 1, Name: "Polkadot", Symbol: "DOT", URL: "https://polkadot.network",
-	}).Error
+	// SKIP GORM MIGRATION ENTIRELY - comment out this line
+	// migrate(db)
 
-	ensurePolkadotRPC(db, cfg.RPCURL)
+	// Just ensure the networks exist
+	var networkCount int64
+	db.Model(&types.Network{}).Count(&networkCount)
+	if networkCount == 0 {
+		// Insert initial data only if not exists
+		db.Exec(`INSERT IGNORE INTO networks (id, name, symbol, url) VALUES (1, 'Polkadot', 'DOT', 'https://polkadot.network')`)
+		db.Exec(`INSERT IGNORE INTO networks (id, name, symbol, url) VALUES (2, 'Kusama', 'KSM', 'https://kusama.network')`)
+		db.Exec(`INSERT IGNORE INTO network_rpcs (network_id, url, active) VALUES (1, ?, 1)`, cfg.RPCURL)
+	}
 
 	rdb := data.MustRedis(cfg.RedisURL)
 
