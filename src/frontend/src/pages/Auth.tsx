@@ -42,157 +42,188 @@ function Auth() {
     }
   };
 
-  const handleAuthError = (err: unknown) => {
-    if (err instanceof ApiError) {
-      if (err.status === 401) {
-        return (
-          <div>
-            <p>Your address is not authorized for this referendum.</p>
-            <p>Only addresses that are authorized participants (proposer, council members, or those who have voted) can send messages.</p>
-            <p>Network: {network?.toUpperCase()} Referendum #{refId}</p>
-          </div>
-        );
-      }
-      return err.message;
-    }
-    return err instanceof Error ? err.message : 'Authentication failed';
-  };
+const handleAuthError = (err: unknown): string => {
+	if (err instanceof ApiError) {
+		return err.message;
+	}
+	return err instanceof Error ? err.message : 'Authentication failed';
+};
 
-  const handlePolkadotJsAuth = async () => {
-    try {
-      setLoading(true);
-      setError('');
-      const extensions = await web3Enable('GovComms');
-      
-      if (extensions.length === 0) {
-        setError('No Polkadot extension found');
-        return;
-      }
-      
-      const accounts = await web3Accounts();
-      if (accounts.length === 0) {
-        setError('No accounts found');
-        return;
-      }
-      
-      const account = accounts[0];
-      setAddress(account.address);
-      
-      const { nonce } = await api.challenge(account.address, 'polkadotjs');
-      
-      const keyring = new Keyring({ type: 'sr25519' });
-      const pair = keyring.addFromAddress(account.address);
-      
-      const { web3FromAddress } = await import('@polkadot/extension-dapp');
-      const injector = await web3FromAddress(account.address);
-      
-      if (!injector.signer.signRaw) {
-        throw new Error('Signer not available');
-      }
-      
-      const { signature } = await injector.signer.signRaw({
-        address: account.address,
-        data: nonce,
-        type: 'bytes'
-      });
-      
-      const { token } = await api.verify(account.address, 'polkadotjs', signature);
-      
-      saveAuth({ token, address: account.address });
-      navigate(`/${network}/${refId}`);
-    } catch (err) {
-      const errorMessage = handleAuthError(err);
-      setError(typeof errorMessage === 'string' ? errorMessage : '');
-      if (typeof errorMessage !== 'string') {
-        // If it's a JSX element (authorization error), we'll display it in the error section
-        setError('AUTHORIZATION_ERROR');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+const handlePolkadotJsAuth = async () => {
+	try {
+		setLoading(true);
+		setError('');
+		
+		const extensions = await web3Enable('GovComms');
+		
+		if (extensions.length === 0) {
+			setError('No Polkadot extension found');
+			return;
+		}
+		
+		const accounts = await web3Accounts();
+		if (accounts.length === 0) {
+			setError('No accounts found');
+			return;
+		}
+		
+		const account = accounts[0];
+		setAddress(account.address);
+		
+		const { nonce } = await api.challenge(account.address, 'polkadotjs');
+		
+		const { web3FromAddress } = await import('@polkadot/extension-dapp');
+		const injector = await web3FromAddress(account.address);
+		
+		if (!injector.signer.signRaw) {
+			throw new Error('Signer not available');
+		}
+		
+		const { signature } = await injector.signer.signRaw({
+			address: account.address,
+			data: nonce,
+			type: 'bytes'
+		});
+		
+		// Pass referendum info for authorization check
+		const { token } = await api.verify(
+			account.address, 
+			'polkadotjs', 
+			signature,
+			refId,
+			network
+		);
+		
+		saveAuth({ token, address: account.address });
+		navigate(`/${network}/${refId}`);
+	} catch (err) {
+		if (err instanceof ApiError && err.status === 403) {
+			// Not authorized - redirect to home with error
+			navigate('/', { 
+				state: { 
+					error: 'You are not authorized to participate in this referendum. Only the proposer, voters, and DAO members can send messages.' 
+				} 
+			});
+			return;
+		}
+		setError(handleAuthError(err));
+	} finally {
+		setLoading(false);
+	}
+};
 
-  const handleWalletConnectAuth = async () => {
-    try {
-      setLoading(true);
-      setError('');
-    
-      const client = await WalletConnect.init({
-        projectId: config.walletConnectProjectId,
-        metadata: {
-          name: config.walletConnectName,
-          description: config.walletConnectDescription,
-          url: window.location.origin,
-          icons: []
-        }
-      });
-      
-      const { uri, approval } = await client.connect({
-        requiredNamespaces: {
-          polkadot: {
-            methods: ['polkadot_signMessage'],
-            chains: ['polkadot:91b171bb158e2d3848fa23a9f1c25182'],
-            events: []
-          }
-        }
-      });
-      
-      if (uri) {
-        window.open(`https://wallet.walletconnect.com/wc?uri=${encodeURIComponent(uri)}`, '_blank');
-      }
-      
-      const session = await approval();
-      const account = session.namespaces.polkadot.accounts[0];
-      const address = account.split(':')[2];
-      
-      setAddress(address);
-      
-      const { nonce } = await api.challenge(address, 'walletconnect');
-      
-      const result = await client.request({
-        topic: session.topic,
-        chainId: 'polkadot:91b171bb158e2d3848fa23a9f1c25182',
-        request: {
-          method: 'polkadot_signMessage',
-          params: {
-            address,
-            message: nonce
-          }
-        }
-      });
-      
-      const signatureResult = result as { signature: string };
-      const { token } = await api.verify(address, 'walletconnect', signatureResult.signature);
-      
-      saveAuth({ token, address });
-      navigate(`/${network}/${refId}`);
-    } catch (err) {
-      const errorMessage = handleAuthError(err);
-      setError(typeof errorMessage === 'string' ? errorMessage : '');
-      if (typeof errorMessage !== 'string') {
-        setError('AUTHORIZATION_ERROR');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+// Similar update for handleWalletConnectAuth
+const handleWalletConnectAuth = async () => {
+	try {
+		setLoading(true);
+		setError('');
+		
+		const client = await WalletConnect.init({
+			projectId: config.walletConnectProjectId,
+			metadata: {
+				name: 'GovComms',
+				description: 'Connect with ChaosDAO',
+				url: window.location.origin,
+				icons: []
+			}
+		});
+		
+		const { uri, approval } = await client.connect({
+			requiredNamespaces: {
+				polkadot: {
+					methods: ['polkadot_signMessage'],
+					chains: ['polkadot:91b171bb158e2d3848fa23a9f1c25182'],
+					events: []
+				}
+			}
+		});
+		
+		if (uri) {
+			window.open(`https://wallet.walletconnect.com/wc?uri=${encodeURIComponent(uri)}`, '_blank');
+		}
+		
+		const session = await approval();
+		const account = session.namespaces.polkadot.accounts[0];
+		const address = account.split(':')[2];
+		
+		setAddress(address);
+		
+		const { nonce } = await api.challenge(address, 'walletconnect');
+		
+		const result = await client.request({
+			topic: session.topic,
+			chainId: 'polkadot:91b171bb158e2d3848fa23a9f1c25182',
+			request: {
+				method: 'polkadot_signMessage',
+				params: {
+					address,
+					message: nonce
+				}
+			}
+		});
+		
+		const signatureResult = result as { signature: string };
+		const { token } = await api.verify(
+			address, 
+			'walletconnect', 
+			signatureResult.signature,
+			refId,
+			network
+		);
+		
+		saveAuth({ token, address });
+		navigate(`/${network}/${refId}`);
+	} catch (err) {
+		if (err instanceof ApiError && err.status === 403) {
+			// Not authorized - redirect to home with error
+			navigate('/', { 
+				state: { 
+					error: 'You are not authorized to participate in this referendum. Only the proposer, voters, and DAO members can send messages.' 
+				} 
+			});
+			return;
+		}
+		setError(handleAuthError(err));
+	} finally {
+		setLoading(false);
+	}
+};
 
-  const checkAirgapStatus = async () => {
-    if (!address) return;
-    
-    try {
-      const { token } = await api.verify(address, 'airgap');
-      saveAuth({ token, address });
-      navigate(`/${network}/${refId}`);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        setError('AUTHORIZATION_ERROR');
-        return;
-      }
-      // Continue polling if it's not an authorization error
-      setTimeout(checkAirgapStatus, 2000);
-    }
-  };
+// Update checkAirgapStatus
+const checkAirgapStatus = async () => {
+	if (!address) return;
+	
+	try {
+		const { token } = await api.verify(
+			address, 
+			'airgap',
+			undefined,
+			refId,
+			network
+		);
+		saveAuth({ token, address });
+		navigate(`/${network}/${refId}`);
+	} catch (err) {
+		if (err instanceof ApiError) {
+			if (err.status === 403) {
+				// Not authorized - redirect to home with error
+				navigate('/', { 
+					state: { 
+						error: 'You are not authorized to participate in this referendum. Only the proposer, voters, and DAO members can send messages.' 
+					} 
+				});
+				return;
+			} else if (err.status === 401) {
+				// Continue polling if it's just not confirmed yet
+				setTimeout(checkAirgapStatus, 2000);
+				return;
+			}
+		}
+		// For other errors, show them locally
+		setError(handleAuthError(err));
+	}
+};
+
 
   useEffect(() => {
     if (selectedMethod === 'airgap' && nonce) {
