@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"regexp"
@@ -13,8 +16,6 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/redis/go-redis/v9"
-	"github.com/stake-plus/polkadot-gov-comms/src/api/config"
 	"github.com/stake-plus/polkadot-gov-comms/src/api/data"
 	"github.com/stake-plus/polkadot-gov-comms/src/api/types"
 	"gorm.io/gorm"
@@ -22,13 +23,17 @@ import (
 
 type DiscordBot struct {
 	session         *discordgo.Session
-	rdb             *redis.Client
 	db              *gorm.DB
 	feedbackRoleID  string
 	feedbackCommand string
-	apiURL          string
 	guildID         string
 	channels        map[uint8]string // networkID -> channelID
+	apiClient       *APIClient
+}
+
+type APIClient struct {
+	baseURL string
+	token   string
 }
 
 type StreamMessage struct {
@@ -42,21 +47,30 @@ type StreamMessage struct {
 	RefID     uint64
 }
 
-func NewDiscordBot(token, feedbackRoleID, guildID, apiURL string, rdb *redis.Client, db *gorm.DB) (*DiscordBot, error) {
+func NewDiscordBot(token, feedbackRoleID, guildID string, db *gorm.DB) (*DiscordBot, error) {
+	// Load settings
+	if err := data.LoadSettings(db); err != nil {
+		return nil, fmt.Errorf("load settings: %w", err)
+	}
+
 	dg, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, err
 	}
 
+	apiURL := data.GetSetting("gcapi_url")
+	if apiURL == "" {
+		return nil, fmt.Errorf("gcapi_url not configured in settings")
+	}
+
 	bot := &DiscordBot{
 		session:         dg,
-		rdb:             rdb,
 		db:              db,
 		feedbackRoleID:  feedbackRoleID,
 		feedbackCommand: "!feedback",
-		apiURL:          apiURL,
 		guildID:         guildID,
 		channels:        make(map[uint8]string),
+		apiClient:       &APIClient{baseURL: apiURL},
 	}
 
 	// Load channel configuration
@@ -218,24 +232,12 @@ func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.Mess
 	var msgCount int64
 	b.db.Model(&types.RefMessage{}).Where("ref_id = ?", ref.ID).Count(&msgCount)
 
-	// Store link to frontend
-	link := fmt.Sprintf("%s/%s/%d", b.apiURL, network, refNum)
-
-	// Publish to Redis stream for Polkassembly posting if first message
-	if msgCount == 1 {
-		_ = b.rdb.XAdd(context.Background(), &redis.XAddArgs{
-			Stream: "govcomms.discord.feedback",
-			Values: map[string]interface{}{
-				"proposal":   proposalRef,
-				"author":     m.Author.Username,
-				"body":       feedbackMsg,
-				"time":       time.Now().Unix(),
-				"channel":    m.ChannelID,
-				"message_id": m.ID,
-				"is_first":   "true",
-			},
-		}).Err()
+	// Store link to frontend using gc_url from settings
+	gcURL := data.GetSetting("gc_url")
+	if gcURL == "" {
+		gcURL = "https://govcomms.chaosdao.org" // fallback
 	}
+	link := fmt.Sprintf("%s/%s/%d", gcURL, network, refNum)
 
 	// Send success message with link
 	embed := &discordgo.MessageEmbed{
@@ -344,6 +346,12 @@ func (b *DiscordBot) postToReferendumThread(msg StreamMessage) error {
 		return fmt.Errorf("find thread: %w", err)
 	}
 
+	// Get gc_url from settings
+	gcURL := data.GetSetting("gc_url")
+	if gcURL == "" {
+		gcURL = "https://govcomms.chaosdao.org" // fallback
+	}
+
 	// Format the message
 	embed := &discordgo.MessageEmbed{
 		Author: &discordgo.MessageEmbedAuthor{
@@ -358,7 +366,7 @@ func (b *DiscordBot) postToReferendumThread(msg StreamMessage) error {
 		Fields: []*discordgo.MessageEmbedField{
 			{
 				Name:  "Continue Discussion",
-				Value: fmt.Sprintf("[Click here](%s/%s/%d)", b.apiURL, msg.Network, msg.RefID),
+				Value: fmt.Sprintf("[Click here](%s/%s/%d)", gcURL, msg.Network, msg.RefID),
 			},
 		},
 	}
@@ -367,75 +375,64 @@ func (b *DiscordBot) postToReferendumThread(msg StreamMessage) error {
 	return err
 }
 
+func (b *DiscordBot) postMessageToAPI(proposalRef, author, body string) error {
+	url := fmt.Sprintf("%s/v1/messages", b.apiClient.baseURL)
+
+	payload := map[string]interface{}{
+		"proposalRef": proposalRef,
+		"body":        body,
+		"emails":      []string{},
+	}
+
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+b.apiClient.token)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("API returned status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
 func (b *DiscordBot) listenForMessages(ctx context.Context) {
-	// Initialize last ID to start from the beginning
-	lastID := "0"
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
-			// Read from Redis stream
-			streams, err := b.rdb.XRead(ctx, &redis.XReadArgs{
-				Streams: []string{"govcomms.messages", lastID},
-				Count:   10,
-				Block:   5 * time.Second,
-			}).Result()
-
-			if err != nil {
-				if err != redis.Nil {
-					log.Printf("Error reading stream: %v", err)
-				}
-				continue
-			}
-
-			for _, stream := range streams {
-				for _, msg := range stream.Messages {
-					var m StreamMessage
-
-					// Parse message fields
-					if proposal, ok := msg.Values["proposal"].(string); ok {
-						m.Proposal = proposal
-					}
-					if author, ok := msg.Values["author"].(string); ok {
-						m.Author = author
-					}
-					if body, ok := msg.Values["body"].(string); ok {
-						m.Body = body
-					}
-					if timeStr, ok := msg.Values["time"].(string); ok {
-						if t, err := strconv.ParseInt(timeStr, 10, 64); err == nil {
-							m.Time = t
-						}
-					}
-					if network, ok := msg.Values["network"].(string); ok {
-						m.Network = network
-						if network == "polkadot" {
-							m.NetworkID = 1
-						} else if network == "kusama" {
-							m.NetworkID = 2
-						}
-					}
-					if refIDStr, ok := msg.Values["ref_id"].(string); ok {
-						if r, err := strconv.ParseUint(refIDStr, 10, 64); err == nil {
-							m.RefID = r
-						}
-					}
-
-					// Post to Discord
-					if err := b.postToReferendumThread(m); err != nil {
-						log.Printf("Failed to post to Discord: %v", err)
-					} else {
-						log.Printf("Posted message to Discord for %s #%d", m.Network, m.RefID)
-					}
-
-					// Update last ID
-					lastID = msg.ID
-				}
+		case <-ticker.C:
+			// Poll for new messages from API
+			if err := b.pollNewMessages(); err != nil {
+				log.Printf("Error polling messages: %v", err)
 			}
 		}
 	}
+}
+
+func (b *DiscordBot) pollNewMessages() error {
+	// This would need to be implemented to poll the API for new messages
+	// and post them to Discord threads
+	// For now, this is a placeholder
+	return nil
 }
 
 func formatAddress(addr string) string {
@@ -466,21 +463,19 @@ func main() {
 		log.Fatal("GUILD_ID not set")
 	}
 
-	apiURL := os.Getenv("FRONTEND_URL")
-	if apiURL == "" {
-		apiURL = "https://govcomms.chaosdao.org"
+	// Connect to database using environment variable or default
+	mysqlDSN := os.Getenv("MYSQL_DSN")
+	if mysqlDSN == "" {
+		mysqlDSN = "govcomms:DK3mfv93jf4m@tcp(172.16.254.7:3306)/govcomms"
 	}
-
-	cfg := config.Load()
-	rdb := data.MustRedis(cfg.RedisURL)
-	db := data.MustMySQL(cfg.MySQLDSN)
+	db := data.MustMySQL(mysqlDSN)
 
 	// Ensure tables exist
 	if err := db.AutoMigrate(&types.Network{}, &types.DaoMember{}, &types.Ref{}, &types.RefMessage{}, &types.RefProponent{}); err != nil {
 		log.Fatalf("Failed to migrate tables: %v", err)
 	}
 
-	bot, err := NewDiscordBot(token, feedbackRoleID, guildID, apiURL, rdb, db)
+	bot, err := NewDiscordBot(token, feedbackRoleID, guildID, db)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}

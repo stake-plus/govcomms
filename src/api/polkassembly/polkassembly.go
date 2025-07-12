@@ -26,10 +26,15 @@ type PostCommentResponse struct {
 	Error   string `json:"error,omitempty"`
 }
 
-func NewClient(apiKey string) *Client {
+// Update NewClient to accept baseURL parameter
+func NewClient(apiKey string, baseURL string) *Client {
+	if baseURL == "" {
+		baseURL = "https://api.polkassembly.io/api/v1"
+	}
+
 	return &Client{
 		apiKey:  apiKey,
-		baseURL: "https://api.polkassembly.io/api/v1",
+		baseURL: baseURL,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},

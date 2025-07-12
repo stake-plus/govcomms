@@ -1,4 +1,6 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:443/v1';
+import config from '../config';
+
+const API_URL = config.apiUrl;
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public details?: any) {

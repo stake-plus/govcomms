@@ -4,6 +4,9 @@ import (
 	"log"
 	"os"
 	"strconv"
+
+	"github.com/stake-plus/polkadot-gov-comms/src/api/data"
+	"gorm.io/gorm"
 )
 
 type Config struct {
@@ -25,12 +28,25 @@ func getenv(key, def string) string {
 	return v
 }
 
-func Load() Config {
+// Update to load JWT secret from database
+func Load(db *gorm.DB) Config {
+	// Load settings first
+	if err := data.LoadSettings(db); err != nil {
+		log.Printf("Failed to load settings: %v", err)
+	}
+
 	pi, _ := strconv.Atoi(getenv("POLL_INTERVAL", "60"))
+
+	// Try to get JWT secret from database first
+	jwtSecret := data.GetSetting("jwt_secret")
+	if jwtSecret == "" {
+		jwtSecret = getenv("JWT_SECRET", "9eafd87a084c0cf4ededa3b0ad774b77be9bb1b1a5696b9e5b11d59b71fa57ce")
+	}
+
 	return Config{
 		MySQLDSN:     getenv("MYSQL_DSN", "govcomms:DK3mfv93jf4m@tcp(172.16.254.7:3306)/govcomms"),
 		RedisURL:     getenv("REDIS_URL", "redis://172.16.254.7:6379/0"),
-		JWTSecret:    getenv("JWT_SECRET", "9eafd87a084c0cf4ededa3b0ad774b77be9bb1b1a5696b9e5b11d59b71fa57ce"),
+		JWTSecret:    jwtSecret,
 		Port:         getenv("PORT", "443"),
 		PollInterval: pi,
 	}

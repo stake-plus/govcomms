@@ -27,7 +27,8 @@ type Messages struct {
 func NewMessages(db *gorm.DB, rdb *redis.Client) Messages {
 	var paClient *polkassembly.Client
 	if apiKey := os.Getenv("POLKASSEMBLY_API_KEY"); apiKey != "" {
-		paClient = polkassembly.NewClient(apiKey)
+		baseURL := data.GetSetting("polkassembly_api")
+		paClient = polkassembly.NewClient(apiKey, baseURL)
 	}
 	return Messages{db: db, rdb: rdb, pa: paClient}
 }
@@ -112,7 +113,7 @@ func (m Messages) Create(c *gin.Context) {
 	if msgCount == 1 && m.pa != nil {
 		frontendURL := data.GetSetting("gc_url")
 		if frontendURL == "" {
-			frontendURL = "https://gc.reeeeeeeeee.io"
+			frontendURL = "https://gc.reeeeeeeeee.io" // fallback
 		}
 		link := fmt.Sprintf("%s/%s/%d", frontendURL, network, refID)
 		content := fmt.Sprintf("%s\n\n[Continue discussion](%s)", msg.Body, link)

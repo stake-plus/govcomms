@@ -1,17 +1,38 @@
 package webserver
 
 import (
+	"log"
+
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"github.com/stake-plus/polkadot-gov-comms/src/api/config"
+	"github.com/stake-plus/polkadot-gov-comms/src/api/data"
 	"gorm.io/gorm"
 )
 
+// Update attachRoutes function
 func attachRoutes(r *gin.Engine, cfg config.Config, db *gorm.DB, rdb *redis.Client) {
+	// Load settings
+	if err := data.LoadSettings(db); err != nil {
+		log.Printf("Failed to load settings: %v", err)
+	}
+
+	// Get allowed origins from settings
+	gcURL := data.GetSetting("gc_url")
+	gcapiURL := data.GetSetting("gcapi_url")
+
+	allowedOrigins := []string{"http://localhost:3000"} // Always allow localhost for dev
+	if gcURL != "" {
+		allowedOrigins = append(allowedOrigins, gcURL)
+	}
+	if gcapiURL != "" {
+		allowedOrigins = append(allowedOrigins, gcapiURL)
+	}
+
 	// Add CORS middleware
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000", "https://govcomms.chaosdao.org"},
+		AllowOrigins:     allowedOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},

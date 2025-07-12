@@ -20,11 +20,13 @@ CREATE TABLE IF NOT EXISTS `settings` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 INSERT INTO settings (id, name, value, active) VALUES
-    (,'site_name', 'REEEEEEEEEE DAO', 1),
-    (,'site_url', 'https://reeeeeeeeee.io/', 1),
-    (,'site_logo', 'https://reeeeeeeeee.io/images/logo.png', 1),
-    (,'gc_url', 'https://gc.reeeeeeeeee.io/', 1),
-    (,'gcapi_url', 'https://api.gc.reeeeeeeeee.io/', 1);
+    (1,'site_name', 'REEEEEEEEEE DAO', 1),
+    (2,'site_url', 'https://reeeeeeeeee.io/', 1),
+    (3,'site_logo', 'https://reeeeeeeeee.io/images/logo.png', 1),
+    (4,'gc_url', 'https://gc.reeeeeeeeee.io/', 1),
+    (5,'gcapi_url', 'https://api.gc.reeeeeeeeee.io/', 1),
+    (6,'polkassembly_api', 'https://api.polkassembly.io/api/v1', 1),
+    (7,'walletconnect_project_id', '', 1);
 
 -- Networks
 CREATE TABLE IF NOT EXISTS `networks` (
