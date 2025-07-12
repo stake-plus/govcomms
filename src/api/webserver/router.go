@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"log"
+	"strings"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -22,12 +23,27 @@ func attachRoutes(r *gin.Engine, cfg config.Config, db *gorm.DB, rdb *redis.Clie
 	gcURL := data.GetSetting("gc_url")
 	gcapiURL := data.GetSetting("gcapi_url")
 
+	// Development defaults if not set
+	if gcURL == "" {
+		gcURL = "http://localhost:3000"
+	}
+
+	if gcapiURL == "" {
+		gcapiURL = "http://localhost:443"
+	}
+
 	allowedOrigins := []string{"http://localhost:3000"} // Always allow localhost for dev
 	if gcURL != "" {
 		allowedOrigins = append(allowedOrigins, gcURL)
 	}
+
 	if gcapiURL != "" {
 		allowedOrigins = append(allowedOrigins, gcapiURL)
+	}
+
+	// Always allow localhost for development
+	if !strings.Contains(gcURL, "localhost") {
+		allowedOrigins = append(allowedOrigins, "http://localhost:3000")
 	}
 
 	// Add CORS middleware

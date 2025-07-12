@@ -60,7 +60,7 @@ func NewDiscordBot(token, feedbackRoleID, guildID string, db *gorm.DB) (*Discord
 
 	apiURL := data.GetSetting("gcapi_url")
 	if apiURL == "" {
-		return nil, fmt.Errorf("gcapi_url not configured in settings")
+		apiURL = "http://localhost:443" // development default
 	}
 
 	bot := &DiscordBot{
@@ -235,7 +235,7 @@ func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.Mess
 	// Store link to frontend using gc_url from settings
 	gcURL := data.GetSetting("gc_url")
 	if gcURL == "" {
-		gcURL = "https://govcomms.chaosdao.org" // fallback
+		gcURL = "http://localhost:3000" // development default
 	}
 	link := fmt.Sprintf("%s/%s/%d", gcURL, network, refNum)
 
@@ -349,7 +349,7 @@ func (b *DiscordBot) postToReferendumThread(msg StreamMessage) error {
 	// Get gc_url from settings
 	gcURL := data.GetSetting("gc_url")
 	if gcURL == "" {
-		gcURL = "https://govcomms.chaosdao.org" // fallback
+		gcURL = "http://localhost:3000" // development default
 	}
 
 	// Format the message

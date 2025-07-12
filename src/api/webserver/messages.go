@@ -109,11 +109,10 @@ func (m Messages) Create(c *gin.Context) {
 	var msgCount int64
 	m.db.Model(&types.RefMessage{}).Where("ref_id = ?", ref.ID).Count(&msgCount)
 
-	// If first message and we have Polkassembly client, post it
 	if msgCount == 1 && m.pa != nil {
 		frontendURL := data.GetSetting("gc_url")
 		if frontendURL == "" {
-			frontendURL = "https://gc.reeeeeeeeee.io" // fallback
+			frontendURL = "http://localhost:3000" // development default
 		}
 		link := fmt.Sprintf("%s/%s/%d", frontendURL, network, refID)
 		content := fmt.Sprintf("%s\n\n[Continue discussion](%s)", msg.Body, link)
