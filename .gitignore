@@ -28,5 +28,9 @@ go.sum
 
 /src/frontend/node_modules/*
 /src/frontend/node_modules
+/src/frontend/dist
 
 package-lock.json
+
+/public/*
+/public

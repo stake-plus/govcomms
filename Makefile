@@ -1,89 +1,79 @@
+# File: Makefile
+
+.PHONY: all build test clean docker api discordbot frontend indexer migrate
+
 # Variables
-API_BINARY = bin/api
-DISCORD_BINARY = bin/discordbot
-FRONTEND_DIR = public
-SRC_API = src/api
-SRC_DISCORD = src/discordbot
-SRC_FRONTEND = src/frontend
+DOCKER_COMPOSE = docker-compose
+GO = go
+NPM = npm
 
 # Default target
-all: clean api discord frontend
+all: build
+
+# Build all components
+build: api discordbot frontend
 
 # Build API
 api:
 	@echo "Building API..."
-	@mkdir -p bin
-	cd $(SRC_API) && go build -o ../../$(API_BINARY) .
-	@echo "API built: $(API_BINARY)"
+	$(GO) build -o bin/api.exe ./src/api
 
 # Build Discord bot
-discord:
+discordbot:
 	@echo "Building Discord bot..."
-	@mkdir -p bin
-	cd $(SRC_DISCORD) && go build -o ../../$(DISCORD_BINARY) .
-	@echo "Discord bot built: $(DISCORD_BINARY)"
+	$(GO) build -o bin/discordbot.exe ./src/discordbot
+
+# Build indexer service
+indexer:
+	@echo "Building indexer..."
+	$(GO) build -o bin/indexer.exe ./src/indexer
 
 # Build frontend
 frontend:
 	@echo "Building frontend..."
-	@mkdir -p $(FRONTEND_DIR)
-	cd $(SRC_FRONTEND) && npm install && npm run build
-	@cp -r $(SRC_FRONTEND)/dist/* $(FRONTEND_DIR)/
-	@echo "Frontend built: $(FRONTEND_DIR)"
+	cd src/frontend && $(NPM) install && $(NPM) run build
+	@if not exist public mkdir public
+	xcopy /E /Y /I src\frontend\dist public
+
+# Run tests
+test:
+	@echo "Running tests..."
+	$(GO) test ./...
 
 # Clean build artifacts
 clean:
 	@echo "Cleaning..."
-	@rm -rf bin $(FRONTEND_DIR)
-	@echo "Clean complete"
+	@if exist bin rmdir /S /Q bin
+	@if exist public rmdir /S /Q public
 
-# Development targets
+# Docker commands
+docker-up:
+	$(DOCKER_COMPOSE) up -d
+
+docker-down:
+	$(DOCKER_COMPOSE) down
+
+docker-build:
+	$(DOCKER_COMPOSE) build
+
+# Development commands
 dev-api:
-	cd $(SRC_API) && go run .
+	$(GO) run ./src/api
 
-dev-discord:
-	cd $(SRC_DISCORD) && go run .
+dev-bot:
+	$(GO) run ./src/discordbot
 
 dev-frontend:
-	cd $(SRC_FRONTEND) && npm run dev
+	cd src/frontend && $(NPM) run dev
+
+# Database migration
+migrate:
+	@echo "Running database migrations..."
+	$(GO) run ./scripts/migrate
 
 # Install dependencies
 deps:
 	@echo "Installing Go dependencies..."
-	cd $(SRC_API) && go mod download
-	cd $(SRC_DISCORD) && go mod download
+	$(GO) mod download
 	@echo "Installing frontend dependencies..."
-	cd $(SRC_FRONTEND) && npm install
-
-# Run tests
-test:
-	cd $(SRC_API) && go test ./...
-	cd $(SRC_DISCORD) && go test ./...
-	cd $(SRC_FRONTEND) && npm test
-
-# Create systemd service files
-install-services:
-	@echo "Creating systemd service files..."
-	@sudo cp scripts/govcomms-api.service /etc/systemd/system/
-	@sudo cp scripts/govcomms-discord.service /etc/systemd/system/
-	@sudo systemctl daemon-reload
-	@echo "Services installed. Run 'make start-services' to start them."
-
-# Start services
-start-services:
-	@sudo systemctl start govcomms-api
-	@sudo systemctl start govcomms-discord
-	@sudo systemctl enable govcomms-api
-	@sudo systemctl enable govcomms-discord
-
-# Stop services
-stop-services:
-	@sudo systemctl stop govcomms-api
-	@sudo systemctl stop govcomms-discord
-
-# Check service status
-status:
-	@sudo systemctl status govcomms-api
-	@sudo systemctl status govcomms-discord
-
-.PHONY: all api discord frontend clean dev-api dev-discord dev-frontend deps test install-services start-services stop-services status
+	cd src/frontend && $(NPM) install
