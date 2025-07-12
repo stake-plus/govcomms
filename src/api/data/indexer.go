@@ -47,27 +47,30 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 	for _, key := range keys {
 		// Remove 0x prefix
 		keyHex := strings.TrimPrefix(key, "0x")
+
 		// The key format is: prefix + blake2_128(refID) + refID
 		// We need to extract the refID from the end
 		if len(keyHex) > prefixLen {
 			// Get the part after the prefix
 			remainder := keyHex[prefixLen:]
+
 			// The remainder should be: blake2_128_hash(16 bytes = 32 hex chars) + refID(4 bytes = 8 hex chars)
 			if len(remainder) >= 40 { // 32 + 8
 				// Extract the last 8 hex characters (4 bytes) which is the refID
 				refIDHex := remainder[len(remainder)-8:]
+
 				// Convert hex to bytes
 				refIDBytes, err := polkadot.DecodeHex(refIDHex)
 				if err != nil || len(refIDBytes) != 4 {
 					continue
 				}
+
 				// Convert to uint32 (little endian)
 				refID := binary.LittleEndian.Uint32(refIDBytes)
 				existingRefs[refID] = true
 			}
 		}
 	}
-
 	log.Printf("indexer polkadot: found %d existing referenda", len(existingRefs))
 
 	// Convert map to sorted slice for ordered processing
@@ -103,7 +106,6 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 
 		// Get referendum info - the client handles historical lookups
 		info, err := client.GetReferendumInfo(refID)
-
 		var proposal types.Proposal
 		dbErr := db.Where("network_id = ? AND ref_id = ?", 1, refID).First(&proposal).Error
 
@@ -132,32 +134,12 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 			continue
 		}
 
-		// For finished referenda with unknown submitter, try to fetch historical data
-		if info.Submission.Who == "Unknown" && info.Status != "Ongoing" {
-			// Try to get historical data from when it was ongoing
+		// For finished referenda, always try to fetch historical data
+		if info.Status != "Ongoing" && (info.Submission.Who == "Unknown" || info.Origin == "") {
+			log.Printf("indexer polkadot: ref %d is %s but missing data, fetching historical", refID, info.Status)
 			historicalInfo := fetchHistoricalReferendumInfo(client, refID, info)
-			if historicalInfo != nil && historicalInfo.Submission.Who != "Unknown" {
-				// Use the historical submitter info
-				info.Submission = historicalInfo.Submission
-				if historicalInfo.DecisionDeposit != nil {
-					info.DecisionDeposit = historicalInfo.DecisionDeposit
-				}
-				if historicalInfo.Track > 0 {
-					info.Track = historicalInfo.Track
-				}
-				if historicalInfo.Origin != "" {
-					info.Origin = historicalInfo.Origin
-				}
-				if historicalInfo.Proposal != "" {
-					info.Proposal = historicalInfo.Proposal
-					info.ProposalLen = historicalInfo.ProposalLen
-				}
-				if historicalInfo.Enactment != "" {
-					info.Enactment = historicalInfo.Enactment
-				}
-				if historicalInfo.Submitted > 0 {
-					info.Submitted = historicalInfo.Submitted
-				}
+			if historicalInfo != nil {
+				info = historicalInfo
 			}
 		}
 
@@ -394,53 +376,78 @@ func RunPolkadotIndexer(ctx context.Context, db *gorm.DB, rpcURL string) {
 
 // fetchHistoricalReferendumInfo tries to get referendum info from when it was ongoing
 func fetchHistoricalReferendumInfo(client *polkadot.Client, refID uint32, currentInfo *polkadot.ReferendumInfo) *polkadot.ReferendumInfo {
-	// Determine which block to query based on the current status
-	var targetBlock uint64
+	// For all finished states, we want to look back to when they were Ongoing
+	var searchBlocks []uint64
 
+	// Determine which blocks to search based on the current status
+	var endBlock uint32
 	switch currentInfo.Status {
 	case "Approved":
-		if currentInfo.ApprovedAt > 0 {
-			targetBlock = uint64(currentInfo.ApprovedAt) - 1
-		}
+		endBlock = currentInfo.ApprovedAt
 	case "Rejected":
-		if currentInfo.RejectedAt > 0 {
-			targetBlock = uint64(currentInfo.RejectedAt) - 1
-		}
+		endBlock = currentInfo.RejectedAt
 	case "Cancelled":
-		if currentInfo.CancelledAt > 0 {
-			targetBlock = uint64(currentInfo.CancelledAt) - 1
-		}
+		endBlock = currentInfo.CancelledAt
 	case "TimedOut":
-		if currentInfo.TimedOutAt > 0 {
-			targetBlock = uint64(currentInfo.TimedOutAt) - 1
-		}
+		endBlock = currentInfo.TimedOutAt
 	case "Killed":
-		if currentInfo.KilledAt > 0 {
-			targetBlock = uint64(currentInfo.KilledAt) - 1
-		}
+		endBlock = currentInfo.KilledAt
 	default:
 		return nil
 	}
 
-	if targetBlock == 0 {
+	if endBlock == 0 {
 		return nil
 	}
 
-	// Get block hash for the target block
-	blockHash, err := client.GetBlockHash(&targetBlock)
-	if err != nil {
-		log.Printf("indexer polkadot: failed to get block hash for ref %d at block %d: %v", refID, targetBlock, err)
-		return nil
+	// Search backwards from the end block
+	// Try different intervals to find when it was Ongoing
+	intervals := []uint64{1, 10, 100, 1000, 10000}
+	for _, interval := range intervals {
+		if uint64(endBlock) > interval {
+			searchBlocks = append(searchBlocks, uint64(endBlock)-interval)
+		}
 	}
 
-	// Get referendum info at that block
-	historicalInfo, err := client.GetReferendumInfoAt(refID, blockHash)
-	if err != nil {
-		log.Printf("indexer polkadot: failed to get historical info for ref %d at block %d: %v", refID, targetBlock, err)
-		return nil
+	log.Printf("fetchHistoricalReferendumInfo: searching for ref %d (status: %s) at blocks: %v",
+		refID, currentInfo.Status, searchBlocks)
+
+	// Try each block
+	for _, targetBlock := range searchBlocks {
+		// Get block hash for the target block
+		blockHash, err := client.GetBlockHash(&targetBlock)
+		if err != nil {
+			continue
+		}
+
+		// Get referendum info at that block
+		historicalInfo, err := client.GetReferendumInfoAt(refID, blockHash)
+		if err != nil {
+			continue
+		}
+
+		// If we found good data (Ongoing status with submitter info), use it
+		if historicalInfo != nil && historicalInfo.Status == "Ongoing" &&
+			historicalInfo.Submission.Who != "Unknown" && historicalInfo.Submission.Who != "" {
+			log.Printf("Found historical Ongoing data for ref %d at block %d with submitter %s, track %d, origin %s",
+				refID, targetBlock, historicalInfo.Submission.Who, historicalInfo.Track, historicalInfo.Origin)
+
+			// Copy over the important fields but keep the current status
+			currentInfo.Track = historicalInfo.Track
+			currentInfo.Origin = historicalInfo.Origin
+			currentInfo.Proposal = historicalInfo.Proposal
+			currentInfo.ProposalLen = historicalInfo.ProposalLen
+			currentInfo.Enactment = historicalInfo.Enactment
+			currentInfo.Submitted = historicalInfo.Submitted
+			currentInfo.Submission = historicalInfo.Submission
+			currentInfo.DecisionDeposit = historicalInfo.DecisionDeposit
+
+			return currentInfo
+		}
 	}
 
-	return historicalInfo
+	log.Printf("fetchHistoricalReferendumInfo: couldn't find Ongoing data for ref %d", refID)
+	return nil
 }
 
 // indexTracks indexes track configuration
