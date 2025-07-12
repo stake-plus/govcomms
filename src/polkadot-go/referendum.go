@@ -153,8 +153,123 @@ func accountIDToSS58(accountID types.AccountID) string {
 	return base58.Encode(payload)
 }
 
+// decodeLegacyReferendumInfo decodes very old referendum formats
+func decodeLegacyReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
+	decoder := scale.NewDecoder(bytes.NewReader(data))
+
+	// Read variant
+	variant, err := decoder.ReadOneByte()
+	if err != nil {
+		return nil, fmt.Errorf("read variant: %w", err)
+	}
+
+	info := &ReferendumInfo{
+		Track:  0, // Legacy refs were all on root track
+		Origin: "system",
+	}
+
+	// Handle legacy "Ongoing" format
+	if variant == 0 {
+		info.Status = "Ongoing"
+
+		// Try to find an AccountID pattern (32 bytes that look like an account)
+		for i := 0; i < len(data)-32; i++ {
+			testAccount := data[i : i+32]
+			// Simple heuristic: valid accounts usually have some non-zero bytes
+			nonZero := 0
+			for _, b := range testAccount {
+				if b != 0 {
+					nonZero++
+				}
+			}
+			if nonZero > 10 && nonZero < 30 {
+				// This might be an account
+				var accountID types.AccountID
+				copy(accountID[:], testAccount)
+				info.Submission.Who = accountIDToSS58(accountID)
+				info.Submission.Amount = "10000000000" // Default deposit
+				break
+			}
+		}
+
+		if info.Submission.Who == "" {
+			info.Submission.Who = "Unknown"
+			info.Submission.Amount = "0"
+		}
+		return info, nil
+	}
+
+	// For finished variants (1-5), they typically have:
+	// - uint32: block number when finished
+	// - Option<Deposit>: optional deposit info
+
+	// Set status based on variant
+	switch variant {
+	case 1:
+		info.Status = "Approved"
+	case 2:
+		info.Status = "Rejected"
+	case 3:
+		info.Status = "Cancelled"
+	case 4:
+		info.Status = "TimedOut"
+	case 5:
+		info.Status = "Killed"
+	default:
+		info.Status = "Unknown"
+	}
+
+	// Try to decode common fields for finished states
+	if variant >= 1 && variant <= 5 {
+		// Decode block number (when the status changed)
+		var blockNum uint32
+		if err := decoder.Decode(&blockNum); err == nil {
+			// Set the appropriate field based on status
+			switch variant {
+			case 1:
+				info.ApprovedAt = blockNum
+			case 2:
+				info.RejectedAt = blockNum
+			case 3:
+				info.CancelledAt = blockNum
+			case 4:
+				info.TimedOutAt = blockNum
+			case 5:
+				info.KilledAt = blockNum
+			}
+		}
+
+		// Try to decode Option<Deposit> if variant != 5 (Killed doesn't have deposit)
+		if variant != 5 {
+			hasDeposit, err := decoder.ReadOneByte()
+			if err == nil && hasDeposit == 1 {
+				// Decode deposit directly into Submission
+				var who types.AccountID
+				if err := decoder.Decode(&who); err == nil {
+					info.Submission.Who = accountIDToSS58(who)
+
+					var amount types.U128
+					if err := decoder.Decode(&amount); err == nil {
+						info.Submission.Amount = amount.String()
+					} else {
+						info.Submission.Amount = "0"
+					}
+				}
+			}
+		}
+	}
+
+	// Set defaults if we couldn't decode
+	if info.Submission.Who == "" {
+		info.Submission.Who = "Unknown"
+		info.Submission.Amount = "0"
+	}
+
+	return info, nil
+}
+
 // decodeFinishedReferendum handles all finished referendum states
-func decodeFinishedReferendum(decoder *scale.Decoder, status string, finishedAtField *uint32) (*ReferendumInfo, error) {
+func decodeFinishedReferendum(decoder *scale.Decoder, status string) (*ReferendumInfo, error) {
 	info := &ReferendumInfo{
 		Status: status,
 		Track:  0, // Finished refs don't store track, assume root
@@ -165,12 +280,76 @@ func decodeFinishedReferendum(decoder *scale.Decoder, status string, finishedAtF
 	if err := decoder.Decode(&since); err != nil {
 		return nil, fmt.Errorf("decode %s since: %w", status, err)
 	}
-	*finishedAtField = since
+
+	// Set the appropriate field based on status
+	switch status {
+	case "Approved":
+		info.ApprovedAt = since
+	case "Rejected":
+		info.RejectedAt = since
+	case "Cancelled":
+		info.CancelledAt = since
+	case "TimedOut":
+		info.TimedOutAt = since
+	}
+
+	// For Approved and Rejected, there might be additional tally data before the deposit
+	// This is why some refs decode properly and others don't
+	if status == "Approved" || status == "Rejected" {
+		// Some versions have tally data here
+		// Try to peek ahead to see if we have tally data (3 u128 values)
+		// If the next byte is 0 or 1 (Option indicator), it's the deposit
+		// Otherwise, it might be tally data
+
+		peekByte, err := decoder.ReadOneByte()
+		if err != nil {
+			// No more data, set defaults
+			info.Submission.Who = "Unknown"
+			info.Submission.Amount = "0"
+			return info, nil
+		}
+
+		// Put the byte back by creating a new decoder with the remaining data
+		remainingData := make([]byte, 1024) // Assuming enough buffer
+		n := 0
+		buf := make([]byte, 1)
+		for {
+			if err := decoder.Decode(&buf); err != nil {
+				break
+			}
+			remainingData[n] = buf[0]
+			n++
+			if n >= len(remainingData)-1 {
+				break
+			}
+		}
+		newData := append([]byte{peekByte}, remainingData[:n]...)
+		decoder = scale.NewDecoder(bytes.NewReader(newData))
+
+		// If it's not 0 or 1, assume we have tally data
+		if peekByte > 1 {
+			// Decode tally (3 x U128)
+			var ayes, nays, support types.U128
+			// Put the byte back and decode as U128
+			decoder = scale.NewDecoder(bytes.NewReader(newData))
+			if err := decoder.Decode(&ayes); err == nil {
+				decoder.Decode(&nays)
+				decoder.Decode(&support)
+				// We decoded tally, continue to deposit
+			} else {
+				// Failed to decode as tally, reset decoder
+				decoder = scale.NewDecoder(bytes.NewReader(newData))
+			}
+		}
+	}
 
 	// Deposit - Option<Deposit<T::AccountId, BalanceOf<T, I>>>
 	hasDeposit, err := decoder.ReadOneByte()
 	if err != nil {
-		return nil, fmt.Errorf("read %s deposit option: %w", status, err)
+		// Some referenda might not have deposit info at all
+		info.Submission.Who = "Unknown"
+		info.Submission.Amount = "0"
+		return info, nil
 	}
 
 	if hasDeposit == 1 {
@@ -208,32 +387,16 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		return decodeOngoingReferendum(decoder, refID)
 
 	case 1: // Approved
-		info, err := decodeFinishedReferendum(decoder, "Approved", new(uint32))
-		if err == nil && info != nil {
-			info.ApprovedAt = *new(uint32)
-		}
-		return info, err
+		return decodeFinishedReferendum(decoder, "Approved")
 
 	case 2: // Rejected
-		info, err := decodeFinishedReferendum(decoder, "Rejected", new(uint32))
-		if err == nil && info != nil {
-			info.RejectedAt = *new(uint32)
-		}
-		return info, err
+		return decodeFinishedReferendum(decoder, "Rejected")
 
 	case 3: // Cancelled
-		info, err := decodeFinishedReferendum(decoder, "Cancelled", new(uint32))
-		if err == nil && info != nil {
-			info.CancelledAt = *new(uint32)
-		}
-		return info, err
+		return decodeFinishedReferendum(decoder, "Cancelled")
 
 	case 4: // TimedOut
-		info, err := decodeFinishedReferendum(decoder, "TimedOut", new(uint32))
-		if err == nil && info != nil {
-			info.TimedOutAt = *new(uint32)
-		}
-		return info, err
+		return decodeFinishedReferendum(decoder, "TimedOut")
 
 	case 5: // Killed
 		info := &ReferendumInfo{
@@ -246,11 +409,95 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 			return nil, fmt.Errorf("decode killed since: %w", err)
 		}
 		info.KilledAt = since
+		// Killed status doesn't have deposit info
+		info.Submission.Who = "Unknown"
+		info.Submission.Amount = "0"
 		return info, nil
 
 	default:
 		return nil, fmt.Errorf("unknown referendum variant: %d", variant)
 	}
+}
+
+// decodeOngoingReferendum decodes the complex Ongoing referendum state
+func decodeOngoingReferendum(decoder *scale.Decoder, refID uint32) (*ReferendumInfo, error) {
+	info := &ReferendumInfo{Status: "Ongoing"}
+
+	// Track (u16)
+	var track uint16
+	if err := decoder.Decode(&track); err != nil {
+		return nil, fmt.Errorf("decode track: %w", err)
+	}
+	info.Track = track
+
+	// Origin
+	origin, err := decodeOrigin(decoder)
+	if err != nil {
+		return nil, fmt.Errorf("decode origin: %w", err)
+	}
+	info.Origin = origin
+
+	// Proposal - Bounded<CallOf<T, I>, T::Preimages>
+	if err := decodeProposal(decoder, info, refID); err != nil {
+		return nil, fmt.Errorf("decode proposal: %w", err)
+	}
+
+	// Enactment - DispatchTime<BlockNumberFor<T, I>>
+	if err := decodeEnactment(decoder, info); err != nil {
+		return nil, fmt.Errorf("decode enactment: %w", err)
+	}
+
+	// Submitted - BlockNumberFor<T, I>
+	var submitted uint32
+	if err := decoder.Decode(&submitted); err != nil {
+		return nil, fmt.Errorf("decode submitted: %w", err)
+	}
+	info.Submitted = submitted
+
+	// SubmissionDeposit - Deposit<T::AccountId, BalanceOf<T, I>>
+	// Decode directly into Submission since they have the same fields
+	var submitter types.AccountID
+	if err := decoder.Decode(&submitter); err != nil {
+		return nil, fmt.Errorf("decode submitter: %w", err)
+	}
+	info.Submission.Who = accountIDToSS58(submitter)
+
+	var amount types.U128
+	if err := decoder.Decode(&amount); err != nil {
+		return nil, fmt.Errorf("decode submission amount: %w", err)
+	}
+	info.Submission.Amount = amount.String()
+
+	// DecisionDeposit - Option<Deposit<T::AccountId, BalanceOf<T, I>>>
+	if err := decodeOptionDeposit(decoder, &info.DecisionDeposit); err != nil {
+		return nil, fmt.Errorf("decode decision deposit: %w", err)
+	}
+
+	// Deciding - Option<DecidingStatus<BlockNumberFor<T, I>>>
+	if err := decodeDeciding(decoder, &info.Decision); err != nil {
+		return nil, fmt.Errorf("decode deciding: %w", err)
+	}
+
+	// Tally - T::Tally
+	if err := decodeTally(decoder, &info.Tally); err != nil {
+		return nil, fmt.Errorf("decode tally: %w", err)
+	}
+
+	// InQueue - bool
+	var inQueue bool
+	if err := decoder.Decode(&inQueue); err != nil {
+		return nil, fmt.Errorf("decode inQueue: %w", err)
+	}
+	info.InQueue = inQueue
+
+	// Alarm - Option<(BlockNumberFor<T, I>, ScheduleAddressOf<T, I>)>
+	hasAlarm, err := decoder.ReadOneByte()
+	if err == nil && hasAlarm == 1 {
+		// Skip alarm data (block number + schedule address)
+		skipBytes(decoder, 40) // 4 bytes block + 32 bytes address + 4 bytes index
+	}
+
+	return info, nil
 }
 
 // decodeProposal decodes the proposal field
@@ -455,202 +702,4 @@ func (c *Client) GetReferendumCount() (uint32, error) {
 	}
 
 	return uint32(count), nil
-}
-
-// decodeLegacyReferendumInfo decodes very old referendum formats
-func decodeLegacyReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
-	decoder := scale.NewDecoder(bytes.NewReader(data))
-
-	// Read variant
-	variant, err := decoder.ReadOneByte()
-	if err != nil {
-		return nil, fmt.Errorf("read variant: %w", err)
-	}
-
-	info := &ReferendumInfo{
-		Track:  0, // Legacy refs were all on root track
-		Origin: "system",
-	}
-
-	// Handle legacy "Ongoing" format
-	if variant == 0 {
-		info.Status = "Ongoing"
-
-		// Try to find an AccountID pattern (32 bytes that look like an account)
-		for i := 0; i < len(data)-32; i++ {
-			testAccount := data[i : i+32]
-			// Simple heuristic: valid accounts usually have some non-zero bytes
-			nonZero := 0
-			for _, b := range testAccount {
-				if b != 0 {
-					nonZero++
-				}
-			}
-			if nonZero > 10 && nonZero < 30 {
-				// This might be an account
-				var accountID types.AccountID
-				copy(accountID[:], testAccount)
-				info.Submission.Who = accountIDToSS58(accountID)
-				info.Submission.Amount = "10000000000" // Default deposit
-				break
-			}
-		}
-
-		if info.Submission.Who == "" {
-			info.Submission.Who = "Unknown"
-			info.Submission.Amount = "0"
-		}
-		return info, nil
-	}
-
-	// For finished variants (1-5), they typically have:
-	// - uint32: block number when finished
-	// - Option<Deposit>: optional deposit info
-
-	// Set status based on variant
-	switch variant {
-	case 1:
-		info.Status = "Approved"
-	case 2:
-		info.Status = "Rejected"
-	case 3:
-		info.Status = "Cancelled"
-	case 4:
-		info.Status = "TimedOut"
-	case 5:
-		info.Status = "Killed"
-	default:
-		info.Status = "Unknown"
-	}
-
-	// Try to decode common fields for finished states
-	if variant >= 1 && variant <= 5 {
-		// Decode block number (when the status changed)
-		var blockNum uint32
-		if err := decoder.Decode(&blockNum); err == nil {
-			// Set the appropriate field based on status
-			switch variant {
-			case 1:
-				info.ApprovedAt = blockNum
-			case 2:
-				info.RejectedAt = blockNum
-			case 3:
-				info.CancelledAt = blockNum
-			case 4:
-				info.TimedOutAt = blockNum
-			case 5:
-				info.KilledAt = blockNum
-			}
-		}
-
-		// Try to decode Option<Deposit> if variant != 5 (Killed doesn't have deposit)
-		if variant != 5 {
-			hasDeposit, err := decoder.ReadOneByte()
-			if err == nil && hasDeposit == 1 {
-				// Decode deposit directly into Submission
-				var who types.AccountID
-				if err := decoder.Decode(&who); err == nil {
-					info.Submission.Who = accountIDToSS58(who)
-
-					var amount types.U128
-					if err := decoder.Decode(&amount); err == nil {
-						info.Submission.Amount = amount.String()
-					} else {
-						info.Submission.Amount = "0"
-					}
-				}
-			}
-		}
-	}
-
-	// Set defaults if we couldn't decode
-	if info.Submission.Who == "" {
-		info.Submission.Who = "Unknown"
-		info.Submission.Amount = "0"
-	}
-
-	return info, nil
-}
-
-// Also need to fix the decodeOngoingReferendum function where it calls decodeDeposit with &info.Submission
-// Update this part of decodeOngoingReferendum:
-
-func decodeOngoingReferendum(decoder *scale.Decoder, refID uint32) (*ReferendumInfo, error) {
-	info := &ReferendumInfo{Status: "Ongoing"}
-
-	// Track (u16)
-	var track uint16
-	if err := decoder.Decode(&track); err != nil {
-		return nil, fmt.Errorf("decode track: %w", err)
-	}
-	info.Track = track
-
-	// Origin
-	origin, err := decodeOrigin(decoder)
-	if err != nil {
-		return nil, fmt.Errorf("decode origin: %w", err)
-	}
-	info.Origin = origin
-
-	// Proposal - Bounded<CallOf<T, I>, T::Preimages>
-	if err := decodeProposal(decoder, info, refID); err != nil {
-		return nil, fmt.Errorf("decode proposal: %w", err)
-	}
-
-	// Enactment - DispatchTime<BlockNumberFor<T, I>>
-	if err := decodeEnactment(decoder, info); err != nil {
-		return nil, fmt.Errorf("decode enactment: %w", err)
-	}
-
-	// Submitted - BlockNumberFor<T, I>
-	var submitted uint32
-	if err := decoder.Decode(&submitted); err != nil {
-		return nil, fmt.Errorf("decode submitted: %w", err)
-	}
-	info.Submitted = submitted
-
-	// SubmissionDeposit - Deposit<T::AccountId, BalanceOf<T, I>>
-	// Decode directly into Submission since they have the same fields
-	var submitter types.AccountID
-	if err := decoder.Decode(&submitter); err != nil {
-		return nil, fmt.Errorf("decode submitter: %w", err)
-	}
-	info.Submission.Who = accountIDToSS58(submitter)
-
-	var amount types.U128
-	if err := decoder.Decode(&amount); err != nil {
-		return nil, fmt.Errorf("decode submission amount: %w", err)
-	}
-	info.Submission.Amount = amount.String()
-
-	// DecisionDeposit - Option<Deposit<T::AccountId, BalanceOf<T, I>>>
-	if err := decodeOptionDeposit(decoder, &info.DecisionDeposit); err != nil {
-		return nil, fmt.Errorf("decode decision deposit: %w", err)
-	}
-
-	// Deciding - Option<DecidingStatus<BlockNumberFor<T, I>>>
-	if err := decodeDeciding(decoder, &info.Decision); err != nil {
-		return nil, fmt.Errorf("decode deciding: %w", err)
-	}
-
-	// Tally - T::Tally
-	if err := decodeTally(decoder, &info.Tally); err != nil {
-		return nil, fmt.Errorf("decode tally: %w", err)
-	}
-
-	// InQueue - bool
-	var inQueue bool
-	if err := decoder.Decode(&inQueue); err != nil {
-		return nil, fmt.Errorf("decode inQueue: %w", err)
-	}
-	info.InQueue = inQueue
-
-	// Alarm - Option<(BlockNumberFor<T, I>, ScheduleAddressOf<T, I>)>
-	hasAlarm, err := decoder.ReadOneByte()
-	if err == nil && hasAlarm == 1 {
-		// Skip alarm data (block number + schedule address)
-		skipBytes(decoder, 40) // 4 bytes block + 32 bytes address + 4 bytes index
-	}
-
-	return info, nil
 }
