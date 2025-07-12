@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"math/big"
 
 	"github.com/centrifuge/go-substrate-rpc-client/v4/scale"
@@ -255,25 +256,12 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 		}
 		info.Track = track
 
-		// Origin - complex enum
-		// First byte is the origin type
-		originType, err := decoder.ReadOneByte()
+		// Origin
+		origin, err := decodeOrigin(decoder)
 		if err != nil {
-			return nil, fmt.Errorf("read origin type: %w", err)
+			return nil, fmt.Errorf("decode origin: %w", err)
 		}
-
-		if originType == 0 { // system
-			info.Origin = "system"
-		} else if originType == 1 { // Origins pallet
-			// Read the origin variant
-			originVariant, err := decoder.ReadOneByte()
-			if err != nil {
-				return nil, fmt.Errorf("read origin variant: %w", err)
-			}
-			info.Origin = getOriginName(originVariant)
-		} else {
-			info.Origin = fmt.Sprintf("Unknown(%d)", originType)
-		}
+		info.Origin = origin
 
 		// Proposal - Bounded<CallOf<T, I>, T::Preimages>
 		// First byte indicates the proposal type
@@ -320,7 +308,32 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 			info.ProposalLen = callLen
 
 		default:
-			return nil, fmt.Errorf("unknown proposal type: %d", proposalType)
+			// Handle other legacy proposal types
+			// These might be from different runtime versions
+			log.Printf("Unknown proposal type %d for ref %d, attempting to skip", proposalType, refID)
+
+			// Based on the proposal type, we need to skip different amounts of data
+			switch proposalType {
+			case 3, 4, 5:
+				// These might be other legacy hash types
+				var hash types.Hash
+				if err := decoder.Decode(&hash); err == nil {
+					info.Proposal = hash.Hex()
+					info.ProposalLen = 0
+				}
+			case 6, 7, 8, 9, 10:
+				// Skip 32 bytes (hash)
+				skipBytes(decoder, 32)
+			case 11, 12, 13, 14:
+				// Skip 32 bytes (hash) + 4 bytes (length)
+				skipBytes(decoder, 36)
+			default:
+				// Unknown format, try to continue
+				skipBytes(decoder, 32)
+			}
+
+			info.Proposal = ""
+			info.ProposalLen = 0
 		}
 
 		// Enactment - DispatchTime<BlockNumberFor<T, I>>
@@ -613,33 +626,6 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 	}
 }
 
-// getOriginName maps the origin variant to a name
-func getOriginName(variant uint8) string {
-	// These map to the Polkadot runtime Origins enum
-	origins := map[uint8]string{
-		0:  "StakingAdmin",
-		1:  "Treasurer",
-		2:  "FellowshipAdmin",
-		3:  "GeneralAdmin",
-		4:  "AuctionAdmin",
-		5:  "LeaseAdmin",
-		6:  "ReferendumCanceller",
-		7:  "ReferendumKiller",
-		8:  "SmallTipper",
-		9:  "BigTipper",
-		10: "SmallSpender",
-		11: "MediumSpender",
-		12: "BigSpender",
-		13: "WhitelistedCaller",
-		14: "WishForChange",
-	}
-
-	if name, ok := origins[variant]; ok {
-		return name
-	}
-	return fmt.Sprintf("Custom(%d)", variant)
-}
-
 // Helper function to skip bytes
 func skipBytes(decoder *scale.Decoder, n int) error {
 	buf := make([]byte, n)
@@ -664,59 +650,4 @@ func (c *Client) GetReferendumCount() (uint32, error) {
 	}
 
 	return uint32(count), nil
-}
-
-// GetTrackInfo gets information about a specific track
-func (c *Client) GetTrackInfo(trackID uint16) (*TrackInfo, error) {
-	// Create storage key for Referenda.Tracks
-	palletHash := Twox128([]byte("Referenda"))
-	storageHash := Twox128([]byte("Tracks"))
-	key := append(palletHash, storageHash...)
-
-	storageKey := types.NewStorageKey(key)
-	var raw types.StorageDataRaw
-	ok, err := c.api.RPC.State.GetStorageLatest(storageKey, &raw)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("tracks not found")
-	}
-
-	// Return simplified track info
-	return &TrackInfo{
-		Name:               getTrackName(trackID),
-		MaxDeciding:        1,
-		DecisionPeriod:     403200, // 28 days default
-		ConfirmPeriod:      14400,  // 1 day default
-		MinEnactmentPeriod: 14400,
-		MinApproval:        "50%",
-		MinSupport:         "0.01%",
-	}, nil
-}
-
-func getTrackName(trackID uint16) string {
-	trackNames := map[uint16]string{
-		0:    "Root",
-		1:    "WhitelistedCaller",
-		10:   "StakingAdmin",
-		11:   "Treasurer",
-		12:   "LeaseAdmin",
-		13:   "FellowshipAdmin",
-		14:   "GeneralAdmin",
-		15:   "AuctionAdmin",
-		20:   "ReferendumCanceller",
-		21:   "ReferendumKiller",
-		30:   "SmallTipper",
-		31:   "BigTipper",
-		32:   "SmallSpender",
-		33:   "MediumSpender",
-		34:   "BigSpender",
-		1000: "WishForChange",
-	}
-
-	if name, ok := trackNames[trackID]; ok {
-		return name
-	}
-	return fmt.Sprintf("Track%d", trackID)
 }
