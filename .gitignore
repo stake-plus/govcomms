@@ -26,9 +26,9 @@ go.sum
 # Ignore files in maxmind directory but keep structure
 /tmp/maxmind/*
 
-/src/frontend/node_modules/*
-/src/frontend/node_modules
-/src/frontend/dist
+/src/GCUI/node_modules/*
+/src/GCUI/node_modules
+/src/GCUI/dist
 
 package-lock.json
 
