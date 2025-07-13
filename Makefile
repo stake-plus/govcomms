@@ -40,9 +40,9 @@ GCBot:
 	@echo "Building Discord bot..."
 	$(GO) build -o bin/GCBot$(EXE) ./src/GCBot
 
-# Build frontend
+# Build gcui
 GCUI:
-	@echo "Building frontend..."
+	@echo "Building GCUI..."
 	cd src/GCUI && $(NPM) install && $(NPM) run build
 	$(MKDIR) public
 	$(CP) src$(SEP)GCUI$(SEP)dist$(SEP)* public$(SEP)
