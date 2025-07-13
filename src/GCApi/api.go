@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/config"
-	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/data"
-	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/types"
-	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/webserver"
+	"github.com/stake-plus/govcomms/src/GCApi/config"
+	"github.com/stake-plus/govcomms/src/GCApi/data"
+	"github.com/stake-plus/govcomms/src/GCApi/types"
+	"github.com/stake-plus/govcomms/src/GCApi/webserver"
 )
 
 func main() {

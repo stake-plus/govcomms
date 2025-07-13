@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 
-	polkadot "github.com/stake-plus/polkadot-gov-comms/src/polkadot-go"
+	polkadot "github.com/stake-plus/govcomms/src/polkadot-go"
 )
 
 func main() {

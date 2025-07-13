@@ -1,4 +1,4 @@
-module github.com/stake-plus/polkadot-gov-comms
+module github.com/stake-plus/govcomms
 
 go 1.23.0
 

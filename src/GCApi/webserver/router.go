@@ -8,8 +8,8 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
-	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/config"
-	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/data"
+	"github.com/stake-plus/govcomms/src/GCApi/config"
+	"github.com/stake-plus/govcomms/src/GCApi/data"
 	"gorm.io/gorm"
 )
 

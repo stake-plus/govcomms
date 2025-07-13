@@ -6,7 +6,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/types"
+	"github.com/stake-plus/govcomms/src/GCApi/types"
 	"gorm.io/gorm"
 )
 

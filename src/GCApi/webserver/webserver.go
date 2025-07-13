@@ -5,7 +5,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
-	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/config"
+	"github.com/stake-plus/govcomms/src/GCApi/config"
 )
 
 func New(cfg config.Config, db *gorm.DB, rdb *redis.Client) *gin.Engine {
