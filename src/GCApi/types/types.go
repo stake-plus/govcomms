@@ -4,11 +4,14 @@ import "time"
 
 // Networks
 type Network struct {
-	ID               uint8  `gorm:"primaryKey"`
-	Name             string `gorm:"size:32;unique;not null"`
-	Symbol           string `gorm:"size:8;not null"`
-	URL              string `gorm:"size:256;not null"`
-	DiscordChannelID string `gorm:"size:64"`
+	ID                 uint8  `gorm:"primaryKey"`
+	Name               string `gorm:"size:32;unique;not null"`
+	Symbol             string `gorm:"size:8;not null"`
+	URL                string `gorm:"size:256;not null"`
+	DiscordChannelID   string `gorm:"size:64"`
+	PolkassemblyURL    string `gorm:"size:256"`
+	SubsquareURL       string `gorm:"size:256"`
+	PolkassemblyPrefix string `gorm:"size:32"` // e.g., "polkadot", "kusama" for API calls
 }
 
 // Network RPC endpoints

@@ -7,7 +7,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/stake-plus/polkadot-gov-comms/src/api/data"
+	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/data"
 	"gorm.io/gorm"
 )
 

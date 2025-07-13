@@ -3,7 +3,7 @@ package data
 import (
 	"sync"
 
-	"github.com/stake-plus/polkadot-gov-comms/src/api/types"
+	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/types"
 	"gorm.io/gorm"
 )
 

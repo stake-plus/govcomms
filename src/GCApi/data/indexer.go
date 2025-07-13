@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stake-plus/polkadot-gov-comms/src/api/types"
+	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/types"
 	polkadot "github.com/stake-plus/polkadot-gov-comms/src/polkadot-go"
 	"gorm.io/gorm"
 )

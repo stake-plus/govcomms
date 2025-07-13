@@ -16,9 +16,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/microcosm-cc/bluemonday"
 	"github.com/redis/go-redis/v9"
-	"github.com/stake-plus/polkadot-gov-comms/src/api/data"
-	"github.com/stake-plus/polkadot-gov-comms/src/api/polkassembly"
-	"github.com/stake-plus/polkadot-gov-comms/src/api/types"
+	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/data"
+	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/polkassembly"
+	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/types"
 	"gorm.io/gorm"
 )
 

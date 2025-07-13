@@ -11,17 +11,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/stake-plus/polkadot-gov-comms/src/api/config"
-	"github.com/stake-plus/polkadot-gov-comms/src/api/data"
-	"github.com/stake-plus/polkadot-gov-comms/src/api/types"
-	"github.com/stake-plus/polkadot-gov-comms/src/api/webserver"
+	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/config"
+	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/data"
+	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/types"
+	"github.com/stake-plus/polkadot-gov-comms/src/GCApi/webserver"
 )
 
 func main() {
 	// Connect to database first
 	mysqlDSN := os.Getenv("MYSQL_DSN")
 	if mysqlDSN == "" {
-		mysqlDSN = "govcomms:DK3mfv93jf4m@tcp(172.16.254.7:3306)/govcomms"
+		mysqlDSN = "dev:test@tcp(localhost:3306)/govcomms"
 	}
 	db := data.MustMySQL(mysqlDSN)
 

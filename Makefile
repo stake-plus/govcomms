@@ -1,6 +1,6 @@
 # File: Makefile
 
-.PHONY: all build test clean docker api discordbot frontend indexer migrate
+.PHONY: all build test clean docker GCApi GCBot GCUI indexer migrate
 
 # Variables
 DOCKER_COMPOSE = docker-compose
@@ -28,29 +28,24 @@ endif
 all: build
 
 # Build all components
-build: api discordbot frontend
+build: GCApi GCBot GCUI
 
 # Build API
-api:
+GCApi:
 	@echo "Building API..."
-	$(GO) build -o bin/api$(EXE) ./src/api
+	$(GO) build -o bin/GCApi$(EXE) ./src/GCApi
 
 # Build Discord bot
-discordbot:
+GCBot:
 	@echo "Building Discord bot..."
-	$(GO) build -o bin/discordbot$(EXE) ./src/discordbot
-
-# Build indexer service
-indexer:
-	@echo "Building indexer..."
-	$(GO) build -o bin/indexer$(EXE) ./src/indexer
+	$(GO) build -o bin/GCBot$(EXE) ./src/GCBot
 
 # Build frontend
-frontend:
+GCUI:
 	@echo "Building frontend..."
-	cd src/frontend && $(NPM) install && $(NPM) run build
+	cd src/GCUI && $(NPM) install && $(NPM) run build
 	$(MKDIR) public
-	$(CP) src$(SEP)frontend$(SEP)dist$(SEP)* public$(SEP)
+	$(CP) src$(SEP)GCUI$(SEP)dist$(SEP)* public$(SEP)
 
 # Run tests
 test:
@@ -75,22 +70,17 @@ docker-build:
 
 # Development commands
 dev-api:
-	$(GO) run ./src/api
+	$(GO) run ./src/GCApi
 
 dev-bot:
-	$(GO) run ./src/discordbot
+	$(GO) run ./src/GCBot
 
 dev-frontend:
 	cd src/frontend && $(NPM) run dev
-
-# Database migration
-migrate:
-	@echo "Running database migrations..."
-	$(GO) run ./scripts/migrate
 
 # Install dependencies
 deps:
 	@echo "Installing Go dependencies..."
 	$(GO) mod download
 	@echo "Installing frontend dependencies..."
-	cd src/frontend && $(NPM) install
+	cd src/GCUI && $(NPM) install
