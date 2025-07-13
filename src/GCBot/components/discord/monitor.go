@@ -1,4 +1,4 @@
-package components
+package discord
 
 import (
 	"context"
@@ -10,15 +10,15 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/GCApi/data"
 	"github.com/stake-plus/govcomms/src/GCApi/types"
-	"github.com/stake-plus/govcomms/src/GCBot/network"
-	"github.com/stake-plus/polkadot-gov-comms/src/GCot/referendum"
+	"github.com/stake-plus/govcomms/src/GCBot/components/network"
+	"github.com/stake-plus/govcomms/src/GCBot/components/referendum"
 	"gorm.io/gorm"
 )
 
 type MonitorConfig struct {
 	DB             *gorm.DB
 	NetworkManager *network.Manager
-	RefHandler     *referendum.Handler
+	RefManager     *referendum.Manager
 	Session        *discordgo.Session
 	GuildID        string
 }
@@ -90,7 +90,7 @@ func (m *MessageMonitor) postMessage(msg types.RefMessage) error {
 	}
 
 	// Find thread
-	thread, err := m.config.RefHandler.FindThread(
+	thread, err := m.config.RefManager.FindThread(
 		m.config.Session,
 		m.config.GuildID,
 		net.DiscordChannelID,

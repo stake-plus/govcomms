@@ -1,4 +1,4 @@
-package components
+package referendum
 
 import (
 	"fmt"
@@ -8,36 +8,36 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/GCApi/types"
-	"github.com/stake-plus/govcomms/src/GCBot/network"
+	"github.com/stake-plus/govcomms/src/GCBot/components/network"
 	"gorm.io/gorm"
 )
 
-type Handler struct {
+type Manager struct {
 	db       *gorm.DB
 	networks *network.Manager
 }
 
-func NewHandler(db *gorm.DB, networks *network.Manager) *Handler {
-	return &Handler{
+func NewManager(db *gorm.DB, networks *network.Manager) *Manager {
+	return &Manager{
 		db:       db,
 		networks: networks,
 	}
 }
 
-func (h *Handler) HandleThreadUpdate(t *discordgo.ThreadUpdate) {
-	net := h.networks.FindByChannelID(t.ParentID)
+func (m *Manager) HandleThreadUpdate(t *discordgo.ThreadUpdate) {
+	net := m.networks.FindByChannelID(t.ParentID)
 	if net == nil {
 		return
 	}
 
-	refID := h.ExtractRefID(t.Name)
+	refID := m.ExtractRefID(t.Name)
 	if refID > 0 {
 		log.Printf("Detected referendum thread: %s (Ref #%d) in %s channel",
 			t.Name, refID, net.Name)
 	}
 }
 
-func (h *Handler) ExtractRefID(name string) uint64 {
+func (m *Manager) ExtractRefID(name string) uint64 {
 	patterns := []string{
 		`^#?(\d+)\s*[:|-]`,
 		`^#?(\d+)\s+`,
@@ -56,13 +56,13 @@ func (h *Handler) ExtractRefID(name string) uint64 {
 	return 0
 }
 
-func (h *Handler) GetOrCreateRef(networkID uint8, refNum uint64, creator string, isAdmin bool) (*types.Ref, error) {
+func (m *Manager) GetOrCreateRef(networkID uint8, refNum uint64, creator string, isAdmin bool) (*types.Ref, error) {
 	var ref types.Ref
 
-	err := h.db.Transaction(func(tx *gorm.DB) error {
+	err := m.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.First(&ref, "network_id = ? AND ref_id = ?", networkID, refNum).Error; err != nil {
 			if err == gorm.ErrRecordNotFound && isAdmin {
-				net := h.networks.GetByID(networkID)
+				net := m.networks.GetByID(networkID)
 				if net == nil {
 					return fmt.Errorf("network not found")
 				}
@@ -87,7 +87,7 @@ func (h *Handler) GetOrCreateRef(networkID uint8, refNum uint64, creator string,
 	return &ref, err
 }
 
-func (h *Handler) FindThread(session *discordgo.Session, guildID, channelID string, refNum int) (*discordgo.Channel, error) {
+func (m *Manager) FindThread(session *discordgo.Session, guildID, channelID string, refNum int) (*discordgo.Channel, error) {
 	// Get active threads
 	threads, err := session.GuildThreadsActive(guildID)
 	if err != nil {
@@ -113,10 +113,10 @@ func (h *Handler) FindThread(session *discordgo.Session, guildID, channelID stri
 	}
 
 	// Check archived threads
-	return h.findArchivedThread(session, channelID, patterns)
+	return m.findArchivedThread(session, channelID, patterns)
 }
 
-func (h *Handler) findArchivedThread(session *discordgo.Session, channelID string, patterns []string) (*discordgo.Channel, error) {
+func (m *Manager) findArchivedThread(session *discordgo.Session, channelID string, patterns []string) (*discordgo.Channel, error) {
 	publicThreads, err := session.ThreadsArchived(channelID, nil, 100)
 	if err == nil {
 		for _, thread := range publicThreads.Threads {

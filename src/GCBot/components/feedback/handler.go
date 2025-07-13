@@ -1,4 +1,4 @@
-package components
+package feedback
 
 import (
 	"context"
@@ -13,8 +13,8 @@ import (
 	"github.com/stake-plus/govcomms/src/GCApi/data"
 	"github.com/stake-plus/govcomms/src/GCApi/types"
 	"github.com/stake-plus/govcomms/src/GCBot/api"
-	"github.com/stake-plus/govcomms/src/GCBot/network"
-	"github.com/stake-plus/govcomms/src/GCBot/referendum"
+	"github.com/stake-plus/govcomms/src/GCBot/components/network"
+	"github.com/stake-plus/govcomms/src/GCBot/components/referendum"
 	"gorm.io/gorm"
 )
 
@@ -22,7 +22,7 @@ type Config struct {
 	DB             *gorm.DB
 	Redis          *redis.Client
 	NetworkManager *network.Manager
-	RefHandler     *referendum.Handler
+	RefManager     *referendum.Manager
 	APIClient      *api.Client
 	FeedbackRoleID string
 	GuildID        string
@@ -121,7 +121,7 @@ func (h *Handler) processFeedback(s *discordgo.Session, m *discordgo.MessageCrea
 	}
 
 	// Get or create referendum
-	ref, err := h.config.RefHandler.GetOrCreateRef(net.ID, refNum, daoMember.Address, daoMember.IsAdmin)
+	ref, err := h.config.RefManager.GetOrCreateRef(net.ID, refNum, daoMember.Address, daoMember.IsAdmin)
 	if err != nil {
 		return err
 	}
