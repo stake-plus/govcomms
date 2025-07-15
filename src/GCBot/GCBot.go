@@ -28,10 +28,18 @@ type DiscordBot struct {
 	feedbackRoleID  string
 	feedbackCommand string
 	guildID         string
-	networks        map[uint8]*types.Network // Store full network info
+	networks        map[uint8]*types.Network
+	threadMapping   map[string]*ThreadInfo // channelID -> ThreadInfo
 	apiClient       *APIClient
 	rateLimiter     *UserRateLimiter
 	mu              sync.RWMutex
+}
+
+type ThreadInfo struct {
+	ThreadID  string
+	NetworkID uint8
+	RefID     uint64
+	RefDBID   uint64 // Database ID of the referendum
 }
 
 type APIClient struct {
@@ -107,7 +115,7 @@ func NewDiscordBot(token, feedbackRoleID, guildID string, db *gorm.DB, rdb *redi
 
 	apiURL := data.GetSetting("gcapi_url")
 	if apiURL == "" {
-		apiURL = "http://localhost:443" // development default
+		apiURL = "http://localhost:443"
 	}
 
 	bot := &DiscordBot{
@@ -117,6 +125,7 @@ func NewDiscordBot(token, feedbackRoleID, guildID string, db *gorm.DB, rdb *redi
 		feedbackCommand: "!feedback",
 		guildID:         guildID,
 		networks:        make(map[uint8]*types.Network),
+		threadMapping:   make(map[string]*ThreadInfo),
 		apiClient: &APIClient{
 			baseURL: apiURL,
 			client:  &http.Client{Timeout: 30 * time.Second},
@@ -168,21 +177,141 @@ func (b *DiscordBot) loadNetworkConfig() error {
 func (b *DiscordBot) handleReady(s *discordgo.Session, event *discordgo.Ready) {
 	log.Printf("Discord bot logged in as %s", event.User.Username)
 
+	// Synchronize threads on startup
+	if err := b.syncAllThreads(); err != nil {
+		log.Printf("Failed to sync threads: %v", err)
+	}
+
 	// Start monitoring for new messages from the API
 	go b.monitorAPIMessages(context.Background())
 }
 
-func (b *DiscordBot) handleThreadUpdate(s *discordgo.Session, t *discordgo.ThreadUpdate) {
-	// Monitor for new threads in referendum channels
-	b.mu.RLock()
-	defer b.mu.RUnlock()
+func (b *DiscordBot) syncAllThreads() error {
+	log.Println("Starting thread synchronization...")
 
+	// Get all active threads
+	threads, err := b.session.GuildThreadsActive(b.guildID)
+	if err != nil {
+		return fmt.Errorf("get active threads: %w", err)
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	synced := 0
+	for _, thread := range threads.Threads {
+		// Check if thread belongs to a referendum channel
+		for _, network := range b.networks {
+			if thread.ParentID == network.DiscordChannelID {
+				refID := b.extractRefIDFromThreadName(thread.Name)
+				if refID > 0 {
+					// Create or get referendum in database
+					var ref types.Ref
+					err := b.db.FirstOrCreate(&ref, types.Ref{
+						NetworkID: network.ID,
+						RefID:     refID,
+					}).Error
+
+					if err == nil {
+						// If newly created, set default values
+						if ref.Title == "" {
+							ref.Title = thread.Name
+							ref.Status = "Unknown"
+							ref.Submitter = "Unknown"
+							b.db.Save(&ref)
+						}
+
+						// Store thread mapping
+						b.threadMapping[thread.ID] = &ThreadInfo{
+							ThreadID:  thread.ID,
+							NetworkID: network.ID,
+							RefID:     refID,
+							RefDBID:   ref.ID,
+						}
+						synced++
+						log.Printf("Synced thread: %s -> %s Ref #%d", thread.Name, network.Name, refID)
+					}
+				}
+			}
+		}
+	}
+
+	// Also check archived threads
+	for _, network := range b.networks {
+		if network.DiscordChannelID == "" {
+			continue
+		}
+
+		publicThreads, err := b.session.ThreadsArchived(network.DiscordChannelID, nil, 100)
+		if err == nil {
+			for _, thread := range publicThreads.Threads {
+				refID := b.extractRefIDFromThreadName(thread.Name)
+				if refID > 0 {
+					var ref types.Ref
+					err := b.db.FirstOrCreate(&ref, types.Ref{
+						NetworkID: network.ID,
+						RefID:     refID,
+					}).Error
+
+					if err == nil {
+						if ref.Title == "" {
+							ref.Title = thread.Name
+							ref.Status = "Unknown"
+							ref.Submitter = "Unknown"
+							b.db.Save(&ref)
+						}
+
+						b.threadMapping[thread.ID] = &ThreadInfo{
+							ThreadID:  thread.ID,
+							NetworkID: network.ID,
+							RefID:     refID,
+							RefDBID:   ref.ID,
+						}
+						synced++
+						log.Printf("Synced archived thread: %s -> %s Ref #%d", thread.Name, network.Name, refID)
+					}
+				}
+			}
+		}
+	}
+
+	log.Printf("Thread synchronization complete. Synced %d threads", synced)
+	return nil
+}
+
+func (b *DiscordBot) handleThreadUpdate(s *discordgo.Session, t *discordgo.ThreadUpdate) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// Check if this is a new thread in a referendum channel
 	for _, network := range b.networks {
 		if t.ParentID == network.DiscordChannelID {
-			// Extract referendum ID from thread name
 			refID := b.extractRefIDFromThreadName(t.Name)
 			if refID > 0 {
-				log.Printf("Detected referendum thread: %s (Ref #%d) in %s channel", t.Name, refID, network.Name)
+				// Create or get referendum in database
+				var ref types.Ref
+				err := b.db.FirstOrCreate(&ref, types.Ref{
+					NetworkID: network.ID,
+					RefID:     refID,
+				}).Error
+
+				if err == nil {
+					if ref.Title == "" {
+						ref.Title = t.Name
+						ref.Status = "Unknown"
+						ref.Submitter = "Unknown"
+						b.db.Save(&ref)
+					}
+
+					// Update thread mapping
+					b.threadMapping[t.ID] = &ThreadInfo{
+						ThreadID:  t.ID,
+						NetworkID: network.ID,
+						RefID:     refID,
+						RefDBID:   ref.ID,
+					}
+					log.Printf("Detected new/updated thread: %s -> %s Ref #%d", t.Name, network.Name, refID)
+				}
 			}
 		}
 	}
@@ -218,6 +347,8 @@ func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.Mess
 		return
 	}
 
+	log.Printf("Feedback command received from %s in channel %s", m.Author.Username, m.ChannelID)
+
 	// Check rate limit
 	if !b.rateLimiter.CanUse(m.Author.ID) {
 		timeLeft := b.rateLimiter.TimeUntilNext(m.Author.ID)
@@ -232,6 +363,7 @@ func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.Mess
 	member, err := s.GuildMember(b.guildID, m.Author.ID)
 	if err != nil {
 		log.Printf("Failed to get guild member: %v", err)
+		s.ChannelMessageSend(m.ChannelID, "Failed to verify permissions. Please try again.")
 		return
 	}
 
@@ -244,33 +376,19 @@ func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.Mess
 	}
 
 	if !hasRole {
+		log.Printf("User %s lacks feedback role", m.Author.Username)
 		s.ChannelMessageSend(m.ChannelID, "You don't have permission to use this command.")
 		return
 	}
 
 	// Parse command
-	parts := strings.SplitN(m.Content, " ", 3)
-	if len(parts) < 3 {
-		s.ChannelMessageSend(m.ChannelID, "Usage: !feedback network/ref_number Your feedback message")
+	parts := strings.SplitN(m.Content, " ", 2)
+	if len(parts) < 2 {
+		s.ChannelMessageSend(m.ChannelID, "Usage: !feedback Your feedback message")
 		return
 	}
 
-	proposalRef := parts[1]
-	feedbackMsg := parts[2]
-
-	// Validate proposal reference
-	refParts := strings.Split(proposalRef, "/")
-	if len(refParts) != 2 {
-		s.ChannelMessageSend(m.ChannelID, "Invalid format. Use: network/ref_number (e.g., polkadot/123)")
-		return
-	}
-
-	network := strings.ToLower(refParts[0])
-	refNum, err := strconv.ParseUint(refParts[1], 10, 64)
-	if err != nil || refNum == 0 || refNum > 1000000 {
-		s.ChannelMessageSend(m.ChannelID, "Invalid referendum number")
-		return
-	}
+	feedbackMsg := parts[1]
 
 	// Validate feedback length
 	if len(feedbackMsg) < 10 || len(feedbackMsg) > 5000 {
@@ -278,60 +396,50 @@ func (b *DiscordBot) handleMessageCreate(s *discordgo.Session, m *discordgo.Mess
 		return
 	}
 
+	// Check if we're in a thread
+	b.mu.RLock()
+	threadInfo, exists := b.threadMapping[m.ChannelID]
+	b.mu.RUnlock()
+
+	if !exists {
+		log.Printf("Channel %s is not a recognized referendum thread", m.ChannelID)
+		s.ChannelMessageSend(m.ChannelID, "This command must be used in a referendum thread.")
+		return
+	}
+
 	// Get DAO member by Discord username
 	var daoMember types.DaoMember
 	if err := b.db.Where("discord = ?", m.Author.Username).First(&daoMember).Error; err != nil {
+		log.Printf("Discord user %s not found in dao_members", m.Author.Username)
 		s.ChannelMessageSend(m.ChannelID, "Your Discord account is not linked to a Polkadot address. Please contact an admin.")
 		return
 	}
 
-	// Process the feedback
-	if err := b.processFeedback(s, m, network, refNum, feedbackMsg, &daoMember); err != nil {
+	// Get network info
+	network := b.getNetworkByID(threadInfo.NetworkID)
+	if network == nil {
+		log.Printf("Network not found for ID %d", threadInfo.NetworkID)
+		s.ChannelMessageSend(m.ChannelID, "Failed to process feedback. Please try again.")
+		return
+	}
+
+	// Process the feedback using the thread info
+	if err := b.processFeedbackFromThread(s, m, threadInfo, network, feedbackMsg, &daoMember); err != nil {
 		log.Printf("Error processing feedback: %v", err)
 		s.ChannelMessageSend(m.ChannelID, "Failed to process feedback. Please try again.")
 		return
 	}
 }
 
-func (b *DiscordBot) processFeedback(s *discordgo.Session, m *discordgo.MessageCreate, network string, refNum uint64, feedbackMsg string, daoMember *types.DaoMember) error {
-	// Find network ID
-	var netID uint8
-	var networkInfo *types.Network
+func (b *DiscordBot) processFeedbackFromThread(s *discordgo.Session, m *discordgo.MessageCreate, threadInfo *ThreadInfo, network *types.Network, feedbackMsg string, daoMember *types.DaoMember) error {
+	log.Printf("Processing feedback for %s ref #%d from %s", network.Name, threadInfo.RefID, daoMember.Address)
 
-	b.mu.RLock()
-	for _, net := range b.networks {
-		if strings.ToLower(net.Name) == network || strings.ToLower(net.PolkassemblyPrefix) == network {
-			netID = net.ID
-			networkInfo = net
-			break
-		}
-	}
-	b.mu.RUnlock()
-
-	if netID == 0 {
-		return fmt.Errorf("unknown network: %s", network)
-	}
-
-	// Store feedback in database
-	var ref types.Ref
+	var msgID uint64
 	err := b.db.Transaction(func(tx *gorm.DB) error {
-		// Check if referendum exists
-		if err := tx.First(&ref, "network_id = ? AND ref_id = ?", netID, refNum).Error; err != nil {
-			if err == gorm.ErrRecordNotFound && daoMember.IsAdmin {
-				// Create if admin
-				ref = types.Ref{
-					NetworkID: netID,
-					RefID:     refNum,
-					Submitter: daoMember.Address,
-					Status:    "Unknown",
-					Title:     fmt.Sprintf("%s Referendum #%d", strings.Title(network), refNum),
-				}
-				if err := tx.Create(&ref).Error; err != nil {
-					return err
-				}
-			} else {
-				return err
-			}
+		// Get the referendum
+		var ref types.Ref
+		if err := tx.First(&ref, threadInfo.RefDBID).Error; err != nil {
+			return fmt.Errorf("referendum not found: %w", err)
 		}
 
 		// Create/update proponent
@@ -356,6 +464,7 @@ func (b *DiscordBot) processFeedback(s *discordgo.Session, m *discordgo.MessageC
 		if err := tx.Create(&msg).Error; err != nil {
 			return err
 		}
+		msgID = msg.ID
 
 		return nil
 	})
@@ -366,7 +475,7 @@ func (b *DiscordBot) processFeedback(s *discordgo.Session, m *discordgo.MessageC
 
 	// Check if this is the first message
 	var msgCount int64
-	b.db.Model(&types.RefMessage{}).Where("ref_id = ?", ref.ID).Count(&msgCount)
+	b.db.Model(&types.RefMessage{}).Where("ref_id = ?", threadInfo.RefDBID).Count(&msgCount)
 
 	// Build response
 	gcURL := data.GetSetting("gc_url")
@@ -374,12 +483,12 @@ func (b *DiscordBot) processFeedback(s *discordgo.Session, m *discordgo.MessageC
 		gcURL = "http://localhost:3000"
 	}
 
-	link := fmt.Sprintf("%s/%s/%d", gcURL, network, refNum)
+	link := fmt.Sprintf("%s/%s/%d", gcURL, strings.ToLower(network.Name), threadInfo.RefID)
 
 	// Create embed response
 	embed := &discordgo.MessageEmbed{
 		Title:       "Feedback Submitted",
-		Description: fmt.Sprintf("Your feedback for %s/%d has been submitted.", network, refNum),
+		Description: fmt.Sprintf("Your feedback for %s/%d has been submitted.", network.Name, threadInfo.RefID),
 		Color:       0x00ff00,
 		Fields: []*discordgo.MessageEmbedField{
 			{
@@ -399,35 +508,40 @@ func (b *DiscordBot) processFeedback(s *discordgo.Session, m *discordgo.MessageC
 
 	// If first message and we have Polkassembly integration, post it
 	polkassemblyAPIKey := data.GetSetting("polkassembly_api_key")
-	if msgCount == 1 && polkassemblyAPIKey != "" && networkInfo != nil && networkInfo.PolkassemblyPrefix != "" {
-		go b.postToPolkassembly(network, refNum, feedbackMsg, link, networkInfo.PolkassemblyPrefix)
+	if msgCount == 1 && polkassemblyAPIKey != "" && network.PolkassemblyPrefix != "" {
+		go b.postToPolkassembly(strings.ToLower(network.Name), threadInfo.RefID, feedbackMsg, link, network.PolkassemblyPrefix)
 	}
 
-	// Publish to Redis for potential other consumers
+	// Publish to Redis
 	if b.rdb != nil {
 		_ = data.PublishMessage(context.Background(), b.rdb, map[string]interface{}{
-			"proposal": fmt.Sprintf("%s/%d", network, refNum),
+			"proposal": fmt.Sprintf("%s/%d", strings.ToLower(network.Name), threadInfo.RefID),
 			"author":   daoMember.Address,
 			"body":     feedbackMsg,
 			"time":     time.Now().Unix(),
-			"id":       msgCount,
-			"network":  network,
-			"ref_id":   refNum,
+			"id":       msgID,
+			"network":  strings.ToLower(network.Name),
+			"ref_id":   threadInfo.RefID,
 		})
 	}
 
 	s.ChannelMessageSendEmbed(m.ChannelID, embed)
 
 	log.Printf("Feedback submitted by %s (%s) for %s/%d: %d chars",
-		m.Author.Username, daoMember.Address, network, refNum, len(feedbackMsg))
+		m.Author.Username, daoMember.Address, network.Name, threadInfo.RefID, len(feedbackMsg))
 
 	return nil
 }
 
+// Keep the old processFeedback function for backward compatibility but it shouldn't be used
+func (b *DiscordBot) processFeedback(s *discordgo.Session, m *discordgo.MessageCreate, network string, refNum uint64, feedbackMsg string, daoMember *types.DaoMember) error {
+	log.Printf("Warning: Using deprecated processFeedback function")
+	return fmt.Errorf("please use this command in a referendum thread")
+}
+
 func (b *DiscordBot) postToPolkassembly(network string, refNum uint64, message, link, polkassemblyPrefix string) {
-	// This would integrate with Polkassembly API
-	// Implementation depends on Polkassembly API documentation
 	log.Printf("Would post to Polkassembly: %s/%d", network, refNum)
+	// TODO: Implement actual Polkassembly API integration
 }
 
 func (b *DiscordBot) monitorAPIMessages(ctx context.Context) {
@@ -441,7 +555,6 @@ func (b *DiscordBot) monitorAPIMessages(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Query for new messages since last check
 			messages, err := b.fetchNewMessages(lastCheck)
 			if err != nil {
 				log.Printf("Error fetching new messages: %v", err)
@@ -454,13 +567,14 @@ func (b *DiscordBot) monitorAPIMessages(ctx context.Context) {
 				}
 			}
 
-			lastCheck = time.Now()
+			if len(messages) > 0 {
+				lastCheck = time.Now()
+			}
 		}
 	}
 }
 
 func (b *DiscordBot) fetchNewMessages(since time.Time) ([]StreamMessage, error) {
-	// Query database for new external messages
 	var messages []types.RefMessage
 	err := b.db.Where("created_at > ? AND internal = ?", since, false).
 		Order("created_at ASC").
@@ -470,7 +584,6 @@ func (b *DiscordBot) fetchNewMessages(since time.Time) ([]StreamMessage, error) 
 		return nil, err
 	}
 
-	// Convert to stream messages
 	var streamMessages []StreamMessage
 	for _, msg := range messages {
 		var ref types.Ref
@@ -507,13 +620,12 @@ func (b *DiscordBot) postMessageToDiscord(msg StreamMessage) error {
 		return fmt.Errorf("no channel configured for network %d", msg.NetworkID)
 	}
 
-	// Find the referendum thread
+	// Find thread by referendum ID
 	thread, err := b.findReferendumThread(network.DiscordChannelID, int(msg.RefID))
 	if err != nil {
 		return fmt.Errorf("find thread: %w", err)
 	}
 
-	// Format the message
 	gcURL := data.GetSetting("gc_url")
 	if gcURL == "" {
 		gcURL = "http://localhost:3000"
@@ -538,17 +650,36 @@ func (b *DiscordBot) postMessageToDiscord(msg StreamMessage) error {
 	}
 
 	_, err = b.session.ChannelMessageSendEmbed(thread.ID, embed)
+	if err == nil {
+		log.Printf("Posted message from %s to thread for %s ref #%d", msg.Author, msg.Network, msg.RefID)
+	}
 	return err
 }
 
 func (b *DiscordBot) findReferendumThread(channelID string, refNum int) (*discordgo.Channel, error) {
-	// Get all threads in the channel
+	// First check our mapping
+	b.mu.RLock()
+	for threadID, info := range b.threadMapping {
+		if info.RefID == uint64(refNum) {
+			network := b.networks[info.NetworkID]
+			if network != nil && network.DiscordChannelID == channelID {
+				b.mu.RUnlock()
+				// Get thread details
+				thread, err := b.session.Channel(threadID)
+				if err == nil {
+					return thread, nil
+				}
+			}
+		}
+	}
+	b.mu.RUnlock()
+
+	// Fallback to searching
 	threads, err := b.session.GuildThreadsActive(b.guildID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Pattern to match thread names
 	patterns := []string{
 		fmt.Sprintf(`^#?%d\s*[:|-]`, refNum),
 		fmt.Sprintf(`^#?%d\s+`, refNum),
