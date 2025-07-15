@@ -73,6 +73,7 @@ func (rl *UserRateLimiter) CanUse(userID string) bool {
 		rl.users[userID] = time.Now()
 		return true
 	}
+
 	return false
 }
 
@@ -89,6 +90,7 @@ func (rl *UserRateLimiter) TimeUntilNext(userID string) time.Duration {
 	if elapsed >= rl.limit {
 		return 0
 	}
+
 	return rl.limit - elapsed
 }
 
@@ -131,6 +133,7 @@ func NewDiscordBot(token, feedbackRoleID, guildID string, db *gorm.DB, rdb *redi
 	dg.AddHandler(bot.handleMessageCreate)
 	dg.AddHandler(bot.handleReady)
 	dg.AddHandler(bot.handleThreadUpdate)
+
 	dg.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsMessageContent | discordgo.IntentsGuilds
 
 	return bot, nil
@@ -202,6 +205,7 @@ func (b *DiscordBot) extractRefIDFromThreadName(name string) uint64 {
 			}
 		}
 	}
+
 	return 0
 }
 
@@ -293,6 +297,7 @@ func (b *DiscordBot) processFeedback(s *discordgo.Session, m *discordgo.MessageC
 	// Find network ID
 	var netID uint8
 	var networkInfo *types.Network
+
 	b.mu.RLock()
 	for _, net := range b.networks {
 		if strings.ToLower(net.Name) == network || strings.ToLower(net.PolkassemblyPrefix) == network {
@@ -368,6 +373,7 @@ func (b *DiscordBot) processFeedback(s *discordgo.Session, m *discordgo.MessageC
 	if gcURL == "" {
 		gcURL = "http://localhost:3000"
 	}
+
 	link := fmt.Sprintf("%s/%s/%d", gcURL, network, refNum)
 
 	// Create embed response
@@ -392,7 +398,8 @@ func (b *DiscordBot) processFeedback(s *discordgo.Session, m *discordgo.MessageC
 	}
 
 	// If first message and we have Polkassembly integration, post it
-	if msgCount == 1 && os.Getenv("POLKASSEMBLY_API_KEY") != "" && networkInfo != nil && networkInfo.PolkassemblyPrefix != "" {
+	polkassemblyAPIKey := data.GetSetting("polkassembly_api_key")
+	if msgCount == 1 && polkassemblyAPIKey != "" && networkInfo != nil && networkInfo.PolkassemblyPrefix != "" {
 		go b.postToPolkassembly(network, refNum, feedbackMsg, link, networkInfo.PolkassemblyPrefix)
 	}
 
@@ -410,6 +417,7 @@ func (b *DiscordBot) processFeedback(s *discordgo.Session, m *discordgo.MessageC
 	}
 
 	s.ChannelMessageSendEmbed(m.ChannelID, embed)
+
 	log.Printf("Feedback submitted by %s (%s) for %s/%d: %d chars",
 		m.Author.Username, daoMember.Address, network, refNum, len(feedbackMsg))
 
@@ -457,6 +465,7 @@ func (b *DiscordBot) fetchNewMessages(since time.Time) ([]StreamMessage, error) 
 	err := b.db.Where("created_at > ? AND internal = ?", since, false).
 		Order("created_at ASC").
 		Find(&messages).Error
+
 	if err != nil {
 		return nil, err
 	}
@@ -595,34 +604,48 @@ func boolPtr(b bool) *bool {
 }
 
 func main() {
-	// Load config from env
-	token := os.Getenv("DISCORD_TOKEN")
-	if token == "" {
-		log.Fatal("DISCORD_TOKEN not set")
-	}
-
-	feedbackRoleID := os.Getenv("FEEDBACK_ROLE_ID")
-	if feedbackRoleID == "" {
-		log.Fatal("FEEDBACK_ROLE_ID not set")
-	}
-
-	guildID := os.Getenv("GUILD_ID")
-	if guildID == "" {
-		log.Fatal("GUILD_ID not set")
-	}
-
+	// Connect to database first
 	mysqlDSN := os.Getenv("MYSQL_DSN")
 	if mysqlDSN == "" {
-		log.Fatal("MYSQL_DSN environment variable must be set")
+		mysqlDSN = "govcomms:DK3mfv93jf4m@tcp(127.0.0.1:3306)/govcomms"
+	}
+
+	db := data.MustMySQL(mysqlDSN)
+
+	// Load settings from database
+	if err := data.LoadSettings(db); err != nil {
+		log.Printf("Failed to load settings: %v", err)
+	}
+
+	// Get configuration from database with env fallbacks
+	token := data.GetSetting("discord_token")
+	if token == "" {
+		token = os.Getenv("DISCORD_TOKEN")
+		if token == "" {
+			log.Fatal("DISCORD_TOKEN not set in database or environment")
+		}
+	}
+
+	feedbackRoleID := data.GetSetting("feedback_role_id")
+	if feedbackRoleID == "" {
+		feedbackRoleID = os.Getenv("FEEDBACK_ROLE_ID")
+		if feedbackRoleID == "" {
+			log.Fatal("FEEDBACK_ROLE_ID not set in database or environment")
+		}
+	}
+
+	guildID := data.GetSetting("guild_id")
+	if guildID == "" {
+		guildID = os.Getenv("GUILD_ID")
+		if guildID == "" {
+			log.Fatal("GUILD_ID not set in database or environment")
+		}
 	}
 
 	redisURL := os.Getenv("REDIS_URL")
 	if redisURL == "" {
 		redisURL = "redis://127.0.0.1:6379/0"
 	}
-
-	// Connect to database
-	db := data.MustMySQL(mysqlDSN)
 
 	// Connect to Redis
 	rdb := data.MustRedis(redisURL)
