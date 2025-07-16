@@ -156,7 +156,7 @@ func (c *Client) PostComment(content string, postID int, network string) error {
 	bodyJSON, _ := json.MarshalIndent(body, "", "  ")
 	log.Printf("Polkassembly: Request body:\n%s", string(bodyJSON))
 
-	_, err = c.post("/auth/actions/addPostComment", body, headers)
+	respBody, err := c.post("/auth/actions/addPostComment", body, headers)
 	if err != nil {
 		// Enhanced error logging
 		if httpErr, ok := err.(*HTTPError); ok {
@@ -185,6 +185,21 @@ func (c *Client) PostComment(content string, postID int, network string) error {
 			}
 		}
 		return fmt.Errorf("post comment failed: %w", err)
+	}
+
+	// Log the response to see what we got back
+	log.Printf("Polkassembly: Response body: %s", string(respBody))
+
+	// Try to parse the response to get comment ID or any other info
+	var commentResp map[string]interface{}
+	if err := json.Unmarshal(respBody, &commentResp); err == nil {
+		log.Printf("Polkassembly: Comment response: %+v", commentResp)
+		if commentID, ok := commentResp["id"]; ok {
+			log.Printf("Polkassembly: Comment ID: %v", commentID)
+		}
+		if commentURL, ok := commentResp["url"]; ok {
+			log.Printf("Polkassembly: Comment URL: %v", commentURL)
+		}
 	}
 
 	log.Printf("Polkassembly: Successfully posted comment to referendum #%d", postID)
@@ -223,8 +238,10 @@ func (c *Client) fetchUserID(network string) (int, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		return 0, fmt.Errorf("unexpected status: %d, body: %s", resp.StatusCode, string(body))
 	}
+
+	log.Printf("Polkassembly: Profile response: %s", string(body))
 
 	var profile struct {
 		UserID int `json:"user_id"`
@@ -257,13 +274,15 @@ func (c *Client) fetchReferendumTrack(refID int, network string) (int, error) {
 		return 0, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 	}
 
+	body, _ := io.ReadAll(resp.Body)
+	log.Printf("Polkassembly: Track response for ref %d: %s", refID, string(body))
+
 	var result struct {
 		TrackNumber int `json:"track_number"`
 		TrackNo     int `json:"trackNo"`
 		Track       int `json:"track"`
 	}
 
-	body, _ := io.ReadAll(resp.Body)
 	if err := json.Unmarshal(body, &result); err != nil {
 		return 0, err
 	}
