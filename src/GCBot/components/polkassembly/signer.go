@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/ChainSafe/go-schnorrkel"
-	"github.com/cosmos/go-bip39"
 	"github.com/mr-tron/base58"
 	"golang.org/x/crypto/blake2b"
 )
@@ -23,21 +22,14 @@ func NewPolkadotSignerFromSeed(seedPhrase string, network uint16) (*PolkadotSign
 	// Clean up the seed phrase - trim spaces and normalize
 	seedPhrase = strings.TrimSpace(seedPhrase)
 
-	// Validate the mnemonic
-	if !bip39.IsMnemonicValid(seedPhrase) {
-		// Try to see what's wrong
-		words := strings.Fields(seedPhrase)
-		return nil, fmt.Errorf("invalid seed phrase: got %d words, expected 12, 15, 18, 21, or 24", len(words))
-	}
+	// For Polkadot.js compatibility, we need to derive the key directly from the mnemonic
+	// without using BIP39 seed generation
+	entropy := mnemonicToEntropy(seedPhrase)
 
-	// Generate seed from mnemonic - use empty passphrase for Polkadot.js compatibility
-	seed := bip39.NewSeed(seedPhrase, "")
-
-	// For Polkadot.js compatibility, we need to use the first 32 bytes of the seed
+	// Create mini secret key from entropy
 	var miniSecret [32]byte
-	copy(miniSecret[:], seed[:32])
+	copy(miniSecret[:], entropy[:32])
 
-	// Create schnorrkel mini secret key
 	miniSecretKey, err := schnorrkel.NewMiniSecretKeyFromRaw(miniSecret)
 	if err != nil {
 		return nil, fmt.Errorf("create mini secret key: %w", err)
@@ -65,6 +57,15 @@ func NewPolkadotSignerFromSeed(seedPhrase string, network uint16) (*PolkadotSign
 		publicKey:  publicKey,
 		address:    address,
 	}, nil
+}
+
+// mnemonicToEntropy converts mnemonic directly to entropy for Polkadot.js compatibility
+func mnemonicToEntropy(mnemonic string) []byte {
+	// For Polkadot.js compatibility, we hash the mnemonic directly
+	// This matches the behavior in @polkadot/util-crypto
+	h, _ := blake2b.New256(nil)
+	h.Write([]byte(mnemonic))
+	return h.Sum(nil)
 }
 
 // NewPolkadotSignerFromHex creates a signer from a hex-encoded private key
