@@ -46,9 +46,9 @@ func NewClient(endpoint string, signer Signer) *Client {
 	}
 }
 
-// Login authenticates the user with Polkassembly
-func (c *Client) Login() error {
-	log.Printf("Polkassembly: Starting login for address: %s", c.signer.Address())
+// Login authenticates the user with Polkassembly for a specific network
+func (c *Client) Login(network string) error {
+	log.Printf("Polkassembly: Starting login for address: %s on network: %s", c.signer.Address(), network)
 
 	// Start login process
 	loginStartReq := map[string]string{
@@ -58,6 +58,7 @@ func (c *Client) Login() error {
 
 	headers := map[string]string{
 		"Content-Type": "application/json",
+		"x-network":    network,
 	}
 
 	resp, err := c.post("/auth/actions/addressLoginStart", loginStartReq, headers)
@@ -93,8 +94,16 @@ func (c *Client) Login() error {
 		return fmt.Errorf("login failed: %w", err)
 	}
 
-	if err := json.Unmarshal(resp, &c.loginData); err != nil {
+	var loginResp struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(resp, &loginResp); err != nil {
 		return fmt.Errorf("parse login response: %w", err)
+	}
+
+	c.loginData = &LoginData{
+		Token:   loginResp.Token,
+		Network: network,
 	}
 
 	log.Printf("Polkassembly: Login successful, token: %s..., network: %s",
@@ -103,102 +112,13 @@ func (c *Client) Login() error {
 	return nil
 }
 
-// Signup registers a new user with Polkassembly
-func (c *Client) Signup(network string) error {
-	// Check if already logged in to the same network
-	if c.loginData != nil && c.loginData.Network == network {
-		return nil
-	}
-
-	// If logged in to different network, logout first
-	if c.loginData != nil && c.loginData.Network != network {
-		c.Logout()
-	}
-
-	headers := map[string]string{
-		"Content-Type": "application/json",
-		"x-network":    network,
-	}
-
-	signupStartReq := map[string]string{
-		"address":  c.signer.Address(),
-		"multisig": "",
-	}
-
-	resp, err := c.postWithStatus("/auth/actions/addressSignupStart", signupStartReq, headers)
-	if err != nil {
-		// Check if already registered
-		if httpErr, ok := err.(*HTTPError); ok && httpErr.StatusCode == 401 {
-			var errResp struct {
-				Message string `json:"message"`
-			}
-			if json.Unmarshal(httpErr.Body, &errResp) == nil {
-				if errResp.Message == "There is already an account associated with this address, you cannot sign-up with this address." {
-					// Already registered, try to login instead
-					return c.Login()
-				}
-			}
-		}
-		return fmt.Errorf("signup start failed: %w", err)
-	}
-
-	var signupStartResp struct {
-		SignMessage string `json:"signMessage"`
-	}
-	if err := json.Unmarshal(resp, &signupStartResp); err != nil {
-		return fmt.Errorf("parse signup start response: %w", err)
-	}
-
-	// Sign the message
-	signature, err := c.signer.Sign([]byte(signupStartResp.SignMessage))
-	if err != nil {
-		return fmt.Errorf("sign message: %w", err)
-	}
-
-	// Complete signup
-	signupReq := map[string]string{
-		"address":   c.signer.Address(),
-		"multisig":  "",
-		"signature": "0x" + hex.EncodeToString(signature),
-		"wallet":    "polkadot-js",
-	}
-
-	resp, err = c.post("/auth/actions/addressSignupConfirm", signupReq, headers)
-	if err != nil {
-		return fmt.Errorf("signup confirm failed: %w", err)
-	}
-
-	var signupResp struct {
-		Token string `json:"token"`
-	}
-	if err := json.Unmarshal(resp, &signupResp); err != nil {
-		return fmt.Errorf("parse signup response: %w", err)
-	}
-
-	c.loginData = &LoginData{
-		Token:   signupResp.Token,
-		Network: network,
-	}
-
-	return nil
-}
-
 // PostComment posts a comment to a referendum
 func (c *Client) PostComment(content string, postID int, network string) error {
-	if c.loginData == nil {
-		return fmt.Errorf("not logged in")
-	}
-
-	// Log authentication status
-	log.Printf("Polkassembly: Posting with token: %s... for network: %s",
-		c.loginData.Token[:10], network)
-
-	// Ensure we're on the right network
-	if c.loginData.Network != network {
-		log.Printf("Polkassembly: Network mismatch, need to re-authenticate (current: %s, need: %s)",
-			c.loginData.Network, network)
-		if err := c.Signup(network); err != nil {
-			return fmt.Errorf("switch network failed: %w", err)
+	// Ensure we're logged in to the correct network
+	if c.loginData == nil || c.loginData.Network != network {
+		log.Printf("Polkassembly: Need to login to %s network", network)
+		if err := c.Login(network); err != nil {
+			return fmt.Errorf("login failed: %w", err)
 		}
 	}
 
@@ -209,7 +129,7 @@ func (c *Client) PostComment(content string, postID int, network string) error {
 	}
 
 	// Get user ID
-	userID, err := c.fetchUserID()
+	userID, err := c.fetchUserID(network)
 	if err != nil {
 		return fmt.Errorf("fetch user ID: %w", err)
 	}
@@ -282,10 +202,16 @@ func (c *Client) IsLoggedIn() bool {
 }
 
 // fetchUserID retrieves the user ID for the current address
-func (c *Client) fetchUserID() (int, error) {
+func (c *Client) fetchUserID(network string) (int, error) {
 	url := fmt.Sprintf("%s/auth/data/profileWithAddress?address=%s", c.endpoint, c.signer.Address())
 
-	resp, err := c.httpClient.Get(url)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("x-network", network)
+
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("fetch profile failed: %w", err)
 	}
@@ -404,64 +330,6 @@ func (c *Client) post(path string, body interface{}, headers map[string]string) 
 	log.Printf("Polkassembly: Response status: %d", resp.StatusCode)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		log.Printf("Polkassembly: Response body: %s", string(respBody))
-		return nil, &HTTPError{
-			StatusCode: resp.StatusCode,
-			Body:       respBody,
-		}
-	}
-
-	return respBody, nil
-}
-
-// postWithStatus makes a POST request and returns the response body, including error responses
-func (c *Client) postWithStatus(path string, body interface{}, headers map[string]string) ([]byte, error) {
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("marshal body: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", c.endpoint+path, bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	// Log request details
-	log.Printf("Polkassembly: POST %s", req.URL.String())
-	log.Printf("Polkassembly: Headers: %v", req.Header)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	log.Printf("Polkassembly: Response status: %d", resp.StatusCode)
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("Polkassembly: Response body: %s", string(respBody))
-	}
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		// Try to parse error message
-		var errResp struct {
-			Error   string `json:"error"`
-			Message string `json:"message"`
-		}
-		if json.Unmarshal(respBody, &errResp) == nil {
-			return nil, &HTTPError{
-				StatusCode: resp.StatusCode,
-				Body:       respBody,
-				Message:    errResp.Error + errResp.Message,
-			}
-		}
 		return nil, &HTTPError{
 			StatusCode: resp.StatusCode,
 			Body:       respBody,

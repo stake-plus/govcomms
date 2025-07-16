@@ -78,21 +78,9 @@ func NewService(logger *log.Logger) (*Service, error) {
 // PostFirstMessage posts the first feedback message to Polkassembly
 func (s *Service) PostFirstMessage(network string, refID int, message string, gcURL string) error {
 	networkLower := strings.ToLower(network)
-
 	client, exists := s.clients[networkLower]
 	if !exists {
 		return fmt.Errorf("no Polkassembly client configured for network %s", network)
-	}
-
-	// Ensure we're logged in
-	if !client.IsLoggedIn() {
-		s.logger.Printf("Logging in to Polkassembly for %s", network)
-		if err := client.Signup(networkLower); err != nil {
-			// Try login if signup fails
-			if err := client.Login(); err != nil {
-				return fmt.Errorf("authentication failed: %w", err)
-			}
-		}
 	}
 
 	// Format the message with link
@@ -127,7 +115,6 @@ func ParseReferendumRef(ref string) (network string, id int, err error) {
 // TestConnection tests the connection and authentication with Polkassembly
 func (s *Service) TestConnection(network string) error {
 	networkLower := strings.ToLower(network)
-
 	client, exists := s.clients[networkLower]
 	if !exists {
 		return fmt.Errorf("no Polkassembly client configured for network %s", network)
@@ -136,15 +123,13 @@ func (s *Service) TestConnection(network string) error {
 	// Test authentication
 	s.logger.Printf("Testing Polkassembly connection for %s", network)
 
-	if !client.IsLoggedIn() {
-		s.logger.Printf("Not logged in, attempting authentication...")
-		if err := client.Login(); err != nil {
-			return fmt.Errorf("login failed: %w", err)
-		}
+	// Login to the specific network
+	if err := client.Login(networkLower); err != nil {
+		return fmt.Errorf("login failed: %w", err)
 	}
 
 	// Test fetching user ID
-	userID, err := client.fetchUserID()
+	userID, err := client.fetchUserID(networkLower)
 	if err != nil {
 		return fmt.Errorf("fetch user ID failed: %w", err)
 	}
