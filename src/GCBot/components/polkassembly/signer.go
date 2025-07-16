@@ -1,13 +1,16 @@
 package polkassembly
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"strings"
 
 	"github.com/ChainSafe/go-schnorrkel"
+	"github.com/cosmos/go-bip39"
 	"github.com/mr-tron/base58"
 	"golang.org/x/crypto/blake2b"
+	"golang.org/x/crypto/pbkdf2"
 )
 
 // PolkadotSigner implements the Signer interface for Polkadot accounts
@@ -22,13 +25,23 @@ func NewPolkadotSignerFromSeed(seedPhrase string, network uint16) (*PolkadotSign
 	// Clean up the seed phrase - trim spaces and normalize
 	seedPhrase = strings.TrimSpace(seedPhrase)
 
-	// For Polkadot.js compatibility, we need to derive the key directly from the mnemonic
-	// without using BIP39 seed generation
-	entropy := mnemonicToEntropy(seedPhrase)
+	// Validate the mnemonic
+	if !bip39.IsMnemonicValid(seedPhrase) {
+		words := strings.Fields(seedPhrase)
+		return nil, fmt.Errorf("invalid seed phrase: got %d words, expected 12, 15, 18, 21, or 24", len(words))
+	}
 
-	// Create mini secret key from entropy
+	// For sr25519 in Polkadot.js, the key derivation is:
+	// 1. mnemonic + password -> seed (using PBKDF2)
+	// 2. seed -> keypair
+	// But for the default derivation (no path), it uses the seed directly as mini secret
+
+	// Generate seed with empty password (Polkadot.js default)
+	seed := pbkdf2.Key([]byte(seedPhrase), []byte("mnemonic"), 2048, 64, sha256.New)
+
+	// Use first 32 bytes as mini secret
 	var miniSecret [32]byte
-	copy(miniSecret[:], entropy[:32])
+	copy(miniSecret[:], seed[:32])
 
 	miniSecretKey, err := schnorrkel.NewMiniSecretKeyFromRaw(miniSecret)
 	if err != nil {
@@ -57,15 +70,6 @@ func NewPolkadotSignerFromSeed(seedPhrase string, network uint16) (*PolkadotSign
 		publicKey:  publicKey,
 		address:    address,
 	}, nil
-}
-
-// mnemonicToEntropy converts mnemonic directly to entropy for Polkadot.js compatibility
-func mnemonicToEntropy(mnemonic string) []byte {
-	// For Polkadot.js compatibility, we hash the mnemonic directly
-	// This matches the behavior in @polkadot/util-crypto
-	h, _ := blake2b.New256(nil)
-	h.Write([]byte(mnemonic))
-	return h.Sum(nil)
 }
 
 // NewPolkadotSignerFromHex creates a signer from a hex-encoded private key

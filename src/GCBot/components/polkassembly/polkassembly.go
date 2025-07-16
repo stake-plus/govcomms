@@ -29,7 +29,6 @@ func NewService(logger *log.Logger) (*Service, error) {
 	if polkadotSeed != "" {
 		logger.Printf("Creating Polkadot signer from seed...")
 		logger.Printf("Seed phrase has %d words", len(strings.Fields(polkadotSeed)))
-
 		signer, err := NewPolkadotSignerFromSeed(polkadotSeed, 0)
 		if err != nil {
 			return nil, fmt.Errorf("create polkadot signer: %w", err)
@@ -43,7 +42,6 @@ func NewService(logger *log.Logger) (*Service, error) {
 	if kusamaSeed != "" {
 		logger.Printf("Creating Kusama signer from seed...")
 		logger.Printf("Seed phrase has %d words", len(strings.Fields(kusamaSeed)))
-
 		signer, err := NewPolkadotSignerFromSeed(kusamaSeed, 2)
 		if err != nil {
 			return nil, fmt.Errorf("create kusama signer: %w", err)
