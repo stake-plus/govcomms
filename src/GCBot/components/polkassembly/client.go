@@ -112,7 +112,7 @@ func (c *Client) Login(network string) error {
 	return nil
 }
 
-// PostComment posts a comment to a referendum
+// PostComment posts a comment to a referendum using v1 API
 func (c *Client) PostComment(content string, postID int, network string) error {
 	// Ensure we're logged in to the correct network
 	if c.loginData == nil || c.loginData.Network != network {
@@ -122,52 +122,35 @@ func (c *Client) PostComment(content string, postID int, network string) error {
 		}
 	}
 
-	// Build the URL for v2 API with the network-specific subdomain
-	baseURL := fmt.Sprintf("https://%s.polkassembly.io", network)
-	path := fmt.Sprintf("/api/v2/ReferendumV2/%d/comments", postID)
-	url := baseURL + path
+	// Use v1 API endpoint for posting comments
+	path := "/auth/comment"
 
-	// Simple payload with just content (matching the example you provided)
+	// Use the v1 API payload structure
 	body := map[string]interface{}{
+		"post_id": postID,
 		"content": content,
+		"network": network,
 	}
 
-	jsonBody, err := json.Marshal(body)
+	headers := map[string]string{
+		"Content-Type":  "application/json",
+		"x-network":     network,
+		"Authorization": fmt.Sprintf("Bearer %s", c.loginData.Token),
+	}
+
+	respBody, err := c.post(path, body, headers)
 	if err != nil {
-		return fmt.Errorf("marshal body: %w", err)
+		return fmt.Errorf("post comment: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
-
-	// Set headers exactly as shown in the working example
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Network", network)
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.loginData.Token))
-
-	// Log request details
-	log.Printf("Polkassembly: POST %s", url)
-	log.Printf("Polkassembly: Headers: %v", req.Header)
-	log.Printf("Polkassembly: Body: %s", string(jsonBody))
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read response: %w", err)
-	}
-
-	log.Printf("Polkassembly: Response status: %d", resp.StatusCode)
-	log.Printf("Polkassembly: Response body: %s", string(respBody))
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(respBody))
+	// Check if the response indicates success
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err == nil {
+		if success, ok := result["success"].(bool); ok && !success {
+			if errMsg, ok := result["error"].(string); ok {
+				return fmt.Errorf("polkassembly error: %s", errMsg)
+			}
+		}
 	}
 
 	log.Printf("Polkassembly: Successfully posted comment to referendum #%d", postID)
@@ -255,6 +238,7 @@ func (c *Client) post(path string, body interface{}, headers map[string]string) 
 	// Log request details
 	log.Printf("Polkassembly: POST %s", req.URL.String())
 	log.Printf("Polkassembly: Headers: %v", req.Header)
+	log.Printf("Polkassembly: Body: %s", string(jsonBody))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -268,9 +252,9 @@ func (c *Client) post(path string, body interface{}, headers map[string]string) 
 	}
 
 	log.Printf("Polkassembly: Response status: %d", resp.StatusCode)
+	log.Printf("Polkassembly: Response body: %s", string(respBody))
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		log.Printf("Polkassembly: Response body: %s", string(respBody))
 		return nil, &HTTPError{
 			StatusCode: resp.StatusCode,
 			Body:       respBody,
