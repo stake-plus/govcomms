@@ -38,7 +38,7 @@ type Handler struct {
 func NewHandler(config Config) *Handler {
 	return &Handler{
 		config:       config,
-		rateLimiter:  NewRateLimiter(5 * time.Minute),
+		rateLimiter:  NewRateLimiter(30 * time.Second),
 		polkassembly: config.PolkassemblyService,
 	}
 }
