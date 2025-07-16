@@ -6,9 +6,8 @@ import (
 	"strings"
 
 	"github.com/ChainSafe/go-schnorrkel"
-	"github.com/cosmos/go-bip39"
-	"github.com/mr-tron/base58"
-	"golang.org/x/crypto/blake2b"
+	"github.com/vedhavyas/go-subkey/v2"
+	"github.com/vedhavyas/go-subkey/v2/sr25519"
 )
 
 // PolkadotSigner implements the Signer interface for Polkadot accounts
@@ -23,19 +22,28 @@ func NewPolkadotSignerFromSeed(seedPhrase string, network uint16) (*PolkadotSign
 	// Clean up the seed phrase - trim spaces and normalize
 	seedPhrase = strings.TrimSpace(seedPhrase)
 
-	// Validate the mnemonic
-	if !bip39.IsMnemonicValid(seedPhrase) {
-		words := strings.Fields(seedPhrase)
-		return nil, fmt.Errorf("invalid seed phrase: got %d words, expected 12, 15, 18, 21, or 24", len(words))
+	// Use go-subkey to derive the keypair from mnemonic
+	// This library is specifically designed for Substrate compatibility
+	scheme := sr25519.Scheme{}
+
+	// Create derivation path URI (mnemonic without path)
+	uri := seedPhrase
+
+	// Derive keypair from URI
+	kp, err := subkey.DeriveKeyPair(scheme, uri)
+	if err != nil {
+		return nil, fmt.Errorf("derive keypair: %w", err)
 	}
 
-	// Generate seed from mnemonic using standard BIP39 derivation
-	// This uses PBKDF2 with the mnemonic as password and "mnemonic" + passphrase as salt
-	seed := bip39.NewSeed(seedPhrase, "")
+	// Get the secret key bytes
+	secretBytes := kp.Seed()
+	if len(secretBytes) != 32 {
+		return nil, fmt.Errorf("unexpected secret key length: %d", len(secretBytes))
+	}
 
-	// For sr25519, use first 32 bytes of the 64-byte seed
+	// Create schnorrkel secret key from the seed
 	var miniSecret [32]byte
-	copy(miniSecret[:], seed[:32])
+	copy(miniSecret[:], secretBytes)
 
 	miniSecretKey, err := schnorrkel.NewMiniSecretKeyFromRaw(miniSecret)
 	if err != nil {
@@ -48,16 +56,19 @@ func NewPolkadotSignerFromSeed(seedPhrase string, network uint16) (*PolkadotSign
 		return nil, fmt.Errorf("get public key: %w", err)
 	}
 
-	// Generate SS58 address
-	// Network specific prefixes: Polkadot = 0, Kusama = 2, Generic Substrate = 42
-	prefix := uint16(42) // Default to generic
-	if network == 0 {    // Polkadot
-		prefix = 0
-	} else if network == 2 { // Kusama
-		prefix = 2
+	// Get SS58 address using the network prefix
+	var ss58Format uint16
+	switch network {
+	case 0: // Polkadot
+		ss58Format = 0
+	case 2: // Kusama
+		ss58Format = 2
+	default:
+		ss58Format = 42 // Generic substrate
 	}
 
-	address := publicKeyToSS58(publicKey, prefix)
+	// Use go-subkey's SS58 encoding which matches Polkadot.js exactly
+	address := kp.SS58Address(ss58Format)
 
 	return &PolkadotSigner{
 		privateKey: secretKey,
@@ -78,6 +89,16 @@ func NewPolkadotSignerFromHex(hexKey string, network uint16) (*PolkadotSigner, e
 		return nil, fmt.Errorf("invalid key length: expected 32 bytes, got %d", len(keyBytes))
 	}
 
+	// Create URI from hex seed
+	uri := "0x" + hexKey
+
+	// Create keypair from seed using go-subkey
+	scheme := sr25519.Scheme{}
+	kp, err := subkey.DeriveKeyPair(scheme, uri)
+	if err != nil {
+		return nil, fmt.Errorf("create keypair from hex: %w", err)
+	}
+
 	var miniSecret [32]byte
 	copy(miniSecret[:], keyBytes)
 
@@ -92,15 +113,18 @@ func NewPolkadotSignerFromHex(hexKey string, network uint16) (*PolkadotSigner, e
 		return nil, fmt.Errorf("get public key: %w", err)
 	}
 
-	// Generate SS58 address with network specific prefix
-	prefix := uint16(42) // Default to generic
-	if network == 0 {    // Polkadot
-		prefix = 0
-	} else if network == 2 { // Kusama
-		prefix = 2
+	// Get SS58 address
+	var ss58Format uint16
+	switch network {
+	case 0: // Polkadot
+		ss58Format = 0
+	case 2: // Kusama
+		ss58Format = 2
+	default:
+		ss58Format = 42 // Generic substrate
 	}
 
-	address := publicKeyToSS58(publicKey, prefix)
+	address := kp.SS58Address(ss58Format)
 
 	return &PolkadotSigner{
 		privateKey: secretKey,
@@ -125,42 +149,4 @@ func (s *PolkadotSigner) Sign(message []byte) ([]byte, error) {
 // Address returns the SS58 encoded address
 func (s *PolkadotSigner) Address() string {
 	return s.address
-}
-
-// publicKeyToSS58 converts a public key to SS58 format
-func publicKeyToSS58(pubKey *schnorrkel.PublicKey, prefix uint16) string {
-	// Create the payload: prefix + public key + checksum
-	payload := make([]byte, 0, 35)
-
-	// Add prefix
-	if prefix < 64 {
-		payload = append(payload, byte(prefix))
-	} else {
-		payload = append(payload, 0x40|((byte(prefix>>8))&0x3f))
-		payload = append(payload, byte(prefix&0xff))
-	}
-
-	// Add public key
-	pubKeyBytes := pubKey.Encode()
-	payload = append(payload, pubKeyBytes[:]...)
-
-	// Calculate checksum
-	checksumInput := []byte("SS58PRE")
-	if prefix < 64 {
-		checksumInput = append(checksumInput, byte(prefix))
-	} else {
-		checksumInput = append(checksumInput, 0x40|((byte(prefix>>8))&0x3f))
-		checksumInput = append(checksumInput, byte(prefix&0xff))
-	}
-	checksumInput = append(checksumInput, pubKeyBytes[:]...)
-
-	h, _ := blake2b.New(64, nil)
-	h.Write(checksumInput)
-	checksum := h.Sum(nil)
-
-	// Append first 2 bytes of checksum
-	payload = append(payload, checksum[0:2]...)
-
-	// Base58 encode
-	return base58.Encode(payload)
 }
