@@ -1,7 +1,6 @@
 package polkassembly
 
 import (
-	"crypto/sha512"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -10,7 +9,6 @@ import (
 	"github.com/cosmos/go-bip39"
 	"github.com/mr-tron/base58"
 	"golang.org/x/crypto/blake2b"
-	"golang.org/x/crypto/pbkdf2"
 )
 
 // PolkadotSigner implements the Signer interface for Polkadot accounts
@@ -31,11 +29,11 @@ func NewPolkadotSignerFromSeed(seedPhrase string, network uint16) (*PolkadotSign
 		return nil, fmt.Errorf("invalid seed phrase: got %d words, expected 12, 15, 18, 21, or 24", len(words))
 	}
 
-	// Polkadot.js uses mnemonicToSeedSync with empty passphrase
-	// This is PBKDF2 with 2048 iterations
-	seed := pbkdf2.Key([]byte(seedPhrase), []byte("mnemonic"), 2048, 64, sha512.New)
+	// Generate seed from mnemonic using standard BIP39 derivation
+	// This uses PBKDF2 with the mnemonic as password and "mnemonic" + passphrase as salt
+	seed := bip39.NewSeed(seedPhrase, "")
 
-	// For sr25519, use first 32 bytes of the seed
+	// For sr25519, use first 32 bytes of the 64-byte seed
 	var miniSecret [32]byte
 	copy(miniSecret[:], seed[:32])
 
