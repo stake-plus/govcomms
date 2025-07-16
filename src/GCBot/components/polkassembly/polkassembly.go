@@ -3,7 +3,6 @@ package polkassembly
 import (
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -20,20 +19,7 @@ func NewService(logger *log.Logger) (*Service, error) {
 	// Get configuration from environment
 	endpoint := os.Getenv("POLKASSEMBLY_ENDPOINT")
 	if endpoint == "" {
-		endpoint = "https://api.polkassembly.io/api/v1"
-	}
-
-	// Check if we have a specific API key
-	apiKey := os.Getenv("POLKASSEMBLY_API_KEY")
-	if apiKey != "" {
-		// If we have an API key, use the simpler API-based client
-		return &Service{
-			clients: map[string]*Client{
-				"polkadot": NewAPIKeyClient(apiKey, "polkadot"),
-				"kusama":   NewAPIKeyClient(apiKey, "kusama"),
-			},
-			logger: logger,
-		}, nil
+		endpoint = "https://api.polkassembly.io/api/v2"
 	}
 
 	clients := make(map[string]*Client)
@@ -101,12 +87,7 @@ func (s *Service) PostFirstMessage(network string, refID int, message string, gc
 	link := fmt.Sprintf("%s/%s/%d", gcURL, networkLower, refID)
 	content := fmt.Sprintf("%s\n\n[Continue discussion with the DAO](%s)", message, link)
 
-	// Use the v1 API endpoint that we know works
-	if apiClient, ok := client.(*APIKeyClient); ok {
-		return apiClient.PostComment(content, refID, networkLower)
-	}
-
-	// Post the comment using regular client
+	// Post the comment
 	if err := client.PostComment(content, refID, networkLower); err != nil {
 		return fmt.Errorf("post comment: %w", err)
 	}
@@ -142,12 +123,6 @@ func (s *Service) TestConnection(network string) error {
 	// Test authentication
 	s.logger.Printf("Testing Polkassembly connection for %s", network)
 
-	if apiClient, ok := client.(*APIKeyClient); ok {
-		// API key clients don't need login
-		s.logger.Printf("Using API key authentication for %s", network)
-		return nil
-	}
-
 	// Login to the specific network
 	if err := client.Login(networkLower); err != nil {
 		return fmt.Errorf("login failed: %w", err)
@@ -160,19 +135,5 @@ func (s *Service) TestConnection(network string) error {
 	}
 
 	s.logger.Printf("Successfully authenticated to Polkassembly as user ID: %d", userID)
-	return nil
-}
-
-// APIKeyClient is a simpler client that uses API key authentication
-type APIKeyClient struct {
-	apiKey     string
-	network    string
-	httpClient *http.Client
-}
-
-func NewAPIKeyClient(apiKey, network string) *Client {
-	// This is a placeholder - we'd need to implement a different client type
-	// that uses API key authentication instead of web3 signing
-	// For now, return a regular client
 	return nil
 }
