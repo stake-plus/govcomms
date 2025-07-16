@@ -26,20 +26,9 @@ func NewPolkadotSignerFromSeed(seedPhrase string, network uint16) (*PolkadotSign
 		return nil, fmt.Errorf("invalid seed phrase: %w", err)
 	}
 
-	// Derive key using sr25519 derivation path
-	// For Polkadot.js compatible derivation, we need to use the "//polkadot" path
-	derivationPath := ""
-	if network == 0 { // Polkadot
-		derivationPath = "//polkadot"
-	} else if network == 2 { // Kusama
-		derivationPath = "//kusama"
-	}
-
-	// Derive the key
-	miniSecret, err := deriveSr25519Key(seed, derivationPath)
-	if err != nil {
-		return nil, fmt.Errorf("derive key: %w", err)
-	}
+	// For Polkadot.js compatibility, we need to use the first 32 bytes of the seed
+	var miniSecret [32]byte
+	copy(miniSecret[:], seed[:32])
 
 	// Create schnorrkel mini secret key
 	miniSecretKey, err := schnorrkel.NewMiniSecretKeyFromRaw(miniSecret)
@@ -69,56 +58,6 @@ func NewPolkadotSignerFromSeed(seedPhrase string, network uint16) (*PolkadotSign
 		publicKey:  publicKey,
 		address:    address,
 	}, nil
-}
-
-// deriveSr25519Key derives a sr25519 key from seed and path
-func deriveSr25519Key(seed []byte, derivationPath string) ([32]byte, error) {
-	var result [32]byte
-
-	// Start with the seed
-	key := seed[:32]
-
-	// If no derivation path, use the raw seed
-	if derivationPath == "" {
-		copy(result[:], key)
-		return result, nil
-	}
-
-	// Parse derivation path
-	parts := strings.Split(derivationPath, "/")
-	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-
-		// Hard derivation
-		if strings.HasPrefix(part, "/") {
-			part = strings.TrimPrefix(part, "/")
-			// Derive hard key
-			key = deriveHardKey(key, part)
-		} else {
-			// Soft derivation (not implemented as it's not needed for this use case)
-			return result, fmt.Errorf("soft derivation not supported")
-		}
-	}
-
-	copy(result[:], key[:32])
-	return result, nil
-}
-
-// deriveHardKey performs hard key derivation
-func deriveHardKey(key []byte, chainCode string) []byte {
-	// Create the data to hash
-	data := append([]byte("SS58PRE"), key...)
-	data = append(data, []byte(chainCode)...)
-
-	// Hash with Blake2b-512
-	h, _ := blake2b.New512(nil)
-	h.Write(data)
-	hash := h.Sum(nil)
-
-	// Take first 32 bytes as the new key
-	return hash[:32]
 }
 
 // NewPolkadotSignerFromHex creates a signer from a hex-encoded private key
