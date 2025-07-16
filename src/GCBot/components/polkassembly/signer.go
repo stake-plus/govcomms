@@ -20,11 +20,18 @@ type PolkadotSigner struct {
 
 // NewPolkadotSignerFromSeed creates a new Polkadot signer from a seed phrase
 func NewPolkadotSignerFromSeed(seedPhrase string, network uint16) (*PolkadotSigner, error) {
-	// Generate seed from mnemonic
-	seed, err := bip39.NewSeedWithErrorChecking(seedPhrase, "")
-	if err != nil {
-		return nil, fmt.Errorf("invalid seed phrase: %w", err)
+	// Clean up the seed phrase - trim spaces and normalize
+	seedPhrase = strings.TrimSpace(seedPhrase)
+
+	// Validate the mnemonic
+	if !bip39.IsMnemonicValid(seedPhrase) {
+		// Try to see what's wrong
+		words := strings.Fields(seedPhrase)
+		return nil, fmt.Errorf("invalid seed phrase: got %d words, expected 12, 15, 18, 21, or 24", len(words))
 	}
+
+	// Generate seed from mnemonic - use empty passphrase for Polkadot.js compatibility
+	seed := bip39.NewSeed(seedPhrase, "")
 
 	// For Polkadot.js compatibility, we need to use the first 32 bytes of the seed
 	var miniSecret [32]byte

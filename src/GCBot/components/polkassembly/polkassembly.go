@@ -28,6 +28,8 @@ func NewService(logger *log.Logger) (*Service, error) {
 	polkadotSeed := os.Getenv("POLKASSEMBLY_POLKADOT_SEED")
 	if polkadotSeed != "" {
 		logger.Printf("Creating Polkadot signer from seed...")
+		logger.Printf("Seed phrase has %d words", len(strings.Fields(polkadotSeed)))
+
 		signer, err := NewPolkadotSignerFromSeed(polkadotSeed, 0)
 		if err != nil {
 			return nil, fmt.Errorf("create polkadot signer: %w", err)
@@ -40,6 +42,8 @@ func NewService(logger *log.Logger) (*Service, error) {
 	kusamaSeed := os.Getenv("POLKASSEMBLY_KUSAMA_SEED")
 	if kusamaSeed != "" {
 		logger.Printf("Creating Kusama signer from seed...")
+		logger.Printf("Seed phrase has %d words", len(strings.Fields(kusamaSeed)))
+
 		signer, err := NewPolkadotSignerFromSeed(kusamaSeed, 2)
 		if err != nil {
 			return nil, fmt.Errorf("create kusama signer: %w", err)
@@ -56,6 +60,8 @@ func NewService(logger *log.Logger) (*Service, error) {
 		}
 
 		logger.Printf("Using generic seed for both networks...")
+		logger.Printf("Seed phrase has %d words", len(strings.Fields(genericSeed)))
+
 		// Create signers for both networks with the same seed
 		polkadotSigner, err := NewPolkadotSignerFromSeed(genericSeed, 0)
 		if err != nil {
