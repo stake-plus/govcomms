@@ -2,6 +2,7 @@ package polkassembly
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -13,7 +14,7 @@ import (
 )
 
 const (
-	defaultTimeout = 30 * time.Second
+	defaultTimeout = 60 * time.Second // Increased from 30s
 )
 
 // Client represents a Polkassembly API client
@@ -93,7 +94,10 @@ func (c *Client) Login(network string) error {
 	}
 
 	log.Printf("Polkassembly: POST %s", req.URL.String())
-	log.Printf("Polkassembly: Headers: %v", req.Header)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req = req.WithContext(ctx)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -107,7 +111,6 @@ func (c *Client) Login(network string) error {
 	}
 
 	log.Printf("Polkassembly: Response status: %d", resp.StatusCode)
-	log.Printf("Polkassembly: Response body: %s", string(respBody))
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("authentication failed: status %d, body: %s", resp.StatusCode, string(respBody))
@@ -136,8 +139,13 @@ func (c *Client) Login(network string) error {
 	return nil
 }
 
-// PostComment posts a comment to a referendum
+// PostComment posts a comment to a referendum with context support
 func (c *Client) PostComment(content string, postID int, network string) error {
+	return c.PostCommentWithContext(context.Background(), content, postID, network)
+}
+
+// PostCommentWithContext posts a comment to a referendum with custom context
+func (c *Client) PostCommentWithContext(ctx context.Context, content string, postID int, network string) error {
 	// Ensure we're logged in to the correct network
 	if c.loginData == nil || c.loginData.Network != network {
 		log.Printf("Polkassembly: Need to login to %s network", network)
@@ -166,14 +174,15 @@ func (c *Client) PostComment(content string, postID int, network string) error {
 		return fmt.Errorf("create request: %w", err)
 	}
 
+	// Add context to request
+	req = req.WithContext(ctx)
+
 	// Set headers - no Authorization header needed as we're using cookies
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Network", network)
 
 	// Log request details
 	log.Printf("Polkassembly: POST %s", url)
-	log.Printf("Polkassembly: Headers: %v", req.Header)
-	log.Printf("Polkassembly: Body: %s", string(jsonBody))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -187,7 +196,6 @@ func (c *Client) PostComment(content string, postID int, network string) error {
 	}
 
 	log.Printf("Polkassembly: Response status: %d", resp.StatusCode)
-	log.Printf("Polkassembly: Response body: %s", string(respBody))
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(respBody))
@@ -221,6 +229,10 @@ func (c *Client) fetchUserID(network string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req = req.WithContext(ctx)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -261,48 +273,4 @@ func (e *HTTPError) Error() string {
 		return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Message)
 	}
 	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, string(e.Body))
-}
-
-// post makes a POST request and returns the response body
-func (c *Client) post(path string, body interface{}, headers map[string]string) ([]byte, error) {
-	jsonBody, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("marshal body: %w", err)
-	}
-
-	req, err := http.NewRequest("POST", c.endpoint+path, bytes.NewBuffer(jsonBody))
-	if err != nil {
-		return nil, fmt.Errorf("create request: %w", err)
-	}
-
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	// Log request details
-	log.Printf("Polkassembly: POST %s", req.URL.String())
-	log.Printf("Polkassembly: Headers: %v", req.Header)
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("do request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read response: %w", err)
-	}
-
-	log.Printf("Polkassembly: Response status: %d", resp.StatusCode)
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		log.Printf("Polkassembly: Response body: %s", string(respBody))
-		return nil, &HTTPError{
-			StatusCode: resp.StatusCode,
-			Body:       respBody,
-		}
-	}
-
-	return respBody, nil
 }

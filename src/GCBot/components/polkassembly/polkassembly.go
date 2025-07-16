@@ -1,11 +1,13 @@
 package polkassembly
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Service wraps the Polkassembly client for the bot
@@ -29,6 +31,7 @@ func NewService(logger *log.Logger) (*Service, error) {
 	if polkadotSeed != "" {
 		logger.Printf("Creating Polkadot signer from seed...")
 		logger.Printf("Seed phrase has %d words", len(strings.Fields(polkadotSeed)))
+
 		signer, err := NewPolkadotSignerFromSeed(polkadotSeed, 0)
 		if err != nil {
 			return nil, fmt.Errorf("create polkadot signer: %w", err)
@@ -42,6 +45,7 @@ func NewService(logger *log.Logger) (*Service, error) {
 	if kusamaSeed != "" {
 		logger.Printf("Creating Kusama signer from seed...")
 		logger.Printf("Seed phrase has %d words", len(strings.Fields(kusamaSeed)))
+
 		signer, err := NewPolkadotSignerFromSeed(kusamaSeed, 2)
 		if err != nil {
 			return nil, fmt.Errorf("create kusama signer: %w", err)
@@ -101,8 +105,12 @@ func (s *Service) PostFirstMessage(network string, refID int, message string, gc
 	s.logger.Printf("Attempting to post comment to Polkassembly for %s #%d", network, refID)
 	s.logger.Printf("Content length: %d characters", len(content))
 
-	// Post the comment
-	if err := client.PostComment(content, refID, networkLower); err != nil {
+	// Create a context with a longer timeout for the entire operation
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	// Post the comment with context
+	if err := client.PostCommentWithContext(ctx, content, refID, networkLower); err != nil {
 		s.logger.Printf("Error posting to Polkassembly: %v", err)
 		return fmt.Errorf("post comment: %w", err)
 	}
