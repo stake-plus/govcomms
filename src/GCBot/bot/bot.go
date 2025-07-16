@@ -139,6 +139,12 @@ func (b *Bot) Stop() {
 func (b *Bot) handleReady(s *discordgo.Session, event *discordgo.Ready) {
 	log.Printf("Discord bot logged in as %s", event.User.Username)
 
+	// Synchronize threads on startup
+	if err := b.refManager.SyncThreads(s, b.config.GuildID); err != nil {
+		log.Printf("Failed to sync threads: %v", err)
+	}
+
+	// Start monitoring for new messages from the API
 	b.wg.Add(1)
 	go func() {
 		defer b.wg.Done()
