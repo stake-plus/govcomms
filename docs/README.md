@@ -23,6 +23,54 @@ The platform addresses a critical need in blockchain governance: enabling struct
 4. **Polkassembly Integration**: First feedback is automatically posted to Polkassembly for public visibility
 5. **Multi-Network Support**: Works with both Polkadot and Kusama networks
 
+## How It Works
+
+### Step 1: DAO Issues Feedback
+
+DAO members use the `!feedback` command in referendum discussion threads to submit their questions or concerns:
+
+![Feedback Issue](./images/feedback_issue.png)
+
+### Step 2: Feedback Posted to Polkassembly
+
+The first feedback message is automatically posted to Polkassembly with a link back to the GovComms platform:
+
+![Feedback Posted](./images/feedback_posted.png)
+
+### Step 3: Proponent Authentication
+
+When proponents click the link, they're directed to authenticate using their wallet:
+
+![Auth Login](./images/auth_login.png)
+
+They can choose from multiple authentication methods. Here's an example using Polkadot.js extension:
+
+![Auth Sign Message](./images/auth_sign_message.png)
+
+### Step 4: View and Respond to Messages
+
+Once authenticated, proponents see all feedback messages for their referendum:
+
+![Referendum Message Home](./images/ref_message_home.png)
+
+### Step 5: Compose Response
+
+Proponents can write responses with full markdown support:
+
+![Referendum Message Send](./images/ref_message_send.png)
+
+### Step 6: Message Sent Confirmation
+
+After sending, the message appears in the conversation thread:
+
+![Referendum Message Sent](./images/ref_message_sent.png)
+
+### Step 7: Response in Discord
+
+The response is automatically posted to the appropriate Discord thread where DAO members can see it:
+
+![Referendum Message in Discord](./images/ref_message_indiscord.png)
+
 ## System Architecture
 
 GovComms consists of four main components:

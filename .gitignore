@@ -9,6 +9,7 @@
 *.ps1
 *.txt
 
+
 # Ignore go working files
 go.work
 go.work.sum
