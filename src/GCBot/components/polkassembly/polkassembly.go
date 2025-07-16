@@ -123,3 +123,32 @@ func ParseReferendumRef(ref string) (network string, id int, err error) {
 
 	return network, id, nil
 }
+
+// TestConnection tests the connection and authentication with Polkassembly
+func (s *Service) TestConnection(network string) error {
+	networkLower := strings.ToLower(network)
+
+	client, exists := s.clients[networkLower]
+	if !exists {
+		return fmt.Errorf("no Polkassembly client configured for network %s", network)
+	}
+
+	// Test authentication
+	s.logger.Printf("Testing Polkassembly connection for %s", network)
+
+	if !client.IsLoggedIn() {
+		s.logger.Printf("Not logged in, attempting authentication...")
+		if err := client.Login(); err != nil {
+			return fmt.Errorf("login failed: %w", err)
+		}
+	}
+
+	// Test fetching user ID
+	userID, err := client.fetchUserID()
+	if err != nil {
+		return fmt.Errorf("fetch user ID failed: %w", err)
+	}
+
+	s.logger.Printf("Successfully authenticated to Polkassembly as user ID: %d", userID)
+	return nil
+}

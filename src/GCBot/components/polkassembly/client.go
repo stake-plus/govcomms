@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -47,6 +48,8 @@ func NewClient(endpoint string, signer Signer) *Client {
 
 // Login authenticates the user with Polkassembly
 func (c *Client) Login() error {
+	log.Printf("Polkassembly: Starting login for address: %s", c.signer.Address())
+
 	// Start login process
 	loginStartReq := map[string]string{
 		"address": c.signer.Address(),
@@ -68,6 +71,8 @@ func (c *Client) Login() error {
 	if err := json.Unmarshal(resp, &loginStartResp); err != nil {
 		return fmt.Errorf("parse login start response: %w", err)
 	}
+
+	log.Printf("Polkassembly: Received sign message: %s", loginStartResp.SignMessage)
 
 	// Sign the message
 	signature, err := c.signer.Sign([]byte(loginStartResp.SignMessage))
@@ -91,6 +96,9 @@ func (c *Client) Login() error {
 	if err := json.Unmarshal(resp, &c.loginData); err != nil {
 		return fmt.Errorf("parse login response: %w", err)
 	}
+
+	log.Printf("Polkassembly: Login successful, token: %s..., network: %s",
+		c.loginData.Token[:10], c.loginData.Network)
 
 	return nil
 }
@@ -181,8 +189,14 @@ func (c *Client) PostComment(content string, postID int, network string) error {
 		return fmt.Errorf("not logged in")
 	}
 
+	// Log authentication status
+	log.Printf("Polkassembly: Posting with token: %s... for network: %s",
+		c.loginData.Token[:10], network)
+
 	// Ensure we're on the right network
 	if c.loginData.Network != network {
+		log.Printf("Polkassembly: Network mismatch, need to re-authenticate (current: %s, need: %s)",
+			c.loginData.Network, network)
 		if err := c.Signup(network); err != nil {
 			return fmt.Errorf("switch network failed: %w", err)
 		}
@@ -200,20 +214,60 @@ func (c *Client) PostComment(content string, postID int, network string) error {
 		return fmt.Errorf("fetch user ID: %w", err)
 	}
 
+	log.Printf("Polkassembly: Posting as user ID: %d", userID)
+
+	// Get track info for the referendum
+	trackNumber, err := c.fetchReferendumTrack(postID, network)
+	if err != nil {
+		log.Printf("Polkassembly: Failed to fetch track number: %v, using default 0", err)
+		trackNumber = 0
+	}
+
 	body := map[string]interface{}{
 		"content":     content,
 		"postId":      postID,
 		"postType":    "referendums_v2",
 		"sentiment":   0, // Neutral
-		"trackNumber": 0, // Will be determined by the referendum
+		"trackNumber": trackNumber,
 		"userId":      userID,
 	}
 
+	// Log request details
+	bodyJSON, _ := json.MarshalIndent(body, "", "  ")
+	log.Printf("Polkassembly: Request body:\n%s", string(bodyJSON))
+
 	_, err = c.post("/auth/actions/addPostComment", body, headers)
 	if err != nil {
+		// Enhanced error logging
+		if httpErr, ok := err.(*HTTPError); ok {
+			log.Printf("Polkassembly: HTTP Error %d, Body: %s",
+				httpErr.StatusCode, string(httpErr.Body))
+			// Try to parse error response
+			var errResp struct {
+				Error   string `json:"error"`
+				Message string `json:"message"`
+				Errors  []struct {
+					Field   string `json:"field"`
+					Message string `json:"message"`
+				} `json:"errors"`
+			}
+			if json.Unmarshal(httpErr.Body, &errResp) == nil {
+				if errResp.Error != "" {
+					return fmt.Errorf("post comment failed: %s", errResp.Error)
+				}
+				if errResp.Message != "" {
+					return fmt.Errorf("post comment failed: %s", errResp.Message)
+				}
+				if len(errResp.Errors) > 0 {
+					return fmt.Errorf("post comment failed: %s - %s",
+						errResp.Errors[0].Field, errResp.Errors[0].Message)
+				}
+			}
+		}
 		return fmt.Errorf("post comment failed: %w", err)
 	}
 
+	log.Printf("Polkassembly: Successfully posted comment to referendum #%d", postID)
 	return nil
 }
 
@@ -256,19 +310,107 @@ func (c *Client) fetchUserID() (int, error) {
 	return profile.UserID, nil
 }
 
+// fetchReferendumTrack fetches the track number for a referendum
+func (c *Client) fetchReferendumTrack(refID int, network string) (int, error) {
+	url := fmt.Sprintf("%s/posts/on-chain-post?postId=%d&proposalType=referendums_v2",
+		c.endpoint, refID)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("x-network", network)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		TrackNumber int `json:"track_number"`
+		TrackNo     int `json:"trackNo"`
+		Track       int `json:"track"`
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return 0, err
+	}
+
+	// Try different field names
+	if result.TrackNumber != 0 {
+		return result.TrackNumber, nil
+	}
+	if result.TrackNo != 0 {
+		return result.TrackNo, nil
+	}
+	if result.Track != 0 {
+		return result.Track, nil
+	}
+
+	return 0, nil
+}
+
 // HTTPError represents an HTTP error response
 type HTTPError struct {
 	StatusCode int
 	Body       []byte
+	Message    string
 }
 
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("HTTP %d", e.StatusCode)
+	if e.Message != "" {
+		return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Message)
+	}
+	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, string(e.Body))
 }
 
 // post makes a POST request and returns the response body
 func (c *Client) post(path string, body interface{}, headers map[string]string) ([]byte, error) {
-	return c.postWithStatus(path, body, headers)
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal body: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", c.endpoint+path, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	// Log request details
+	log.Printf("Polkassembly: POST %s", req.URL.String())
+	log.Printf("Polkassembly: Headers: %v", req.Header)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	log.Printf("Polkassembly: Response status: %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		log.Printf("Polkassembly: Response body: %s", string(respBody))
+		return nil, &HTTPError{
+			StatusCode: resp.StatusCode,
+			Body:       respBody,
+		}
+	}
+
+	return respBody, nil
 }
 
 // postWithStatus makes a POST request and returns the response body, including error responses
@@ -287,6 +429,10 @@ func (c *Client) postWithStatus(path string, body interface{}, headers map[strin
 		req.Header.Set(k, v)
 	}
 
+	// Log request details
+	log.Printf("Polkassembly: POST %s", req.URL.String())
+	log.Printf("Polkassembly: Headers: %v", req.Header)
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
@@ -298,7 +444,24 @@ func (c *Client) postWithStatus(path string, body interface{}, headers map[strin
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
+	log.Printf("Polkassembly: Response status: %d", resp.StatusCode)
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("Polkassembly: Response body: %s", string(respBody))
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		// Try to parse error message
+		var errResp struct {
+			Error   string `json:"error"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(respBody, &errResp) == nil {
+			return nil, &HTTPError{
+				StatusCode: resp.StatusCode,
+				Body:       respBody,
+				Message:    errResp.Error + errResp.Message,
+			}
+		}
 		return nil, &HTTPError{
 			StatusCode: resp.StatusCode,
 			Body:       respBody,
