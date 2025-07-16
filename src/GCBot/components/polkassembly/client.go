@@ -130,7 +130,7 @@ func (c *Client) PostComment(content string, postID int, network string) error {
 
 	// Use the v1 API format
 	body := map[string]interface{}{
-		"comment": content,
+		"content": content,
 	}
 
 	// Log request details
