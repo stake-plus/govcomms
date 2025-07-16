@@ -61,7 +61,7 @@ func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate
 	}
 
 	// Check role
-	if !h.hasRole(s, m.GuildID, m.Author.ID, h.config.FeedbackRoleID) {
+	if !h.hasRole(s, h.config.GuildID, m.Author.ID, h.config.FeedbackRoleID) {
 		s.ChannelMessageSend(m.ChannelID, "You don't have permission to use this command.")
 		return
 	}
@@ -152,7 +152,6 @@ func (h *Handler) processFeedback(s *discordgo.Session, m *discordgo.MessageCrea
 		if err := tx.Create(&msg).Error; err != nil {
 			return err
 		}
-
 		msgID = msg.ID
 		return nil
 	})
@@ -204,6 +203,7 @@ func (h *Handler) buildResponseEmbed(network string, refNum uint64, msgCount int
 	if gcURL == "" {
 		gcURL = "http://localhost:3000"
 	}
+
 	link := fmt.Sprintf("%s/%s/%d", gcURL, network, refNum)
 
 	return &discordgo.MessageEmbed{
@@ -228,8 +228,21 @@ func (h *Handler) buildResponseEmbed(network string, refNum uint64, msgCount int
 }
 
 func (h *Handler) postToPolkassembly(net *types.Network, refNum uint64, message string) {
-	// TODO: Implement Polkassembly integration
-	log.Printf("Would post to Polkassembly: %s/%d", net.Name, refNum)
+	gcURL := data.GetSetting("gc_url")
+	if gcURL == "" {
+		gcURL = "http://localhost:3000"
+	}
+
+	link := fmt.Sprintf("%s/%s/%d", gcURL, strings.ToLower(net.Name), refNum)
+	content := fmt.Sprintf("%s\n\n[Continue discussion](%s)", message, link)
+
+	// Use API client to post to Polkassembly
+	proposalRef := fmt.Sprintf("%s/%d", strings.ToLower(net.Name), refNum)
+	if err := h.config.APIClient.PostMessage(proposalRef, content); err != nil {
+		log.Printf("Failed to post to Polkassembly: %v", err)
+	} else {
+		log.Printf("Posted first message to Polkassembly for %s/%d", net.Name, refNum)
+	}
 }
 
 func (h *Handler) publishToRedis(network string, refNum uint64, author, body string, msgID uint64) {

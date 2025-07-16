@@ -49,9 +49,17 @@ func Load(db *gorm.DB) Config {
 		FeedbackRoleID:     feedbackRoleID,
 		GuildID:            guildID,
 		PolkassemblyAPIKey: polkassemblyAPIKey,
-		MySQLDSN:           getenv("MYSQL_DSN", "govcomms:DK3mfv93jf4m@tcp(127.0.0.1:3306)/govcomms"),
+		MySQLDSN:           GetMySQLDSN(),
 		RedisURL:           getenv("REDIS_URL", "redis://127.0.0.1:6379/0"),
 	}
+}
+
+func GetMySQLDSN() string {
+	dsn := os.Getenv("MYSQL_DSN")
+	if dsn == "" {
+		dsn = "govcomms:DK3mfv93jf4m@tcp(127.0.0.1:3306)/govcomms"
+	}
+	return dsn
 }
 
 func getenv(key, def string) string {

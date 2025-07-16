@@ -27,6 +27,7 @@ func (rl *RateLimiter) CanUse(userID string) bool {
 		rl.users[userID] = time.Now()
 		return true
 	}
+
 	return false
 }
 
@@ -43,6 +44,7 @@ func (rl *RateLimiter) TimeUntilNext(userID string) time.Duration {
 	if elapsed >= rl.limit {
 		return 0
 	}
+
 	return rl.limit - elapsed
 }
 

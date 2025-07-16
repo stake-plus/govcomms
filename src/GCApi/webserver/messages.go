@@ -57,7 +57,6 @@ func (m Messages) Create(c *gin.Context) {
 		Emails   []string `json:"emails" binding:"max=10"`
 		Title    string   `json:"title" binding:"max=255"`
 	}
-
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"err": err.Error()})
 		return
@@ -183,7 +182,6 @@ func (m Messages) Create(c *gin.Context) {
 		CreatedAt: time.Now(),
 		Internal:  false, // Messages from API are external
 	}
-
 	if err := m.db.Create(&msg).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"err": err.Error()})
 		return
@@ -204,6 +202,7 @@ func (m Messages) Create(c *gin.Context) {
 		if frontendURL == "" {
 			frontendURL = "http://localhost:3000" // development default
 		}
+
 		link := fmt.Sprintf("%s/%s/%d", frontendURL, network, refID)
 		content := fmt.Sprintf("%s\n\n[Continue discussion](%s)", msg.Body, link)
 
