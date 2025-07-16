@@ -1,0 +1,48 @@
+[Unit]
+Description=GovComms API Server
+Documentation=https://github.com/stake-plus/govcomms
+After=network.target mysql.service redis.service
+Wants=mysql.service redis.service
+
+[Service]
+Type=simple
+User=govcomms
+Group=govcomms
+WorkingDirectory=/opt/govcomms
+
+# Environment variables
+Environment="MYSQL_DSN=govcomms:password@tcp(127.0.0.1:3306)/govcomms"
+Environment="REDIS_URL=redis://127.0.0.1:6379/0"
+Environment="JWT_SECRET=your-secret-key-here"
+Environment="PORT=443"
+Environment="SSL_CERT=/etc/letsencrypt/live/your-domain/fullchain.pem"
+Environment="SSL_KEY=/etc/letsencrypt/live/your-domain/privkey.pem"
+Environment="POLL_INTERVAL=60"
+
+# Optionally load from env file
+EnvironmentFile=-/opt/govcomms/.env.api
+
+ExecStart=/opt/govcomms/bin/gcapi
+
+# Restart configuration
+Restart=always
+RestartSec=10
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/govcomms/logs
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gcapi
+
+[Install]
+WantedBy=multi-user.target

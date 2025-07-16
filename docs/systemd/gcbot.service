@@ -1,0 +1,48 @@
+[Unit]
+Description=GovComms Discord Bot
+Documentation=https://github.com/stake-plus/govcomms
+After=network.target mysql.service redis.service gcapi.service
+Wants=mysql.service redis.service gcapi.service
+
+[Service]
+Type=simple
+User=govcomms
+Group=govcomms
+WorkingDirectory=/opt/govcomms
+
+# Environment variables
+Environment="MYSQL_DSN=govcomms:password@tcp(127.0.0.1:3306)/govcomms"
+Environment="REDIS_URL=redis://127.0.0.1:6379/0"
+Environment="DISCORD_TOKEN=your-discord-token-here"
+Environment="FEEDBACK_ROLE_ID=your-role-id"
+Environment="GUILD_ID=your-guild-id"
+
+# Optionally load from env file
+EnvironmentFile=-/opt/govcomms/.env.bot
+
+ExecStart=/opt/govcomms/bin/gcbot
+
+# Restart configuration
+Restart=always
+RestartSec=10
+StartLimitBurst=5
+StartLimitInterval=300
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/govcomms/logs
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gcbot
+
+[Install]
+WantedBy=multi-user.target
