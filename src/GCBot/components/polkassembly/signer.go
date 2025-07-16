@@ -29,23 +29,13 @@ func NewPolkadotSignerFromSeed(seedPhrase string, network uint16) (*PolkadotSign
 		return nil, fmt.Errorf("invalid seed phrase: got %d words, expected 12, 15, 18, 21, or 24", len(words))
 	}
 
-	// For sr25519 in Polkadot.js without derivation path:
-	// The mnemonic is converted to entropy, then that entropy is used directly as the mini secret
+	// Convert mnemonic to seed using PBKDF2
+	// This is the standard BIP39 seed derivation
+	seed := bip39.NewSeed(seedPhrase, "")
 
-	// Get entropy from mnemonic
-	entropy, err := entropyFromMnemonic(seedPhrase)
-	if err != nil {
-		return nil, fmt.Errorf("get entropy from mnemonic: %w", err)
-	}
-
-	// Create mini secret from entropy
+	// For sr25519, we use the first 32 bytes of the seed as the mini secret
 	var miniSecret [32]byte
-	if len(entropy) >= 32 {
-		copy(miniSecret[:], entropy[:32])
-	} else {
-		// Pad with zeros if entropy is less than 32 bytes
-		copy(miniSecret[:], entropy)
-	}
+	copy(miniSecret[:], seed[:32])
 
 	miniSecretKey, err := schnorrkel.NewMiniSecretKeyFromRaw(miniSecret)
 	if err != nil {
@@ -74,60 +64,6 @@ func NewPolkadotSignerFromSeed(seedPhrase string, network uint16) (*PolkadotSign
 		publicKey:  publicKey,
 		address:    address,
 	}, nil
-}
-
-// entropyFromMnemonic converts mnemonic words back to entropy bytes
-func entropyFromMnemonic(mnemonic string) ([]byte, error) {
-	words := strings.Fields(mnemonic)
-
-	// Get the word list
-	wordList := bip39.WordList
-	wordMap := make(map[string]int)
-	for i, word := range wordList {
-		wordMap[word] = i
-	}
-
-	// Convert words to bit string
-	var bits string
-	for _, word := range words {
-		index, ok := wordMap[word]
-		if !ok {
-			return nil, fmt.Errorf("word not in wordlist: %s", word)
-		}
-		// Convert to 11-bit binary string
-		wordBits := fmt.Sprintf("%011b", index)
-		bits += wordBits
-	}
-
-	// Calculate entropy length (remove checksum bits)
-	entropyBits := (len(words) * 11 * 32) / 33
-	entropyBytes := entropyBits / 8
-
-	// Convert bit string to bytes
-	entropy := make([]byte, entropyBytes)
-	for i := 0; i < entropyBytes; i++ {
-		byteStr := bits[i*8 : (i+1)*8]
-		b, err := parseBinary(byteStr)
-		if err != nil {
-			return nil, err
-		}
-		entropy[i] = b
-	}
-
-	return entropy, nil
-}
-
-// parseBinary converts a binary string to a byte
-func parseBinary(s string) (byte, error) {
-	var b byte
-	for i, c := range s {
-		if c == '1' {
-			b |= 1 << (7 - i)
-		} else if c != '0' {
-			return 0, fmt.Errorf("invalid binary string")
-		}
-	}
-	return b, nil
 }
 
 // NewPolkadotSignerFromHex creates a signer from a hex-encoded private key
