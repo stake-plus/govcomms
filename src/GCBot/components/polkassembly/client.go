@@ -122,15 +122,14 @@ func (c *Client) PostComment(content string, postID int, network string) error {
 		}
 	}
 
-	// Use the same API version for posting as for login
-	path := fmt.Sprintf("/auth/comments/create")
+	// Build the URL for v2 API with the network-specific subdomain
+	baseURL := fmt.Sprintf("https://%s.polkassembly.io", network)
+	path := fmt.Sprintf("/api/v2/ReferendumV2/%d/comments", postID)
+	url := baseURL + path
 
-	// Match the exact payload structure from the example
+	// Simple payload with just content (matching the example you provided)
 	body := map[string]interface{}{
-		"proposalType": "referendum_v2",
-		"proposalId":   postID,
-		"content":      content,
-		"network":      network,
+		"content": content,
 	}
 
 	jsonBody, err := json.Marshal(body)
@@ -138,18 +137,18 @@ func (c *Client) PostComment(content string, postID int, network string) error {
 		return fmt.Errorf("marshal body: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", c.endpoint+path, bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
 
-	// Set headers
+	// Set headers exactly as shown in the working example
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-network", network)
+	req.Header.Set("X-Network", network)
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.loginData.Token))
 
 	// Log request details
-	log.Printf("Polkassembly: POST %s", req.URL.String())
+	log.Printf("Polkassembly: POST %s", url)
 	log.Printf("Polkassembly: Headers: %v", req.Header)
 	log.Printf("Polkassembly: Body: %s", string(jsonBody))
 
