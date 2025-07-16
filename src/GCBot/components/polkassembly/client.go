@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/http/cookiejar"
 	"time"
 )
 
@@ -37,10 +38,12 @@ type Signer interface {
 
 // NewClient creates a new Polkassembly client
 func NewClient(endpoint string, signer Signer) *Client {
+	jar, _ := cookiejar.New(nil)
 	return &Client{
 		endpoint: endpoint,
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
+			Jar:     jar,
 		},
 		signer: signer,
 	}
@@ -50,69 +53,90 @@ func NewClient(endpoint string, signer Signer) *Client {
 func (c *Client) Login(network string) error {
 	log.Printf("Polkassembly: Starting login for address: %s on network: %s", c.signer.Address(), network)
 
-	// Start login process
-	loginStartReq := map[string]string{
-		"address": c.signer.Address(),
-		"wallet":  "polkadot-js",
-	}
+	// Build network-specific URL
+	baseURL := fmt.Sprintf("https://%s.polkassembly.io", network)
 
-	headers := map[string]string{
-		"Content-Type": "application/json",
-		"x-network":    network,
-	}
-
-	resp, err := c.post("/auth/actions/addressLoginStart", loginStartReq, headers)
-	if err != nil {
-		return fmt.Errorf("login start failed: %w", err)
-	}
-
-	var loginStartResp struct {
-		SignMessage string `json:"signMessage"`
-	}
-	if err := json.Unmarshal(resp, &loginStartResp); err != nil {
-		return fmt.Errorf("parse login start response: %w", err)
-	}
-
-	log.Printf("Polkassembly: Received sign message: %s", loginStartResp.SignMessage)
+	// Create a message to sign (they might use a specific format)
+	message := fmt.Sprintf("Sign this message to login to Polkassembly.\n\nNetwork: %s\nAddress: %s\nTimestamp: %d",
+		network, c.signer.Address(), time.Now().Unix())
 
 	// Sign the message
-	signature, err := c.signer.Sign([]byte(loginStartResp.SignMessage))
+	signature, err := c.signer.Sign([]byte(message))
 	if err != nil {
 		return fmt.Errorf("sign message: %w", err)
 	}
 
-	// Complete login
-	loginReq := map[string]string{
+	// Create the web3-auth request
+	authReq := map[string]string{
 		"address":   c.signer.Address(),
-		"multisig":  "",
 		"signature": "0x" + hex.EncodeToString(signature),
 		"wallet":    "polkadot-js",
 	}
 
-	resp, err = c.post("/auth/actions/addressLogin", loginReq, headers)
+	headers := map[string]string{
+		"Content-Type": "application/json",
+	}
+
+	// Make the authentication request
+	jsonBody, err := json.Marshal(authReq)
 	if err != nil {
-		return fmt.Errorf("login failed: %w", err)
+		return fmt.Errorf("marshal auth request: %w", err)
 	}
 
-	var loginResp struct {
-		Token string `json:"token"`
-	}
-	if err := json.Unmarshal(resp, &loginResp); err != nil {
-		return fmt.Errorf("parse login response: %w", err)
+	req, err := http.NewRequest("POST", baseURL+"/api/v2/auth/web3-auth", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
 	}
 
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	log.Printf("Polkassembly: POST %s", req.URL.String())
+	log.Printf("Polkassembly: Headers: %v", req.Header)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+
+	log.Printf("Polkassembly: Response status: %d", resp.StatusCode)
+	log.Printf("Polkassembly: Response body: %s", string(respBody))
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("authentication failed: status %d, body: %s", resp.StatusCode, string(respBody))
+	}
+
+	// Check if authentication was successful
+	var authResp struct {
+		IsTFAEnabled bool   `json:"isTFAEnabled"`
+		Message      string `json:"message"`
+	}
+	if err := json.Unmarshal(respBody, &authResp); err != nil {
+		return fmt.Errorf("parse auth response: %w", err)
+	}
+
+	if authResp.Message != "Web3 authentication successful" {
+		return fmt.Errorf("unexpected auth response: %s", authResp.Message)
+	}
+
+	// Store the network for this session
 	c.loginData = &LoginData{
-		Token:   loginResp.Token,
+		Token:   "session", // Using session cookies instead of JWT
 		Network: network,
 	}
 
-	log.Printf("Polkassembly: Login successful, token: %s..., network: %s",
-		c.loginData.Token[:10], c.loginData.Network)
-
+	log.Printf("Polkassembly: Login successful for network: %s", network)
 	return nil
 }
 
-// PostComment posts a comment to a referendum using v1 API
+// PostComment posts a comment to a referendum
 func (c *Client) PostComment(content string, postID int, network string) error {
 	// Ensure we're logged in to the correct network
 	if c.loginData == nil || c.loginData.Network != network {
@@ -122,35 +146,51 @@ func (c *Client) PostComment(content string, postID int, network string) error {
 		}
 	}
 
-	// Use v1 API endpoint for posting comments
-	path := "/auth/comment"
+	// Build the URL for v2 API with the network-specific subdomain
+	baseURL := fmt.Sprintf("https://%s.polkassembly.io", network)
+	path := fmt.Sprintf("/api/v2/ReferendumV2/%d/comments", postID)
+	url := baseURL + path
 
-	// Use the v1 API payload structure
+	// Simple payload with just content
 	body := map[string]interface{}{
-		"post_id": postID,
 		"content": content,
-		"network": network,
 	}
 
-	headers := map[string]string{
-		"Content-Type":  "application/json",
-		"x-network":     network,
-		"Authorization": fmt.Sprintf("Bearer %s", c.loginData.Token),
-	}
-
-	respBody, err := c.post(path, body, headers)
+	jsonBody, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("post comment: %w", err)
+		return fmt.Errorf("marshal body: %w", err)
 	}
 
-	// Check if the response indicates success
-	var result map[string]interface{}
-	if err := json.Unmarshal(respBody, &result); err == nil {
-		if success, ok := result["success"].(bool); ok && !success {
-			if errMsg, ok := result["error"].(string); ok {
-				return fmt.Errorf("polkassembly error: %s", errMsg)
-			}
-		}
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	// Set headers - no Authorization header needed as we're using cookies
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Network", network)
+
+	// Log request details
+	log.Printf("Polkassembly: POST %s", url)
+	log.Printf("Polkassembly: Headers: %v", req.Header)
+	log.Printf("Polkassembly: Body: %s", string(jsonBody))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+
+	log.Printf("Polkassembly: Response status: %d", resp.StatusCode)
+	log.Printf("Polkassembly: Response body: %s", string(respBody))
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(respBody))
 	}
 
 	log.Printf("Polkassembly: Successfully posted comment to referendum #%d", postID)
@@ -160,6 +200,11 @@ func (c *Client) PostComment(content string, postID int, network string) error {
 // Logout clears the authentication data
 func (c *Client) Logout() {
 	c.loginData = nil
+	// Clear cookies
+	if c.httpClient.Jar != nil {
+		jar, _ := cookiejar.New(nil)
+		c.httpClient.Jar = jar
+	}
 }
 
 // IsLoggedIn returns true if the client is authenticated
@@ -169,14 +214,13 @@ func (c *Client) IsLoggedIn() bool {
 
 // fetchUserID retrieves the user ID for the current address
 func (c *Client) fetchUserID(network string) (int, error) {
-	url := fmt.Sprintf("%s/auth/data/profileWithAddress?address=%s", c.endpoint, c.signer.Address())
+	baseURL := fmt.Sprintf("https://%s.polkassembly.io", network)
+	url := fmt.Sprintf("%s/api/v2/auth/data/profileWithAddress?address=%s", baseURL, c.signer.Address())
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return 0, err
 	}
-
-	req.Header.Set("x-network", network)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -238,7 +282,6 @@ func (c *Client) post(path string, body interface{}, headers map[string]string) 
 	// Log request details
 	log.Printf("Polkassembly: POST %s", req.URL.String())
 	log.Printf("Polkassembly: Headers: %v", req.Header)
-	log.Printf("Polkassembly: Body: %s", string(jsonBody))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -252,9 +295,9 @@ func (c *Client) post(path string, body interface{}, headers map[string]string) 
 	}
 
 	log.Printf("Polkassembly: Response status: %d", resp.StatusCode)
-	log.Printf("Polkassembly: Response body: %s", string(respBody))
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		log.Printf("Polkassembly: Response body: %s", string(respBody))
 		return nil, &HTTPError{
 			StatusCode: resp.StatusCode,
 			Body:       respBody,
