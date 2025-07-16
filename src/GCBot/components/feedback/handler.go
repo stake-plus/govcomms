@@ -90,14 +90,6 @@ func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate
 		return
 	}
 
-	// Get DAO member by Discord username
-	var daoMember types.DaoMember
-	if err := h.config.DB.Where("discord = ?", m.Author.Username).First(&daoMember).Error; err != nil {
-		log.Printf("Discord user %s not found in dao_members", m.Author.Username)
-		s.ChannelMessageSend(m.ChannelID, "Your Discord account is not linked to a Polkadot address. Please contact an admin.")
-		return
-	}
-
 	// Get network info
 	network := h.config.NetworkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
@@ -107,7 +99,7 @@ func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate
 	}
 
 	// Process the feedback using the thread info
-	if err := h.processFeedbackFromThread(s, m, threadInfo, network, feedbackMsg, &daoMember); err != nil {
+	if err := h.processFeedbackFromThread(s, m, threadInfo, network, feedbackMsg); err != nil {
 		log.Printf("Error processing feedback: %v", err)
 		s.ChannelMessageSend(m.ChannelID, "Failed to process feedback. Please try again.")
 		return
@@ -115,9 +107,12 @@ func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate
 }
 
 func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.MessageCreate,
-	threadInfo *referendum.ThreadInfo, network *types.Network, feedbackMsg string, daoMember *types.DaoMember) error {
+	threadInfo *referendum.ThreadInfo, network *types.Network, feedbackMsg string) error {
 
-	log.Printf("Processing feedback for %s ref #%d from %s", network.Name, threadInfo.RefID, daoMember.Address)
+	log.Printf("Processing feedback for %s ref #%d", network.Name, threadInfo.RefID)
+
+	// Use a generic author name for anonymity
+	author := "DAO Feedback"
 
 	var msgID uint64
 	err := h.config.DB.Transaction(func(tx *gorm.DB) error {
@@ -127,21 +122,10 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 			return fmt.Errorf("referendum not found: %w", err)
 		}
 
-		// Create/update proponent
-		proponent := types.RefProponent{
-			RefID:   ref.ID,
-			Address: daoMember.Address,
-			Role:    "dao_member",
-			Active:  1,
-		}
-		if err := tx.FirstOrCreate(&proponent, types.RefProponent{RefID: ref.ID, Address: daoMember.Address}).Error; err != nil {
-			return err
-		}
-
-		// Create message
+		// Create message with anonymous author
 		msg := types.RefMessage{
 			RefID:     ref.ID,
-			Author:    daoMember.Address,
+			Author:    author,
 			Body:      feedbackMsg,
 			CreatedAt: time.Now(),
 			Internal:  true,
@@ -185,22 +169,24 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 			},
 		},
 		Footer: &discordgo.MessageEmbedFooter{
-			Text: fmt.Sprintf("Submitted by %s", m.Author.Username),
+			Text: "Submitted via DAO Feedback",
 		},
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
 
 	// If first message and we have Polkassembly integration, post it
-	polkassemblyAPIKey := data.GetSetting("polkassembly_api_key")
-	if msgCount == 1 && polkassemblyAPIKey != "" && network.PolkassemblyPrefix != "" {
-		go h.postToPolkassembly(strings.ToLower(network.Name), threadInfo.RefID, feedbackMsg, link, network.PolkassemblyPrefix)
+	if msgCount == 1 {
+		polkassemblyAPIKey := data.GetSetting("polkassembly_api_key")
+		if polkassemblyAPIKey != "" && network.PolkassemblyPrefix != "" {
+			go h.postToPolkassembly(network, threadInfo.RefID, feedbackMsg, link)
+		}
 	}
 
 	// Publish to Redis
 	if h.config.Redis != nil {
 		_ = data.PublishMessage(context.Background(), h.config.Redis, map[string]interface{}{
 			"proposal": fmt.Sprintf("%s/%d", strings.ToLower(network.Name), threadInfo.RefID),
-			"author":   daoMember.Address,
+			"author":   author,
 			"body":     feedbackMsg,
 			"time":     time.Now().Unix(),
 			"id":       msgID,
@@ -211,15 +197,30 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 
 	s.ChannelMessageSendEmbed(m.ChannelID, embed)
 
-	log.Printf("Feedback submitted by %s (%s) for %s/%d: %d chars",
-		m.Author.Username, daoMember.Address, network.Name, threadInfo.RefID, len(feedbackMsg))
+	log.Printf("Feedback submitted for %s/%d: %d chars", network.Name, threadInfo.RefID, len(feedbackMsg))
 
 	return nil
 }
 
-func (h *Handler) postToPolkassembly(network string, refNum uint64, message, link, polkassemblyPrefix string) {
-	log.Printf("Would post to Polkassembly: %s/%d", network, refNum)
+func (h *Handler) postToPolkassembly(net *types.Network, refNum uint64, message, link string) {
+	gcURL := data.GetSetting("gc_url")
+	if gcURL == "" {
+		gcURL = "http://localhost:3000"
+	}
+
+	// Format the message with link to respond
+	content := fmt.Sprintf("%s\n\n[Continue discussion with the DAO](%s)", message, link)
+
 	// TODO: Implement actual Polkassembly API integration
+	// This should post to Polkassembly using the API
+	proposalRef := fmt.Sprintf("%s/%d", strings.ToLower(net.Name), refNum)
+	if h.config.APIClient != nil {
+		if err := h.config.APIClient.PostMessage(proposalRef, content); err != nil {
+			log.Printf("Failed to post to Polkassembly: %v", err)
+		} else {
+			log.Printf("Posted first message to Polkassembly for %s/%d", net.Name, refNum)
+		}
+	}
 }
 
 func (h *Handler) hasRole(s *discordgo.Session, guildID, userID, roleID string) bool {
