@@ -30,12 +30,12 @@ func NewPolkadotSignerFromSeed(seedPhrase string, network uint16) (*PolkadotSign
 	}
 
 	// For Polkadot.js sr25519 compatibility:
-	// When no derivation path is specified, it uses the mnemonic phrase directly
-	// to generate the seed (not using BIP39 seed generation)
+	// Use the standard BIP39 seed generation but with empty password
+	seed := bip39.NewSeed(seedPhrase, "")
 
-	// Generate mini secret by hashing the mnemonic
-	// This matches @polkadot/util-crypto behavior for sr25519
-	miniSecret := blake2b256([]byte(seedPhrase))
+	// Use first 32 bytes as mini secret
+	var miniSecret [32]byte
+	copy(miniSecret[:], seed[:32])
 
 	miniSecretKey, err := schnorrkel.NewMiniSecretKeyFromRaw(miniSecret)
 	if err != nil {
@@ -64,15 +64,6 @@ func NewPolkadotSignerFromSeed(seedPhrase string, network uint16) (*PolkadotSign
 		publicKey:  publicKey,
 		address:    address,
 	}, nil
-}
-
-// blake2b256 returns blake2b 256 bit hash
-func blake2b256(data []byte) [32]byte {
-	h, _ := blake2b.New256(nil)
-	h.Write(data)
-	var result [32]byte
-	copy(result[:], h.Sum(nil))
-	return result
 }
 
 // NewPolkadotSignerFromHex creates a signer from a hex-encoded private key
