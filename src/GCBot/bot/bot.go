@@ -13,6 +13,7 @@ import (
 	"github.com/stake-plus/govcomms/src/GCBot/components/discord"
 	"github.com/stake-plus/govcomms/src/GCBot/components/feedback"
 	"github.com/stake-plus/govcomms/src/GCBot/components/network"
+	"github.com/stake-plus/govcomms/src/GCBot/components/polkassembly"
 	"github.com/stake-plus/govcomms/src/GCBot/components/referendum"
 	"gorm.io/gorm"
 )
@@ -26,18 +27,19 @@ type Config struct {
 }
 
 type Bot struct {
-	session         *discordgo.Session
-	db              *gorm.DB
-	rdb             *redis.Client
-	config          Config
-	networks        *network.Manager
-	feedbackHandler *feedback.Handler
-	refManager      *referendum.Manager
-	apiClient       *api.Client
-	messageMonitor  *discord.MessageMonitor
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
+	session             *discordgo.Session
+	db                  *gorm.DB
+	rdb                 *redis.Client
+	config              Config
+	networks            *network.Manager
+	feedbackHandler     *feedback.Handler
+	refManager          *referendum.Manager
+	apiClient           *api.Client
+	messageMonitor      *discord.MessageMonitor
+	polkassemblyService *polkassembly.Service
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	wg                  sync.WaitGroup
 }
 
 func New(config Config) (*Bot, error) {
@@ -97,15 +99,25 @@ func (b *Bot) initializeComponents() error {
 	// Initialize referendum manager
 	b.refManager = referendum.NewManager(b.db, b.networks)
 
-	// Initialize feedback handler
+	// Initialize Polkassembly service
+	polkassemblyService, err := polkassembly.NewService(log.Default())
+	if err != nil {
+		log.Printf("Failed to initialize Polkassembly service: %v", err)
+		// Don't fail initialization, just disable Polkassembly posting
+		polkassemblyService = nil
+	}
+	b.polkassemblyService = polkassemblyService
+
+	// Initialize feedback handler with Polkassembly service
 	b.feedbackHandler = feedback.NewHandler(feedback.Config{
-		DB:             b.db,
-		Redis:          b.rdb,
-		NetworkManager: b.networks,
-		RefManager:     b.refManager,
-		APIClient:      b.apiClient,
-		FeedbackRoleID: b.config.FeedbackRoleID,
-		GuildID:        b.config.GuildID,
+		DB:                  b.db,
+		Redis:               b.rdb,
+		NetworkManager:      b.networks,
+		RefManager:          b.refManager,
+		APIClient:           b.apiClient,
+		FeedbackRoleID:      b.config.FeedbackRoleID,
+		GuildID:             b.config.GuildID,
+		PolkassemblyService: polkassemblyService,
 	})
 
 	// Initialize message monitor

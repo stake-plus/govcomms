@@ -13,29 +13,33 @@ import (
 	"github.com/stake-plus/govcomms/src/GCApi/types"
 	"github.com/stake-plus/govcomms/src/GCBot/api"
 	"github.com/stake-plus/govcomms/src/GCBot/components/network"
+	"github.com/stake-plus/govcomms/src/GCBot/components/polkassembly"
 	"github.com/stake-plus/govcomms/src/GCBot/components/referendum"
 	"gorm.io/gorm"
 )
 
 type Config struct {
-	DB             *gorm.DB
-	Redis          *redis.Client
-	NetworkManager *network.Manager
-	RefManager     *referendum.Manager
-	APIClient      *api.Client
-	FeedbackRoleID string
-	GuildID        string
+	DB                  *gorm.DB
+	Redis               *redis.Client
+	NetworkManager      *network.Manager
+	RefManager          *referendum.Manager
+	APIClient           *api.Client
+	FeedbackRoleID      string
+	GuildID             string
+	PolkassemblyService *polkassembly.Service
 }
 
 type Handler struct {
-	config      Config
-	rateLimiter *RateLimiter
+	config       Config
+	rateLimiter  *RateLimiter
+	polkassembly *polkassembly.Service
 }
 
 func NewHandler(config Config) *Handler {
 	return &Handler{
-		config:      config,
-		rateLimiter: NewRateLimiter(5 * time.Minute),
+		config:       config,
+		rateLimiter:  NewRateLimiter(5 * time.Minute),
+		polkassembly: config.PolkassemblyService,
 	}
 }
 
@@ -108,7 +112,6 @@ func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate
 
 func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.MessageCreate,
 	threadInfo *referendum.ThreadInfo, network *types.Network, feedbackMsg string) error {
-
 	log.Printf("Processing feedback for %s ref #%d", network.Name, threadInfo.RefID)
 
 	// Use a generic author name for anonymity
@@ -130,9 +133,11 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 			CreatedAt: time.Now(),
 			Internal:  true,
 		}
+
 		if err := tx.Create(&msg).Error; err != nil {
 			return err
 		}
+
 		msgID = msg.ID
 		return nil
 	})
@@ -175,11 +180,17 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 	}
 
 	// If first message and we have Polkassembly integration, post it
-	if msgCount == 1 {
-		polkassemblyAPIKey := data.GetSetting("polkassembly_api_key")
-		if polkassemblyAPIKey != "" && network.PolkassemblyPrefix != "" {
-			go h.postToPolkassembly(network, threadInfo.RefID, feedbackMsg, link)
+	if msgCount == 1 && h.polkassembly != nil {
+		gcURL := data.GetSetting("gc_url")
+		if gcURL == "" {
+			gcURL = "http://localhost:3000"
 		}
+
+		go func() {
+			if err := h.polkassembly.PostFirstMessage(network.Name, int(threadInfo.RefID), feedbackMsg, gcURL); err != nil {
+				log.Printf("Failed to post to Polkassembly: %v", err)
+			}
+		}()
 	}
 
 	// Publish to Redis
@@ -196,31 +207,9 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 	}
 
 	s.ChannelMessageSendEmbed(m.ChannelID, embed)
-
 	log.Printf("Feedback submitted for %s/%d: %d chars", network.Name, threadInfo.RefID, len(feedbackMsg))
 
 	return nil
-}
-
-func (h *Handler) postToPolkassembly(net *types.Network, refNum uint64, message, link string) {
-	gcURL := data.GetSetting("gc_url")
-	if gcURL == "" {
-		gcURL = "http://localhost:3000"
-	}
-
-	// Format the message with link to respond
-	content := fmt.Sprintf("%s\n\n[Continue discussion with the DAO](%s)", message, link)
-
-	// TODO: Implement actual Polkassembly API integration
-	// This should post to Polkassembly using the API
-	proposalRef := fmt.Sprintf("%s/%d", strings.ToLower(net.Name), refNum)
-	if h.config.APIClient != nil {
-		if err := h.config.APIClient.PostMessage(proposalRef, content); err != nil {
-			log.Printf("Failed to post to Polkassembly: %v", err)
-		} else {
-			log.Printf("Posted first message to Polkassembly for %s/%d", net.Name, refNum)
-		}
-	}
 }
 
 func (h *Handler) hasRole(s *discordgo.Session, guildID, userID, roleID string) bool {
@@ -234,5 +223,6 @@ func (h *Handler) hasRole(s *discordgo.Session, guildID, userID, roleID string) 
 			return true
 		}
 	}
+
 	return false
 }
