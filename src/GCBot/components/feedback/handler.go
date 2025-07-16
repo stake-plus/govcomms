@@ -118,12 +118,19 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 	author := "DAO Feedback"
 
 	var msgID uint64
+	var isFirstMessage bool
+
 	err := h.config.DB.Transaction(func(tx *gorm.DB) error {
 		// Get the referendum
 		var ref types.Ref
 		if err := tx.First(&ref, threadInfo.RefDBID).Error; err != nil {
 			return fmt.Errorf("referendum not found: %w", err)
 		}
+
+		// Check if this is the first message
+		var msgCount int64
+		tx.Model(&types.RefMessage{}).Where("ref_id = ?", ref.ID).Count(&msgCount)
+		isFirstMessage = msgCount == 0
 
 		// Create message with anonymous author
 		msg := types.RefMessage{
@@ -146,10 +153,6 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 		return err
 	}
 
-	// Check if this is the first message
-	var msgCount int64
-	h.config.DB.Model(&types.RefMessage{}).Where("ref_id = ?", threadInfo.RefDBID).Count(&msgCount)
-
 	// Build response
 	gcURL := data.GetSetting("gc_url")
 	if gcURL == "" {
@@ -165,10 +168,6 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 		Color:       0x00ff00,
 		Fields: []*discordgo.MessageEmbedField{
 			{
-				Name:  "Message Count",
-				Value: fmt.Sprintf("This is message #%d for this proposal", msgCount),
-			},
-			{
 				Name:  "Continue Discussion",
 				Value: fmt.Sprintf("[Click here](%s) to continue the conversation", link),
 			},
@@ -180,17 +179,26 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 	}
 
 	// If first message and we have Polkassembly integration, post it
-	if msgCount == 1 && h.polkassembly != nil {
-		gcURL := data.GetSetting("gc_url")
-		if gcURL == "" {
-			gcURL = "http://localhost:3000"
-		}
+	if isFirstMessage && h.polkassembly != nil {
+		log.Printf("This is the first message for %s ref #%d, posting to Polkassembly", network.Name, threadInfo.RefID)
 
 		go func() {
-			if err := h.polkassembly.PostFirstMessage(network.Name, int(threadInfo.RefID), feedbackMsg, gcURL); err != nil {
+			if err := h.polkassembly.PostFirstMessage(strings.ToLower(network.Name), int(threadInfo.RefID), feedbackMsg, gcURL); err != nil {
 				log.Printf("Failed to post to Polkassembly: %v", err)
+				// Send error message to Discord
+				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("⚠️ Warning: Failed to post to Polkassembly: %v", err))
+			} else {
+				log.Printf("Successfully posted to Polkassembly for %s ref #%d", network.Name, threadInfo.RefID)
+				// Send success message to Discord
+				s.ChannelMessageSend(m.ChannelID, "✅ Successfully posted to Polkassembly!")
 			}
 		}()
+
+		// Add field to embed indicating Polkassembly posting
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:  "Polkassembly",
+			Value: "Posting first message to Polkassembly...",
+		})
 	}
 
 	// Publish to Redis
@@ -208,7 +216,6 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 
 	s.ChannelMessageSendEmbed(m.ChannelID, embed)
 	log.Printf("Feedback submitted for %s/%d: %d chars", network.Name, threadInfo.RefID, len(feedbackMsg))
-
 	return nil
 }
 

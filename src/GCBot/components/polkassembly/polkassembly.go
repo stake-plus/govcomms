@@ -27,6 +27,7 @@ func NewService(logger *log.Logger) (*Service, error) {
 	// Setup Polkadot client
 	polkadotSeed := os.Getenv("POLKASSEMBLY_POLKADOT_SEED")
 	if polkadotSeed != "" {
+		logger.Printf("Creating Polkadot signer from seed...")
 		signer, err := NewPolkadotSignerFromSeed(polkadotSeed, 0)
 		if err != nil {
 			return nil, fmt.Errorf("create polkadot signer: %w", err)
@@ -38,6 +39,7 @@ func NewService(logger *log.Logger) (*Service, error) {
 	// Setup Kusama client
 	kusamaSeed := os.Getenv("POLKASSEMBLY_KUSAMA_SEED")
 	if kusamaSeed != "" {
+		logger.Printf("Creating Kusama signer from seed...")
 		signer, err := NewPolkadotSignerFromSeed(kusamaSeed, 2)
 		if err != nil {
 			return nil, fmt.Errorf("create kusama signer: %w", err)
@@ -53,6 +55,7 @@ func NewService(logger *log.Logger) (*Service, error) {
 			return nil, fmt.Errorf("no POLKASSEMBLY_SEED environment variables set")
 		}
 
+		logger.Printf("Using generic seed for both networks...")
 		// Create signers for both networks with the same seed
 		polkadotSigner, err := NewPolkadotSignerFromSeed(genericSeed, 0)
 		if err != nil {
@@ -67,6 +70,8 @@ func NewService(logger *log.Logger) (*Service, error) {
 		clients["kusama"] = NewClient(endpoint, kusamaSigner)
 
 		logger.Printf("Polkassembly clients configured with generic seed")
+		logger.Printf("Polkadot address: %s", polkadotSigner.Address())
+		logger.Printf("Kusama address: %s", kusamaSigner.Address())
 	}
 
 	return &Service{
@@ -77,6 +82,8 @@ func NewService(logger *log.Logger) (*Service, error) {
 
 // PostFirstMessage posts the first feedback message to Polkassembly
 func (s *Service) PostFirstMessage(network string, refID int, message string, gcURL string) error {
+	s.logger.Printf("PostFirstMessage called for %s referendum #%d", network, refID)
+
 	networkLower := strings.ToLower(network)
 	client, exists := s.clients[networkLower]
 	if !exists {
@@ -87,8 +94,12 @@ func (s *Service) PostFirstMessage(network string, refID int, message string, gc
 	link := fmt.Sprintf("%s/%s/%d", gcURL, networkLower, refID)
 	content := fmt.Sprintf("%s\n\n[Continue discussion with the DAO](%s)", message, link)
 
+	s.logger.Printf("Attempting to post comment to Polkassembly for %s #%d", network, refID)
+	s.logger.Printf("Content length: %d characters", len(content))
+
 	// Post the comment
 	if err := client.PostComment(content, refID, networkLower); err != nil {
+		s.logger.Printf("Error posting to Polkassembly: %v", err)
 		return fmt.Errorf("post comment: %w", err)
 	}
 

@@ -100,11 +100,15 @@ func (b *Bot) initializeComponents() error {
 	b.refManager = referendum.NewManager(b.db, b.networks)
 
 	// Initialize Polkassembly service
+	log.Println("Initializing Polkassembly service...")
 	polkassemblyService, err := polkassembly.NewService(log.Default())
 	if err != nil {
-		log.Printf("Failed to initialize Polkassembly service: %v", err)
+		log.Printf("WARNING: Failed to initialize Polkassembly service: %v", err)
+		log.Printf("Polkassembly posting will be disabled")
 		// Don't fail initialization, just disable Polkassembly posting
 		polkassemblyService = nil
+	} else {
+		log.Println("Polkassembly service initialized successfully")
 	}
 	b.polkassemblyService = polkassemblyService
 
