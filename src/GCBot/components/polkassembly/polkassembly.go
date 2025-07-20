@@ -117,10 +117,10 @@ func (s *Service) PostFirstMessage(network string, refID int, message string, gc
 
 	// Use defaults if not set
 	if intro == "" {
-		intro = "## 🏛️ REEEEEEEEEE DAO Feedback\n\nThe **REEEEEEEEEE DAO** is a decentralized collective of governance participants dedicated to providing thoughtful feedback on Polkadot OpenGov proposals. Our members carefully review each referendum to ensure the best outcomes for the ecosystem.\n\n### 📋 Community Feedback"
+		intro = "## 🏛️ REEEEEEEEEE DAO\n\nREEEEEEEEEE DAO is a decentralized collective body committed to serve Polkadot Opengov. Our mission is to provide high-quality assessments on referenda to ensure outcomes that strengthen the Polkadot ecosystem. Each referendum is reviewed carefully by our DAO members through the scope of technical, strategic, and governance. And unfortunately, our members have voted NAY on this proposal.\n\n### 📋 Community Feedback"
 	}
 	if outro == "" {
-		outro = "\n\n---\n\n### 💬 Continue the Discussion\n\nWe welcome proponents to engage directly with our DAO members for more detailed feedback and discussion. Our governance communication platform allows for secure, on-chain authenticated dialogue between proposers and the DAO.\n\n👉 **[Continue discussion with the DAO]({link})**\n\n*This feedback represents the collective voice of REEEEEEEEEE DAO members participating in Polkadot governance.*"
+		outro = "\n\n### 💬 Open Communication Channel\n\nFor further discussion and detailed feedback, please engage directly with our DAO members on our secured, on-chain authenticated communication platform\n\n👉 **[Continue discussion with the DAO]({link})**\n\n*This feedback represents the collective voice of REEEEEEEEEE DAO members participating in Polkadot governance.*"
 	}
 
 	// Format the message with proper structure
