@@ -117,7 +117,7 @@ func (s *Service) PostFirstMessage(network string, refID int, message string, gc
 
 	// Use defaults if not set
 	if intro == "" {
-		intro = "## 🏛️ REEEEEEEEEE DAO\n\nREEEEEEEEEE DAO is a decentralized collective body committed to serve Polkadot Opengov. Our mission is to provide high-quality assessments on referenda to ensure outcomes that strengthen the Polkadot ecosystem. Each referendum is reviewed carefully by our DAO members through the scope of technical, strategic, and governance. And unfortunately, our members have voted NAY on this proposal.\n\n### 📋 Community Feedback"
+		intro = "## 🏛️ REEEEEEEEEE DAO\n\nREEEEEEEEEE DAO is a decentralized collective body committed to serve Polkadot Opengov. Our mission is to provide high-quality assessments on referenda to ensure outcomes that strengthen the Polkadot ecosystem. Each referendum is reviewed carefully by our DAO members through the scope of technical, strategic, and governance. \n\n### 📋 Community Feedback"
 	}
 	if outro == "" {
 		outro = "\n\n### 💬 Open Communication Channel\n\nFor further discussion and detailed feedback, please engage directly with our DAO members on our secured, on-chain authenticated communication platform\n\n👉 **[Continue discussion with the DAO]({link})**\n\n*This feedback represents the collective voice of REEEEEEEEEE DAO members participating in Polkadot governance.*"
