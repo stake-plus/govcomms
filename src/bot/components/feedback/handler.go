@@ -96,7 +96,6 @@ func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate
 		return
 	}
 }
-
 func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.MessageCreate,
 	threadInfo *referendum.ThreadInfo, network *types.Network, feedbackMsg string) error {
 
@@ -105,12 +104,16 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 	author := "DAO Feedback"
 	var isFirstMessage bool
 	var commentID int
+	var refID uint64
 
+	// First transaction - save the message
 	err := h.config.DB.Transaction(func(tx *gorm.DB) error {
 		var ref types.Ref
 		if err := tx.First(&ref, threadInfo.RefDBID).Error; err != nil {
 			return fmt.Errorf("referendum not found: %w", err)
 		}
+
+		refID = ref.ID
 
 		var msgCount int64
 		tx.Model(&types.RefMessage{}).Where("ref_id = ?", ref.ID).Count(&msgCount)
@@ -128,23 +131,6 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 			return err
 		}
 
-		// In processFeedbackFromThread, modify the Polkassembly posting section:
-		if isFirstMessage && h.polkassembly != nil {
-			var err error
-			commentID, err = h.polkassembly.PostFirstMessage(strings.ToLower(network.Name), int(threadInfo.RefID), feedbackMsg)
-			if err != nil {
-				log.Printf("Failed to post to Polkassembly: %v", err)
-				// Check if it's a timeout - the post might have succeeded
-				if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
-					log.Printf("Timeout posting to Polkassembly - the post may have succeeded. Check manually for ref %d", threadInfo.RefID)
-					// Don't fail the transaction, but note we don't have the comment ID
-				}
-			} else if commentID > 0 {
-				// Update referendum with comment ID
-				tx.Model(&ref).Update("polkassembly_comment_id", commentID)
-			}
-		}
-
 		return nil
 	})
 
@@ -152,6 +138,28 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 		return err
 	}
 
+	// Post to Polkassembly if first message (outside transaction)
+	if isFirstMessage && h.polkassembly != nil {
+		commentID, err = h.polkassembly.PostFirstMessage(strings.ToLower(network.Name), int(threadInfo.RefID), feedbackMsg)
+		if err != nil {
+			log.Printf("Failed to post to Polkassembly: %v", err)
+
+			// Check if it's a timeout - the post might have succeeded
+			if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
+				log.Printf("Timeout posting to Polkassembly - will need to manually check for comment ID for ref %d", threadInfo.RefID)
+				// TODO: We could implement a recovery mechanism to fetch our comment later
+			}
+		} else if commentID > 0 {
+			// Store the comment ID in a separate transaction
+			if err := h.config.DB.Model(&types.Ref{}).Where("id = ?", refID).Update("polkassembly_comment_id", commentID).Error; err != nil {
+				log.Printf("Failed to store Polkassembly comment ID: %v", err)
+			} else {
+				log.Printf("Stored Polkassembly comment ID %d for ref %d", commentID, threadInfo.RefID)
+			}
+		}
+	}
+
+	// Send Discord response
 	embed := &discordgo.MessageEmbed{
 		Title:       "Feedback Submitted",
 		Description: fmt.Sprintf("Your feedback for %s/%d has been submitted.", network.Name, threadInfo.RefID),
@@ -166,6 +174,11 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
 			Name:  "Polkassembly",
 			Value: fmt.Sprintf("✅ Posted to Polkassembly with comment ID %d", commentID),
+		})
+	} else if isFirstMessage && h.polkassembly != nil {
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:  "Polkassembly",
+			Value: "⚠️ Posted to Polkassembly but couldn't confirm comment ID (timeout)",
 		})
 	}
 
