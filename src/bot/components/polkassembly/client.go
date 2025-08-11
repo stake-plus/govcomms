@@ -145,6 +145,7 @@ func (c *Client) PostCommentWithResponse(ctx context.Context, content string, po
 	req.Header.Set("X-Network", network)
 
 	log.Printf("Polkassembly: POST %s", url)
+	log.Printf("Polkassembly: Request body: %s", string(jsonBody))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -158,7 +159,8 @@ func (c *Client) PostCommentWithResponse(ctx context.Context, content string, po
 	}
 
 	log.Printf("Polkassembly: Response status: %d", resp.StatusCode)
-	log.Printf("Polkassembly: Response body: %s", string(respBody)) // Log the actual response
+	log.Printf("Polkassembly: Response headers: %v", resp.Header)
+	log.Printf("Polkassembly: Response body: %s", string(respBody))
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(respBody))

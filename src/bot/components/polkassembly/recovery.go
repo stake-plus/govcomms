@@ -1,11 +1,6 @@
 package polkassembly
 
 import (
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
 	"time"
 
 	"github.com/stake-plus/govcomms/src/bot/types"
@@ -50,50 +45,4 @@ func (s *Service) RecoverMissingCommentIDs(db *gorm.DB) {
 
 		time.Sleep(2 * time.Second) // Rate limit
 	}
-}
-
-func (s *Service) findOurComment(network string, refID int) int {
-	url := fmt.Sprintf("https://%s.polkassembly.io/api/v1/posts/on-chain-post/%d/comments", network, refID)
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return 0
-	}
-
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return 0
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0
-	}
-
-	// Check if it's JSON
-	if strings.HasPrefix(strings.TrimSpace(string(body)), "<") {
-		return 0 // HTML response
-	}
-
-	var comments []struct {
-		ID       int    `json:"id"`
-		Content  string `json:"content"`
-		Username string `json:"username"`
-	}
-
-	if err := json.Unmarshal(body, &comments); err != nil {
-		return 0
-	}
-
-	// Look for our comment (contains our intro text)
-	for _, comment := range comments {
-		if strings.Contains(comment.Content, "REEEEEEEEEE DAO") {
-			return comment.ID
-		}
-	}
-
-	return 0
 }
