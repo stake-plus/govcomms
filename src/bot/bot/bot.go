@@ -155,19 +155,24 @@ func (b *Bot) handleReady(s *discordgo.Session, event *discordgo.Ready) {
 		data.IndexerService(b.ctx, b.db, interval, b.config.IndexerWorkers)
 	}()
 
-	// Start indexer service with thread sync callback
+	// Start periodic thread sync (every 5 minutes)
 	b.wg.Add(1)
 	go func() {
 		defer b.wg.Done()
-		interval := time.Duration(b.config.IndexerIntervalMinutes) * time.Minute
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
 
-		syncCallback := func() {
-			log.Println("Indexer completed, syncing threads")
-			if err := b.refManager.SyncThreads(s, b.config.GuildID); err != nil {
-				log.Printf("Failed to sync threads after indexing: %v", err)
+		for {
+			select {
+			case <-b.ctx.Done():
+				log.Println("Stopping thread sync")
+				return
+			case <-ticker.C:
+				log.Println("Running periodic thread sync")
+				if err := b.refManager.SyncThreads(s, b.config.GuildID); err != nil {
+					log.Printf("Failed to sync threads: %v", err)
+				}
 			}
 		}
-
-		data.IndexerServiceWithCallback(b.ctx, b.db, interval, b.config.IndexerWorkers, syncCallback)
 	}()
 }

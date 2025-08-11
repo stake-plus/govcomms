@@ -89,7 +89,6 @@ func NewService(logger *log.Logger, db *gorm.DB) (*Service, error) {
 
 	return service, nil
 }
-
 func (s *Service) PostFirstMessage(network string, refID int, message string) (int, error) {
 	s.logger.Printf("PostFirstMessage called for %s referendum #%d", network, refID)
 
@@ -109,7 +108,7 @@ func (s *Service) PostFirstMessage(network string, refID int, message string) (i
 	}
 
 	if intro == "" {
-		intro = "## 🏛️ REEEEEEEEEE DAO\n\nREEEEEEEEEE DAO is a decentralized collective body committed to serve Polkadot Opengov. Our mission is to provide high-quality assessments on referenda to ensure outcomes that strengthen the Polkadot ecosystem. Each referendum is reviewed carefully by our DAO members through the scope of technical, strategic, and governance. \n\n### 📋 Community Feedback"
+		intro = "## 🏛️ REEEEEEEEEE DAO\n\nREEEEEEEEEE DAO is a decentralized collective body committed to serve Polkadot Opengov. Our mission is to provide high-quality assessments on referenda to ensure outcomes that strengthen the Polkadot ecosystem. Each referendum is reviewed carefully by our DAO members through the scope of technical, strategic, and governance.\n\n### 📋 Community Feedback"
 	}
 
 	if outro == "" {
@@ -130,17 +129,61 @@ func (s *Service) PostFirstMessage(network string, refID int, message string) (i
 		return 0, fmt.Errorf("post comment: %w", err)
 	}
 
-	// Parse response to get comment ID
-	var response CommentResponse
+	// Try different response formats since Polkassembly API might return different structures
+	// First try the expected format
+	var response struct {
+		ID      int `json:"id"`
+		Comment struct {
+			ID int `json:"id"`
+		} `json:"comment"`
+		Data struct {
+			ID int `json:"id"`
+		} `json:"data"`
+	}
+
 	if err := json.Unmarshal(responseBody, &response); err != nil {
-		s.logger.Printf("Failed to parse response but comment may have been posted: %v", err)
+		s.logger.Printf("Failed to parse response as expected format: %v", err)
+		s.logger.Printf("Raw response: %s", string(responseBody))
+
+		// Try to extract ID from any JSON response that has an "id" field
+		var genericResponse map[string]interface{}
+		if err := json.Unmarshal(responseBody, &genericResponse); err == nil {
+			// Check for id in various places
+			if id, ok := genericResponse["id"].(float64); ok {
+				s.logger.Printf("Found comment ID in root: %d", int(id))
+				return int(id), nil
+			}
+			if comment, ok := genericResponse["comment"].(map[string]interface{}); ok {
+				if id, ok := comment["id"].(float64); ok {
+					s.logger.Printf("Found comment ID in comment object: %d", int(id))
+					return int(id), nil
+				}
+			}
+			if data, ok := genericResponse["data"].(map[string]interface{}); ok {
+				if id, ok := data["id"].(float64); ok {
+					s.logger.Printf("Found comment ID in data object: %d", int(id))
+					return int(id), nil
+				}
+			}
+		}
+
+		s.logger.Printf("Could not extract comment ID from response, but comment was likely posted")
 		return 0, nil
 	}
 
-	s.logger.Printf("Successfully posted first message to Polkassembly for %s referendum #%d with comment ID %d",
-		network, refID, response.ID)
+	// Check which field has the ID
+	commentID := response.ID
+	if commentID == 0 && response.Comment.ID > 0 {
+		commentID = response.Comment.ID
+	}
+	if commentID == 0 && response.Data.ID > 0 {
+		commentID = response.Data.ID
+	}
 
-	return response.ID, nil
+	s.logger.Printf("Successfully posted first message to Polkassembly for %s referendum #%d with comment ID %d",
+		network, refID, commentID)
+
+	return commentID, nil
 }
 
 func (s *Service) StartReplyMonitor(ctx context.Context, interval time.Duration) {

@@ -114,7 +114,6 @@ func (c *Client) Login(network string) error {
 	log.Printf("Polkassembly: Login successful for network: %s", network)
 	return nil
 }
-
 func (c *Client) PostCommentWithResponse(ctx context.Context, content string, postID int, network string) ([]byte, error) {
 	if c.loginData == nil || c.loginData.Network != network {
 		log.Printf("Polkassembly: Need to login to %s network", network)
@@ -145,6 +144,8 @@ func (c *Client) PostCommentWithResponse(ctx context.Context, content string, po
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Network", network)
 
+	log.Printf("Polkassembly: POST %s", url)
+
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
@@ -156,10 +157,12 @@ func (c *Client) PostCommentWithResponse(ctx context.Context, content string, po
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 
+	log.Printf("Polkassembly: Response status: %d", resp.StatusCode)
+	log.Printf("Polkassembly: Response body: %s", string(respBody)) // Log the actual response
+
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return nil, fmt.Errorf("unexpected status code: %d, body: %s", resp.StatusCode, string(respBody))
 	}
 
-	log.Printf("Polkassembly: Successfully posted comment to referendum #%d", postID)
 	return respBody, nil
 }
