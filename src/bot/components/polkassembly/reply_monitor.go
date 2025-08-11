@@ -46,7 +46,7 @@ func (rm *ReplyMonitor) Start(ctx context.Context, interval time.Duration) {
 func (rm *ReplyMonitor) checkForReplies() {
 	// Get all unfinalized referenda with Polkassembly comments
 	var refs []types.Ref
-	err := rm.db.Where("finalized = ? AND polkassembly_comment_id IS NOT NULL AND polkassembly_comment_id > 0", false).
+	err := rm.db.Where("finalized = ? AND polkassembly_comment_id IS NOT NULL AND polkassembly_comment_id != ''", false).
 		Where("last_reply_check IS NULL OR last_reply_check < ?", time.Now().Add(-5*time.Minute)).
 		Find(&refs).Error
 	if err != nil {
@@ -78,8 +78,14 @@ func (rm *ReplyMonitor) checkReferendumReplies(ref types.Ref) {
 		networkName = "kusama"
 	}
 
-	// Get replies from Polkassembly
-	replies, err := rm.getReplies(networkName, int(ref.RefID), int(ref.PolkassemblyCommentID))
+	// Check if we have a comment ID
+	if ref.PolkassemblyCommentID == nil || *ref.PolkassemblyCommentID == "" {
+		rm.logger.Printf("No Polkassembly comment ID for %s ref %d", networkName, ref.RefID)
+		return
+	}
+
+	// Get replies from Polkassembly - pass the string comment ID
+	replies, err := rm.getReplies(networkName, int(ref.RefID), *ref.PolkassemblyCommentID)
 	if err != nil {
 		rm.logger.Printf("Failed to get replies for %s ref %d: %v", networkName, ref.RefID, err)
 		return
@@ -120,23 +126,22 @@ func (rm *ReplyMonitor) checkReferendumReplies(ref types.Ref) {
 }
 
 type PolkassemblyReply struct {
-	ID        int       `json:"id"`
-	UserID    int       `json:"user_id"`
+	ID        string    `json:"id"` // String ID for v2 API
+	UserID    int       `json:"userId"`
 	Username  string    `json:"username"`
 	Content   string    `json:"content"`
-	CreatedAt time.Time `json:"created_at"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
-func (rm *ReplyMonitor) getReplies(network string, refID int, commentID int) ([]PolkassemblyReply, error) {
-	// Try the v1 API endpoint which might work better
-	url := fmt.Sprintf("https://%s.polkassembly.io/api/v1/posts/on-chain-post/%d/comments", network, refID)
+func (rm *ReplyMonitor) getReplies(network string, refID int, commentID string) ([]PolkassemblyReply, error) {
+	// Use v2 API to get comments
+	url := fmt.Sprintf("https://%s.polkassembly.io/api/v2/ReferendumV2/%d/comments", network, refID)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Add headers to look like a proper API request
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 
@@ -154,57 +159,30 @@ func (rm *ReplyMonitor) getReplies(network string, refID int, commentID int) ([]
 	// Check if response is HTML (error page)
 	bodyStr := string(body)
 	if strings.HasPrefix(strings.TrimSpace(bodyStr), "<") {
-		// Log first 200 chars of HTML for debugging
-		preview := bodyStr
-		if len(preview) > 200 {
-			preview = preview[:200]
-		}
-		rm.logger.Printf("Got HTML response instead of JSON from %s: %s...", url, preview)
-
-		// Return empty array - no replies found
+		rm.logger.Printf("Got HTML response instead of JSON from %s", url)
 		return []PolkassemblyReply{}, nil
 	}
 
-	// Try to parse as JSON
-	var response struct {
-		Comments []struct {
-			ID        int       `json:"id"`
-			UserID    int       `json:"user_id"`
-			Username  string    `json:"username"`
-			Content   string    `json:"content"`
-			CreatedAt time.Time `json:"created_at"`
-			Replies   []struct {
-				ID        int       `json:"id"`
-				UserID    int       `json:"user_id"`
-				Username  string    `json:"username"`
-				Content   string    `json:"content"`
-				CreatedAt time.Time `json:"created_at"`
-			} `json:"replies"`
-		} `json:"comments"`
+	// Parse the response
+	var comments []struct {
+		ID              string    `json:"id"`
+		UserID          int       `json:"userId"`
+		Username        string    `json:"username"`
+		Content         string    `json:"content"`
+		CreatedAt       time.Time `json:"createdAt"`
+		ParentCommentID *string   `json:"parentCommentId"`
 	}
 
-	if err := json.Unmarshal(body, &response); err != nil {
-		// Try alternative response format
-		var altResponse []struct {
-			ID        int       `json:"id"`
-			UserID    int       `json:"user_id"`
-			Username  string    `json:"username"`
-			Content   string    `json:"content"`
-			CreatedAt time.Time `json:"created_at"`
-		}
+	if err := json.Unmarshal(body, &comments); err != nil {
+		rm.logger.Printf("Failed to parse comments response: %v", err)
+		return []PolkassemblyReply{}, nil
+	}
 
-		if err2 := json.Unmarshal(body, &altResponse); err2 != nil {
-			rm.logger.Printf("Failed to parse JSON response: %v", err)
-			rm.logger.Printf("Response preview: %s", string(body)[:min(len(body), 500)])
-			return []PolkassemblyReply{}, nil
-		}
-
-		// Convert alt response to replies
-		var replies []PolkassemblyReply
-		for _, comment := range altResponse {
-			if comment.ID == commentID {
-				continue // Skip our own comment
-			}
+	// Find replies to our comment
+	var replies []PolkassemblyReply
+	for _, comment := range comments {
+		// Check if this is a reply to our comment
+		if comment.ParentCommentID != nil && *comment.ParentCommentID == commentID {
 			replies = append(replies, PolkassemblyReply{
 				ID:        comment.ID,
 				UserID:    comment.UserID,
@@ -213,32 +191,7 @@ func (rm *ReplyMonitor) getReplies(network string, refID int, commentID int) ([]
 				CreatedAt: comment.CreatedAt,
 			})
 		}
-		return replies, nil
-	}
-
-	// Find our comment and get replies to it
-	var replies []PolkassemblyReply
-	for _, comment := range response.Comments {
-		if comment.ID == commentID {
-			// Get direct replies to our comment
-			for _, reply := range comment.Replies {
-				replies = append(replies, PolkassemblyReply{
-					ID:        reply.ID,
-					UserID:    reply.UserID,
-					Username:  reply.Username,
-					Content:   reply.Content,
-					CreatedAt: reply.CreatedAt,
-				})
-			}
-		}
 	}
 
 	return replies, nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

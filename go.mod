@@ -11,7 +11,7 @@ require (
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/mr-tron/base58 v1.2.0
 	// Cache
-	github.com/redis/go-redis/v9 v9.12.0
+	github.com/redis/go-redis/v9 v9.12.1
 	// Storage
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.30.1

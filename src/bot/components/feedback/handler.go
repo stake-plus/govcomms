@@ -96,6 +96,7 @@ func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate
 		return
 	}
 }
+
 func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.MessageCreate,
 	threadInfo *referendum.ThreadInfo, network *types.Network, feedbackMsg string) error {
 
@@ -103,7 +104,7 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 
 	author := "DAO Feedback"
 	var isFirstMessage bool
-	var commentID int
+	var commentID string // Changed to string
 	var refID uint64
 
 	// First transaction - save the message
@@ -147,14 +148,13 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 			// Check if it's a timeout - the post might have succeeded
 			if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
 				log.Printf("Timeout posting to Polkassembly - will need to manually check for comment ID for ref %d", threadInfo.RefID)
-				// TODO: We could implement a recovery mechanism to fetch our comment later
 			}
-		} else if commentID > 0 {
+		} else if commentID != "" {
 			// Store the comment ID in a separate transaction
 			if err := h.config.DB.Model(&types.Ref{}).Where("id = ?", refID).Update("polkassembly_comment_id", commentID).Error; err != nil {
 				log.Printf("Failed to store Polkassembly comment ID: %v", err)
 			} else {
-				log.Printf("Stored Polkassembly comment ID %d for ref %d", commentID, threadInfo.RefID)
+				log.Printf("Stored Polkassembly comment ID %s for ref %d", commentID, threadInfo.RefID)
 			}
 		}
 	}
@@ -170,10 +170,10 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 		Timestamp: time.Now().Format(time.RFC3339),
 	}
 
-	if isFirstMessage && commentID > 0 {
+	if isFirstMessage && commentID != "" {
 		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
 			Name:  "Polkassembly",
-			Value: fmt.Sprintf("✅ Posted to Polkassembly with comment ID %d", commentID),
+			Value: fmt.Sprintf("✅ Posted to Polkassembly with comment ID %s", commentID),
 		})
 	} else if isFirstMessage && h.polkassembly != nil {
 		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{

@@ -91,13 +91,14 @@ func NewService(logger *log.Logger, db *gorm.DB) (*Service, error) {
 
 	return service, nil
 }
-func (s *Service) PostFirstMessage(network string, refID int, message string) (int, error) {
+
+func (s *Service) PostFirstMessage(network string, refID int, message string) (string, error) { // Changed return type to string
 	s.logger.Printf("PostFirstMessage called for %s referendum #%d", network, refID)
 
 	networkLower := strings.ToLower(network)
 	client, exists := s.clients[networkLower]
 	if !exists {
-		return 0, fmt.Errorf("no Polkassembly client configured for network %s", network)
+		return "", fmt.Errorf("no Polkassembly client configured for network %s", network)
 	}
 
 	var intro, outro string
@@ -128,93 +129,46 @@ func (s *Service) PostFirstMessage(network string, refID int, message string) (i
 	responseBody, err := client.PostCommentWithResponse(ctx, content, refID, networkLower)
 	if err != nil {
 		s.logger.Printf("Error posting to Polkassembly: %v", err)
-		return 0, fmt.Errorf("post comment: %w", err)
+		return "", fmt.Errorf("post comment: %w", err)
 	}
 
 	// Log raw response for debugging
 	s.logger.Printf("Raw Polkassembly response: %s", string(responseBody))
 
-	// Try to parse the response - Polkassembly v2 API might return different formats
-	var commentID int
+	// Parse the response - Polkassembly v2 API returns string IDs
+	var commentID string
 
-	// First try: Direct comment object
-	var directComment struct {
-		ID      int    `json:"id"`
-		Content string `json:"content"`
-	}
-	if err := json.Unmarshal(responseBody, &directComment); err == nil && directComment.ID > 0 {
-		commentID = directComment.ID
-		s.logger.Printf("Found comment ID from direct response: %d", commentID)
-	}
-
-	// Second try: Wrapped in data field
-	if commentID == 0 {
-		var wrappedResponse struct {
-			Data struct {
-				ID      int    `json:"id"`
-				Content string `json:"content"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal(responseBody, &wrappedResponse); err == nil && wrappedResponse.Data.ID > 0 {
-			commentID = wrappedResponse.Data.ID
-			s.logger.Printf("Found comment ID from data field: %d", commentID)
-		}
+	// Parse the response
+	var response struct {
+		ID              string    `json:"id"`
+		Network         string    `json:"network"`
+		ProposalType    string    `json:"proposalType"`
+		UserID          int       `json:"userId"`
+		Content         string    `json:"content"`
+		CreatedAt       time.Time `json:"createdAt"`
+		UpdatedAt       time.Time `json:"updatedAt"`
+		IsDeleted       bool      `json:"isDeleted"`
+		IndexOrHash     string    `json:"indexOrHash"`
+		ParentCommentID *string   `json:"parentCommentId"`
+		DataSource      string    `json:"dataSource"`
+		AISentiment     string    `json:"aiSentiment"`
 	}
 
-	// Third try: Comment field
-	if commentID == 0 {
-		var commentResponse struct {
-			Comment struct {
-				ID      int    `json:"id"`
-				Content string `json:"content"`
-			} `json:"comment"`
-		}
-		if err := json.Unmarshal(responseBody, &commentResponse); err == nil && commentResponse.Comment.ID > 0 {
-			commentID = commentResponse.Comment.ID
-			s.logger.Printf("Found comment ID from comment field: %d", commentID)
-		}
+	if err := json.Unmarshal(responseBody, &response); err != nil {
+		s.logger.Printf("Failed to parse Polkassembly response: %v", err)
+		return "", fmt.Errorf("parse response: %w", err)
 	}
 
-	// Fourth try: Generic map to find any ID field
-	if commentID == 0 {
-		var genericResponse map[string]interface{}
-		if err := json.Unmarshal(responseBody, &genericResponse); err == nil {
-			s.logger.Printf("Generic response map: %+v", genericResponse)
+	commentID = response.ID
 
-			// Check for id at root
-			if id, ok := genericResponse["id"].(float64); ok {
-				commentID = int(id)
-				s.logger.Printf("Found comment ID from root: %d", commentID)
-			}
-
-			// Check nested objects
-			for key, value := range genericResponse {
-				if obj, ok := value.(map[string]interface{}); ok {
-					if id, ok := obj["id"].(float64); ok {
-						commentID = int(id)
-						s.logger.Printf("Found comment ID from %s.id: %d", key, commentID)
-						break
-					}
-				}
-			}
-		}
+	if commentID == "" {
+		s.logger.Printf("WARNING: No comment ID in Polkassembly response")
+		return "", fmt.Errorf("no comment ID in response")
 	}
 
-	if commentID == 0 {
-		s.logger.Printf("WARNING: Could not extract comment ID from Polkassembly response")
-		s.logger.Printf("Response was: %s", string(responseBody))
+	s.logger.Printf("Successfully posted first message to Polkassembly for %s referendum #%d with comment ID %s",
+		network, refID, commentID)
 
-		// Try to recover the comment ID immediately
-		s.logger.Printf("Attempting to recover comment ID for %s ref %d", network, refID)
-		time.Sleep(5 * time.Second) // Wait a bit for Polkassembly to process
-
-		if recoveredID := s.findOurComment(networkLower, refID); recoveredID > 0 {
-			commentID = recoveredID
-			s.logger.Printf("Successfully recovered comment ID: %d", commentID)
-		}
-	}
-
-	s.logger.Printf("Final comment ID for %s referendum #%d: %d", network, refID, commentID)
 	return commentID, nil
 }
 
