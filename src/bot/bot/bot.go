@@ -10,6 +10,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/redis/go-redis/v9"
 	"github.com/stake-plus/govcomms/src/bot/components/feedback"
+	"github.com/stake-plus/govcomms/src/bot/components/network"
 	"github.com/stake-plus/govcomms/src/bot/components/polkassembly"
 	"github.com/stake-plus/govcomms/src/bot/components/referendum"
 	"github.com/stake-plus/govcomms/src/bot/config"
@@ -63,14 +64,25 @@ func New(cfg *config.Config, db *gorm.DB, rdb *redis.Client) (*Bot, error) {
 }
 
 func (b *Bot) initHandlers() {
+	// Create network manager
+	networkManager, err := network.NewManager(b.db)
+	if err != nil {
+		log.Printf("Failed to create network manager: %v", err)
+		networkManager = nil
+	}
+
+	// Create referendum manager
+	refManager := referendum.NewManager(b.db)
+
 	// Create feedback handler config
 	feedbackConfig := feedback.Config{
 		DB:                  b.db,
+		NetworkManager:      networkManager,
+		RefManager:          refManager,
 		FeedbackRoleID:      b.config.FeedbackRoleID,
 		GuildID:             b.config.GuildID,
 		PolkassemblyService: b.polkassembly,
 	}
-
 	feedbackHandler := feedback.NewHandler(feedbackConfig)
 
 	// Create referendum handler

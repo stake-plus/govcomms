@@ -200,16 +200,6 @@ func (h *Handler) hasRole(s *discordgo.Session, guildID, userID, roleID string) 
 		}
 	}
 
-	// Check if user has thread title parsing abilities to determine network/ref
-	channel, err := s.Channel(userID)
-	if err == nil && channel.Type == discordgo.ChannelTypeGuildPublicThread {
-		// Parse thread title for referendum info
-		networkID, refID := h.parseThreadTitle(channel.Name)
-		if networkID > 0 && refID > 0 {
-			return true
-		}
-	}
-
 	return false
 }
 

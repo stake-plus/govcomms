@@ -41,7 +41,13 @@ func NewService(logger *log.Logger, db *gorm.DB) (*Service, error) {
 		mnemonic := data.GetSetting(fmt.Sprintf("polkassembly_%s_mnemonic", networkLower))
 
 		if mnemonic != "" {
-			signer, _ := NewPolkadotSignerFromSeed(mnemonic, uint16(network.ID))
+			var ss58Format uint16
+			if network.ID == 1 { // Polkadot in DB
+				ss58Format = 0 // Polkadot SS58 format
+			} else {
+				ss58Format = uint16(network.ID) // Kusama and others use same ID
+			}
+			signer, _ := NewPolkadotSignerFromSeed(mnemonic, ss58Format)
 			client := NewClient(networkLower, signer)
 			clients[networkLower] = client
 			logger.Printf("Polkassembly enabled for %s (address: %s)", network.Name, signer.Address())
