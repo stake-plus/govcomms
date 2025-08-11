@@ -1,6 +1,6 @@
 # Variables
 BINARY_NAME=govcomms-bot
-BUILD_DIR=build
+BUILD_DIR=bin
 SRC_DIR=src/bot
 POLKADOT_DIR=src/polkadot-go
 
