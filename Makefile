@@ -1,86 +1,110 @@
-# File: Makefile
-
-.PHONY: all build test clean docker GCApi GCBot GCUI indexer migrate
-
 # Variables
-DOCKER_COMPOSE = docker-compose
-GO = go
-NPM = npm
+BINARY_NAME=govcomms-bot
+BUILD_DIR=build
+SRC_DIR=src/bot
+POLKADOT_DIR=src/polkadot-go
 
-# OS detection
+# Go commands
+GOCMD=go
+GOBUILD=$(GOCMD) build
+GOCLEAN=$(GOCMD) clean
+GOTEST=$(GOCMD) test
+GOGET=$(GOCMD) get
+GOMOD=$(GOCMD) mod
+GOFMT=$(GOCMD) fmt
+
+# Build variables
+BINARY_UNIX=$(BUILD_DIR)/$(BINARY_NAME)
+BINARY_WIN=$(BUILD_DIR)/$(BINARY_NAME).exe
+
+# Get OS
 ifeq ($(OS),Windows_NT)
-    RM = cmd /C if exist
-    RMDIR = rmdir /S /Q
-    MKDIR = mkdir
-    CP = xcopy /E /Y /I
-    EXE = .exe
-    SEP = \\
+    BINARY=$(BINARY_WIN)
+    RM=del /Q
+    MKDIR=mkdir
 else
-    RM = rm -f
-    RMDIR = rm -rf
-    MKDIR = mkdir -p
-    CP = cp -r
-    EXE =
-    SEP = /
+    BINARY=$(BINARY_UNIX)
+    RM=rm -f
+    MKDIR=mkdir -p
 endif
 
+# Phony targets
+.PHONY: all build clean test deps run fmt help
+
 # Default target
-all: build
+all: deps build
 
-# Build all components
-build: GCApi GCBot GCUI
+# Help target
+help:
+	@echo Available targets:
+	@echo   make build    - Build the bot binary
+	@echo   make run      - Run the bot directly
+	@echo   make clean    - Clean build artifacts
+	@echo   make deps     - Download dependencies
+	@echo   make test     - Run tests
+	@echo   make fmt      - Format code
+	@echo   make all      - Download deps and build
 
-# Build API
-GCApi:
-	@echo "Building API..."
-	$(GO) build -o bin/GCApi$(EXE) ./src/GCApi
+# Download dependencies
+deps:
+	$(GOMOD) download
+	$(GOMOD) tidy
 
-# Build Discord bot
-GCBot:
-	@echo "Building Discord bot..."
-	$(GO) build -o bin/GCBot$(EXE) ./src/GCBot
+# Build the bot binary
+build:
+	@echo Building bot...
+	@$(MKDIR) $(BUILD_DIR)
+	$(GOBUILD) -o $(BINARY) $(SRC_DIR)/main.go
+	@echo Bot built: $(BINARY)
 
-# Build gcui
-GCUI:
-	@echo "Building GCUI..."
-	cd src/GCUI && $(NPM) install && $(NPM) run build
-	$(MKDIR) public
-	$(CP) src$(SEP)GCUI$(SEP)dist$(SEP)* public$(SEP)
+# Build for specific platforms
+build-windows:
+	@echo Building for Windows...
+	@$(MKDIR) $(BUILD_DIR)
+	GOOS=windows GOARCH=amd64 $(GOBUILD) -o $(BINARY_WIN) $(SRC_DIR)/main.go
+	@echo Windows binary built: $(BINARY_WIN)
 
-# Run tests
-test:
-	@echo "Running tests..."
-	$(GO) test ./...
+build-linux:
+	@echo Building for Linux...
+	@$(MKDIR) $(BUILD_DIR)
+	GOOS=linux GOARCH=amd64 $(GOBUILD) -o $(BINARY_UNIX) $(SRC_DIR)/main.go
+	@echo Linux binary built: $(BINARY_UNIX)
+
+build-mac:
+	@echo Building for macOS...
+	@$(MKDIR) $(BUILD_DIR)
+	GOOS=darwin GOARCH=amd64 $(GOBUILD) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin $(SRC_DIR)/main.go
+	@echo macOS binary built: $(BUILD_DIR)/$(BINARY_NAME)-darwin
+
+# Build all platforms
+build-all: build-windows build-linux build-mac
+
+# Run the bot directly
+run:
+	@echo Running bot...
+	$(GOCMD) run $(SRC_DIR)/main.go
 
 # Clean build artifacts
 clean:
-	@echo "Cleaning..."
-	$(RMDIR) bin
-	$(RMDIR) public
+	@echo Cleaning...
+	$(GOCLEAN)
+	@$(RM) $(BUILD_DIR)$(if $(findstring Windows_NT,$(OS)),\*,/*)
+	@echo Clean complete
 
-# Docker commands
-docker-up:
-	$(DOCKER_COMPOSE) up -d
+# Run tests
+test:
+	@echo Running tests...
+	$(GOTEST) -v ./$(SRC_DIR)/...
+	$(GOTEST) -v ./$(POLKADOT_DIR)/...
 
-docker-down:
-	$(DOCKER_COMPOSE) down
+# Format code
+fmt:
+	@echo Formatting code...
+	$(GOFMT) ./$(SRC_DIR)/...
+	$(GOFMT) ./$(POLKADOT_DIR)/...
+	@echo Formatting complete
 
-docker-build:
-	$(DOCKER_COMPOSE) build
-
-# Development commands
-dev-api:
-	$(GO) run ./src/GCApi
-
-dev-bot:
-	$(GO) run ./src/GCBot
-
-dev-frontend:
-	cd src/frontend && $(NPM) run dev
-
-# Install dependencies
-deps:
-	@echo "Installing Go dependencies..."
-	$(GO) mod download
-	@echo "Installing frontend dependencies..."
-	cd src/GCUI && $(NPM) install
+# Development mode with auto-restart on file changes (requires entr or watchexec)
+dev:
+	@echo Starting in development mode...
+	$(GOCMD) run $(SRC_DIR)/main.go
