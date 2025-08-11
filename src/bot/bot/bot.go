@@ -119,9 +119,14 @@ func (b *Bot) Stop() {
 	b.session.Close()
 }
 
+func (b *Bot) handleThreadUpdate(s *discordgo.Session, t *discordgo.ThreadUpdate) {
+	b.refManager.HandleThreadUpdate(t)
+}
+
 func (b *Bot) handleReady(s *discordgo.Session, event *discordgo.Ready) {
 	log.Printf("Discord bot logged in as %s", event.User.Username)
 
+	// Initial thread sync
 	if err := b.refManager.SyncThreads(s, b.config.GuildID); err != nil {
 		log.Printf("Failed to sync threads: %v", err)
 	}
@@ -149,8 +154,20 @@ func (b *Bot) handleReady(s *discordgo.Session, event *discordgo.Ready) {
 		interval := time.Duration(b.config.IndexerIntervalMinutes) * time.Minute
 		data.IndexerService(b.ctx, b.db, interval, b.config.IndexerWorkers)
 	}()
-}
 
-func (b *Bot) handleThreadUpdate(s *discordgo.Session, t *discordgo.ThreadUpdate) {
-	b.refManager.HandleThreadUpdate(t)
+	// Start indexer service with thread sync callback
+	b.wg.Add(1)
+	go func() {
+		defer b.wg.Done()
+		interval := time.Duration(b.config.IndexerIntervalMinutes) * time.Minute
+
+		syncCallback := func() {
+			log.Println("Indexer completed, syncing threads")
+			if err := b.refManager.SyncThreads(s, b.config.GuildID); err != nil {
+				log.Printf("Failed to sync threads after indexing: %v", err)
+			}
+		}
+
+		data.IndexerServiceWithCallback(b.ctx, b.db, interval, b.config.IndexerWorkers, syncCallback)
+	}()
 }

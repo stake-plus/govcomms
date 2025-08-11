@@ -482,3 +482,58 @@ func IndexerService(ctx context.Context, db *gorm.DB, interval time.Duration, wo
 	<-ctx.Done()
 	log.Println("Indexer service stopping")
 }
+
+type IndexerCallback func()
+
+func IndexerServiceWithCallback(ctx context.Context, db *gorm.DB, interval time.Duration, workers int, callback IndexerCallback) {
+	// Create multi-network indexer but don't use StartAll since we need to inject callback
+	var networks []types.Network
+	if err := db.Find(&networks).Error; err != nil {
+		log.Printf("Failed to load networks: %v", err)
+		return
+	}
+
+	var wg sync.WaitGroup
+
+	for _, network := range networks {
+		indexer, err := NewNetworkIndexer(network.ID, network.Name, db, workers)
+		if err != nil {
+			log.Printf("Failed to create indexer for %s: %v", network.Name, err)
+			continue
+		}
+
+		wg.Add(1)
+		go func(idx *NetworkIndexer, netName string) {
+			defer wg.Done()
+			log.Printf("Starting indexer for %s", netName)
+
+			// Run indexer with periodic callback
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+
+			// Run immediately
+			idx.indexOnce(ctx)
+			if callback != nil {
+				callback()
+			}
+
+			for {
+				select {
+				case <-ctx.Done():
+					log.Printf("Stopping indexer for %s", netName)
+					return
+				case <-ticker.C:
+					idx.indexOnce(ctx)
+					if callback != nil {
+						callback()
+					}
+				}
+			}
+		}(indexer, network.Name)
+	}
+
+	// Wait for context cancellation
+	<-ctx.Done()
+	wg.Wait()
+	log.Println("Indexer service stopping")
+}
