@@ -103,7 +103,6 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 	log.Printf("Processing feedback for %s ref #%d", network.Name, threadInfo.RefID)
 
 	author := "DAO Feedback"
-	var msgID uint64
 	var isFirstMessage bool
 	var commentID int
 
@@ -128,8 +127,6 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 		if err := tx.Create(&msg).Error; err != nil {
 			return err
 		}
-
-		msgID = msg.ID
 
 		// Post to Polkassembly if first message
 		if isFirstMessage && h.polkassembly != nil {

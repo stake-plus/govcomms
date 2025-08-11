@@ -127,10 +127,3 @@ func (m *MessageMonitor) buildMessageEmbed(msg types.RefMessage, ref types.Ref, 
 		},
 	}
 }
-
-func formatAddress(addr string) string {
-	if len(addr) > 16 {
-		return addr[:8] + "..." + addr[len(addr)-8:]
-	}
-	return addr
-}
