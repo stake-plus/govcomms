@@ -128,13 +128,17 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 			return err
 		}
 
-		// Post to Polkassembly if first message
+		// In processFeedbackFromThread, modify the Polkassembly posting section:
 		if isFirstMessage && h.polkassembly != nil {
 			var err error
 			commentID, err = h.polkassembly.PostFirstMessage(strings.ToLower(network.Name), int(threadInfo.RefID), feedbackMsg)
 			if err != nil {
 				log.Printf("Failed to post to Polkassembly: %v", err)
-				// Don't fail the transaction
+				// Check if it's a timeout - the post might have succeeded
+				if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
+					log.Printf("Timeout posting to Polkassembly - the post may have succeeded. Check manually for ref %d", threadInfo.RefID)
+					// Don't fail the transaction, but note we don't have the comment ID
+				}
 			} else if commentID > 0 {
 				// Update referendum with comment ID
 				tx.Model(&ref).Update("polkassembly_comment_id", commentID)

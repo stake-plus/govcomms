@@ -120,7 +120,8 @@ func (s *Service) PostFirstMessage(network string, refID int, message string) (i
 
 	s.logger.Printf("Attempting to post comment to Polkassembly for %s #%d", network, refID)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+
 	defer cancel()
 
 	responseBody, err := client.PostCommentWithResponse(ctx, content, refID, networkLower)

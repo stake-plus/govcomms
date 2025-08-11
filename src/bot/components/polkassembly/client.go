@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const defaultTimeout = 60 * time.Second
+const defaultTimeout = 120 * time.Second // Increased from 60 to 120 seconds
 
 type Client struct {
 	endpoint   string
