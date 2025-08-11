@@ -39,7 +39,7 @@ func main() {
 
 	rdb := data.MustRedis(cfg.RedisURL)
 
-	b, err := bot.New(cfg, db, rdb)
+	b, err := bot.New(&cfg, db, rdb)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}

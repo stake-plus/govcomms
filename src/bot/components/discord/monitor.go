@@ -36,6 +36,7 @@ func NewMessageMonitor(config MonitorConfig) *MessageMonitor {
 
 func (m *MessageMonitor) Start(ctx context.Context) {
 	log.Println("Starting Discord message monitor for Polkassembly replies")
+
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -59,6 +60,7 @@ func (m *MessageMonitor) checkNewMessages() error {
 		m.lastCheck, false).
 		Order("created_at ASC").
 		Find(&messages).Error
+
 	if err != nil {
 		return err
 	}
@@ -87,18 +89,14 @@ func (m *MessageMonitor) postMessage(msg types.RefMessage) error {
 		return fmt.Errorf("no channel for network %d", ref.NetworkID)
 	}
 
-	thread, err := m.config.RefManager.FindThread(
-		m.config.Session,
-		m.config.GuildID,
-		net.DiscordChannelID,
-		int(ref.RefID),
-	)
+	// Get thread info for this referendum
+	thread, err := m.config.RefManager.GetThreadInfo(ref.NetworkID, uint32(ref.RefID))
 	if err != nil {
 		return fmt.Errorf("find thread: %w", err)
 	}
 
 	embed := m.buildMessageEmbed(msg, ref, net)
-	_, err = m.config.Session.ChannelMessageSendEmbed(thread.ID, embed)
+	_, err = m.config.Session.ChannelMessageSendEmbed(thread.ThreadID, embed)
 	return err
 }
 

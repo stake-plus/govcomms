@@ -3,209 +3,150 @@ package referendum
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
-	"sync"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/stake-plus/govcomms/src/bot/components/network"
+	"github.com/stake-plus/govcomms/src/bot/config"
 	"github.com/stake-plus/govcomms/src/bot/types"
 	"gorm.io/gorm"
 )
 
+type Handler struct {
+	db     *gorm.DB
+	config *config.Config
+}
+
+func NewHandler(db *gorm.DB, config *config.Config) *Handler {
+	return &Handler{
+		db:     db,
+		config: config,
+	}
+}
+
+func (h *Handler) HandleThreadCreate(s *discordgo.Session, t *discordgo.ThreadCreate) {
+	h.processThread(s, t.Channel)
+}
+
+func (h *Handler) HandleThreadUpdate(s *discordgo.Session, t *discordgo.ThreadUpdate) {
+	h.processThread(s, t.Channel)
+}
+
+func (h *Handler) processThread(s *discordgo.Session, thread *discordgo.Channel) {
+	if thread.Type != discordgo.ChannelTypeGuildPublicThread {
+		return
+	}
+
+	networkID, refID, err := h.parseThreadTitle(thread.Name)
+	if err != nil {
+		return
+	}
+
+	var network types.Network
+	if err := h.db.First(&network, networkID).Error; err != nil {
+		log.Printf("Network %d not found: %v", networkID, err)
+		return
+	}
+
+	var ref types.Ref
+	if err := h.db.Where("network_id = ? AND ref_id = ?", networkID, refID).First(&ref).Error; err != nil {
+		log.Printf("Referendum %s #%d not found: %v", network.Name, refID, err)
+		return
+	}
+
+	var refThread types.RefThread
+	err = h.db.Where("thread_id = ?", thread.ID).First(&refThread).Error
+
+	if err == gorm.ErrRecordNotFound {
+		refThread = types.RefThread{
+			ThreadID:  thread.ID,
+			RefDBID:   ref.ID,
+			NetworkID: networkID,
+			RefID:     uint64(refID),
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+
+		if err := h.db.Create(&refThread).Error; err != nil {
+			log.Printf("Failed to create thread mapping: %v", err)
+		} else {
+			log.Printf("Created thread mapping: %s -> %s ref #%d", thread.ID, network.Name, refID)
+		}
+	} else if err == nil {
+		if err := h.db.Model(&refThread).Update("updated_at", time.Now()).Error; err != nil {
+			log.Printf("Failed to update thread mapping: %v", err)
+		} else {
+			log.Printf("Updated thread %s -> %s ref #%d", thread.ID, network.Name, refID)
+		}
+	}
+}
+
+func (h *Handler) parseThreadTitle(title string) (networkID uint8, refID uint32, err error) {
+	polkadotPattern := regexp.MustCompile(`(?i)(?:polkadot|dot)\s*#?\s*(\d+)`)
+	kusamaPattern := regexp.MustCompile(`(?i)(?:kusama|ksm)\s*#?\s*(\d+)`)
+
+	title = strings.ToLower(title)
+
+	if matches := polkadotPattern.FindStringSubmatch(title); matches != nil {
+		networkID = 1
+		ref, _ := strconv.ParseUint(matches[1], 10, 32)
+		refID = uint32(ref)
+		return networkID, refID, nil
+	}
+
+	if matches := kusamaPattern.FindStringSubmatch(title); matches != nil {
+		networkID = 2
+		ref, _ := strconv.ParseUint(matches[1], 10, 32)
+		refID = uint32(ref)
+		return networkID, refID, nil
+	}
+
+	return 0, 0, fmt.Errorf("no referendum found in title: %s", title)
+}
+
 type ThreadInfo struct {
 	ThreadID  string
-	NetworkID uint8
 	RefID     uint64
 	RefDBID   uint64
+	NetworkID uint8
 }
 
 type Manager struct {
-	db       *gorm.DB
-	networks *network.Manager
-	threads  map[string]*ThreadInfo
-	mu       sync.RWMutex
+	db *gorm.DB
 }
 
-func NewManager(db *gorm.DB, networks *network.Manager) *Manager {
-	return &Manager{
-		db:       db,
-		networks: networks,
-		threads:  make(map[string]*ThreadInfo),
-	}
+func NewManager(db *gorm.DB) *Manager {
+	return &Manager{db: db}
 }
 
-func (m *Manager) GetThreadInfo(threadID string) *ThreadInfo {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.threads[threadID]
-}
-
-func (m *Manager) SyncThreads(s *discordgo.Session, guildID string) error {
-	log.Printf("Starting thread sync for guild %s", guildID)
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.threads = make(map[string]*ThreadInfo)
-
-	// Get all networks
-	networks := m.networks.GetAll()
-
-	for netID, network := range networks {
-		if network.DiscordChannelID == "" {
-			continue
-		}
-
-		log.Printf("Syncing threads for %s (channel: %s)", network.Name, network.DiscordChannelID)
-
-		// Get threads for this network's forum channel
-		threads, err := s.ThreadsActive(network.DiscordChannelID)
-		if err != nil {
-			log.Printf("Failed to get threads for %s: %v", network.Name, err)
-			continue
-		}
-
-		for _, thread := range threads.Threads {
-			// Extract ref ID from thread name (format: "498: title")
-			parts := strings.SplitN(thread.Name, ":", 2)
-			if len(parts) < 1 {
-				continue
-			}
-
-			refID, err := strconv.ParseUint(strings.TrimSpace(parts[0]), 10, 64)
-			if err != nil {
-				continue
-			}
-
-			// Check if this referendum exists in database
-			var ref types.Ref
-			if err := m.db.Where("network_id = ? AND ref_id = ?", netID, refID).First(&ref).Error; err != nil {
-				if err != gorm.ErrRecordNotFound {
-					log.Printf("Database error for %s ref %d: %v", network.Name, refID, err)
-				}
-				continue
-			}
-
-			// Store thread mapping
-			info := &ThreadInfo{
-				ThreadID:  thread.ID,
-				NetworkID: netID,
-				RefID:     refID,
-				RefDBID:   ref.ID,
-			}
-
-			m.threads[thread.ID] = info
-			log.Printf("Synced thread: %s -> %s ref #%d", thread.ID, network.Name, refID)
-		}
-
-		// Also check archived threads
-		archived, err := s.ThreadsArchived(network.DiscordChannelID, nil, 100)
-		if err == nil {
-			for _, thread := range archived.Threads {
-				// Skip if already mapped
-				if _, exists := m.threads[thread.ID]; exists {
-					continue
-				}
-
-				// Extract ref ID
-				parts := strings.SplitN(thread.Name, ":", 2)
-				if len(parts) < 1 {
-					continue
-				}
-
-				refID, err := strconv.ParseUint(strings.TrimSpace(parts[0]), 10, 64)
-				if err != nil {
-					continue
-				}
-
-				// Check database
-				var ref types.Ref
-				if err := m.db.Where("network_id = ? AND ref_id = ?", netID, refID).First(&ref).Error; err != nil {
-					continue
-				}
-
-				// Store mapping
-				info := &ThreadInfo{
-					ThreadID:  thread.ID,
-					NetworkID: netID,
-					RefID:     refID,
-					RefDBID:   ref.ID,
-				}
-
-				m.threads[thread.ID] = info
-				log.Printf("Synced archived thread: %s -> %s ref #%d", thread.ID, network.Name, refID)
-			}
-		}
-	}
-
-	log.Printf("Thread sync complete: %d threads synced", len(m.threads))
-	return nil
-}
-
-func (m *Manager) FindThread(s *discordgo.Session, guildID, channelID string, refID int) (*discordgo.Channel, error) {
-	// Get threads from the forum channel
-	threads, err := s.ThreadsActive(channelID)
+func (m *Manager) FindThread(threadID string) (*ThreadInfo, error) {
+	var refThread types.RefThread
+	err := m.db.Where("thread_id = ?", threadID).First(&refThread).Error
 	if err != nil {
 		return nil, err
 	}
 
-	refPrefix := fmt.Sprintf("%d:", refID)
-
-	for _, thread := range threads.Threads {
-		if strings.HasPrefix(strings.TrimSpace(thread.Name), refPrefix) {
-			return thread, nil
-		}
-	}
-
-	// Check archived threads
-	archived, err := s.ThreadsArchived(channelID, nil, 100)
-	if err == nil {
-		for _, thread := range archived.Threads {
-			if strings.HasPrefix(strings.TrimSpace(thread.Name), refPrefix) {
-				return thread, nil
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("thread not found for referendum %d", refID)
+	return &ThreadInfo{
+		ThreadID:  refThread.ThreadID,
+		RefID:     refThread.RefID,
+		RefDBID:   refThread.RefDBID,
+		NetworkID: refThread.NetworkID,
+	}, nil
 }
 
-func (m *Manager) HandleThreadUpdate(t *discordgo.ThreadUpdate) {
-	// Extract ref ID from thread name
-	parts := strings.SplitN(t.Name, ":", 2)
-	if len(parts) < 1 {
-		return
-	}
-
-	refID, err := strconv.ParseUint(strings.TrimSpace(parts[0]), 10, 64)
+func (m *Manager) GetThreadInfo(networkID uint8, refID uint32) (*ThreadInfo, error) {
+	var refThread types.RefThread
+	err := m.db.Where("network_id = ? AND ref_id = ?", networkID, refID).First(&refThread).Error
 	if err != nil {
-		return
+		return nil, err
 	}
 
-	// Find network by channel
-	net := m.networks.FindByChannelID(t.ParentID)
-	if net == nil {
-		return
-	}
-
-	// Check database
-	var ref types.Ref
-	if err := m.db.Where("network_id = ? AND ref_id = ?", net.ID, refID).First(&ref).Error; err != nil {
-		return
-	}
-
-	// Update mapping
-	info := &ThreadInfo{
-		ThreadID:  t.ID,
-		NetworkID: net.ID,
-		RefID:     refID,
-		RefDBID:   ref.ID,
-	}
-
-	m.mu.Lock()
-	m.threads[t.ID] = info
-	m.mu.Unlock()
-
-	log.Printf("Updated thread %s -> %s ref #%d", t.ID, net.Name, refID)
+	return &ThreadInfo{
+		ThreadID:  refThread.ThreadID,
+		RefID:     refThread.RefID,
+		RefDBID:   refThread.RefDBID,
+		NetworkID: refThread.NetworkID,
+	}, nil
 }

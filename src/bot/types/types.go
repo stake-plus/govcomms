@@ -71,16 +71,26 @@ type Ref struct {
 	UpdatedAt               time.Time
 }
 
-// Messages between DAO and proponents
+type RefThread struct {
+	ID        uint64 `gorm:"primaryKey;autoIncrement"`
+	ThreadID  string `gorm:"uniqueIndex"`
+	RefDBID   uint64 `gorm:"index"`
+	NetworkID uint8  `gorm:"index"`
+	RefID     uint64 `gorm:"index"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type RefMessage struct {
-	ID                   uint64 `gorm:"primaryKey"`
-	RefID                uint64 `gorm:"index;not null"`
-	Author               string `gorm:"size:128;not null"`
-	Body                 string `gorm:"type:text;not null"`
-	Internal             bool   `gorm:"default:false"`
-	PolkassemblyUserID   *uint32
-	PolkassemblyUsername string `gorm:"size:128"`
-	CreatedAt            time.Time
+	ID                    uint64 `gorm:"primaryKey;autoIncrement"`
+	RefID                 uint64 `gorm:"index"`
+	Author                string
+	Body                  string `gorm:"type:text"`
+	CreatedAt             time.Time
+	Internal              bool `gorm:"default:false"`
+	PolkassemblyUserID    *uint32
+	PolkassemblyUsername  string
+	PolkassemblyCommentID *string `gorm:"type:varchar(64)"` // Add this field
 }
 
 // Proposal participants

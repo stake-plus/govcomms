@@ -3,6 +3,8 @@ package feedback
 import (
 	"fmt"
 	"log"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,14 +72,14 @@ func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate
 	}
 
 	feedbackMsg := parts[1]
-
 	if len(feedbackMsg) < 10 || len(feedbackMsg) > 5000 {
 		s.ChannelMessageSend(m.ChannelID, "Feedback message must be between 10 and 5000 characters")
 		return
 	}
 
-	threadInfo := h.config.RefManager.GetThreadInfo(m.ChannelID)
-	if threadInfo == nil {
+	// Try to find thread info from channel ID
+	threadInfo, err := h.config.RefManager.FindThread(m.ChannelID)
+	if err != nil || threadInfo == nil {
 		log.Printf("Channel %s is not a recognized referendum thread", m.ChannelID)
 		s.ChannelMessageSend(m.ChannelID, "This command must be used in a referendum thread.")
 		return
@@ -104,7 +106,7 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 
 	author := "DAO Feedback"
 	var isFirstMessage bool
-	var commentID string // Changed to string
+	var commentID string
 	var refID uint64
 
 	// First transaction - save the message
@@ -144,7 +146,6 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 		commentID, err = h.polkassembly.PostFirstMessage(strings.ToLower(network.Name), int(threadInfo.RefID), feedbackMsg)
 		if err != nil {
 			log.Printf("Failed to post to Polkassembly: %v", err)
-
 			// Check if it's a timeout - the post might have succeeded
 			if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
 				log.Printf("Timeout posting to Polkassembly - will need to manually check for comment ID for ref %d", threadInfo.RefID)
@@ -184,7 +185,6 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 
 	s.ChannelMessageSendEmbed(m.ChannelID, embed)
 	log.Printf("Feedback submitted for %s/%d: %d chars", network.Name, threadInfo.RefID, len(feedbackMsg))
-
 	return nil
 }
 
@@ -200,5 +200,33 @@ func (h *Handler) hasRole(s *discordgo.Session, guildID, userID, roleID string) 
 		}
 	}
 
+	// Check if user has thread title parsing abilities to determine network/ref
+	channel, err := s.Channel(userID)
+	if err == nil && channel.Type == discordgo.ChannelTypeGuildPublicThread {
+		// Parse thread title for referendum info
+		networkID, refID := h.parseThreadTitle(channel.Name)
+		if networkID > 0 && refID > 0 {
+			return true
+		}
+	}
+
 	return false
+}
+
+func (h *Handler) parseThreadTitle(title string) (networkID uint8, refID uint32) {
+	// Polkadot pattern
+	polkadotPattern := regexp.MustCompile(`(?i)(?:polkadot|dot)\s*#?\s*(\d+)`)
+	if matches := polkadotPattern.FindStringSubmatch(title); matches != nil {
+		ref, _ := strconv.ParseUint(matches[1], 10, 32)
+		return 1, uint32(ref)
+	}
+
+	// Kusama pattern
+	kusamaPattern := regexp.MustCompile(`(?i)(?:kusama|ksm)\s*#?\s*(\d+)`)
+	if matches := kusamaPattern.FindStringSubmatch(title); matches != nil {
+		ref, _ := strconv.ParseUint(matches[1], 10, 32)
+		return 2, uint32(ref)
+	}
+
+	return 0, 0
 }

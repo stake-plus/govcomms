@@ -4,14 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"sync"
+	"os"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/redis/go-redis/v9"
-	"github.com/stake-plus/govcomms/src/bot/components/discord"
 	"github.com/stake-plus/govcomms/src/bot/components/feedback"
-	"github.com/stake-plus/govcomms/src/bot/components/network"
 	"github.com/stake-plus/govcomms/src/bot/components/polkassembly"
 	"github.com/stake-plus/govcomms/src/bot/components/referendum"
 	"github.com/stake-plus/govcomms/src/bot/config"
@@ -20,159 +18,159 @@ import (
 )
 
 type Bot struct {
-	session             *discordgo.Session
-	db                  *gorm.DB
-	rdb                 *redis.Client
-	config              config.Config
-	networks            *network.Manager
-	feedbackHandler     *feedback.Handler
-	refManager          *referendum.Manager
-	messageMonitor      *discord.MessageMonitor
-	polkassemblyService *polkassembly.Service
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	wg                  sync.WaitGroup
+	config       *config.Config
+	db           *gorm.DB
+	redis        *redis.Client
+	session      *discordgo.Session
+	handlers     []interface{}
+	cancelFunc   context.CancelFunc
+	polkassembly *polkassembly.Service
 }
 
-func New(cfg config.Config, db *gorm.DB, rdb *redis.Client) (*Bot, error) {
-	dg, err := discordgo.New("Bot " + cfg.Token)
+func New(cfg *config.Config, db *gorm.DB, rdb *redis.Client) (*Bot, error) {
+	// Create Discord session
+	session, err := discordgo.New("Bot " + cfg.Token)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create Discord session: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Set intents
+	session.Identify.Intents = discordgo.IntentsGuilds |
+		discordgo.IntentsGuildMessages |
+		discordgo.IntentsGuildMessageReactions |
+		discordgo.IntentsMessageContent |
+		discordgo.IntentsDirectMessages
+
+	// Initialize Polkassembly service
+	polkassemblyLogger := log.New(os.Stdout, "[Polkassembly] ", log.LstdFlags)
+	polkassemblyService, err := polkassembly.NewService(polkassemblyLogger, db)
+	if err != nil {
+		log.Printf("Failed to create Polkassembly service: %v", err)
+	}
 
 	bot := &Bot{
-		session: dg,
-		db:      db,
-		rdb:     rdb,
-		config:  cfg,
-		ctx:     ctx,
-		cancel:  cancel,
+		config:       cfg,
+		db:           db,
+		redis:        rdb,
+		session:      session,
+		polkassembly: polkassemblyService,
 	}
 
-	if err := bot.initializeComponents(); err != nil {
-		return nil, err
-	}
-
-	bot.registerHandlers()
-
-	dg.Identify.Intents = discordgo.IntentsGuildMessages |
-		discordgo.IntentsMessageContent |
-		discordgo.IntentsGuilds
+	// Initialize handlers
+	bot.initHandlers()
 
 	return bot, nil
 }
 
-func (b *Bot) initializeComponents() error {
-	netMgr, err := network.NewManager(b.db)
-	if err != nil {
-		return fmt.Errorf("create network manager: %w", err)
-	}
-	b.networks = netMgr
-
-	b.refManager = referendum.NewManager(b.db, b.networks)
-
-	log.Println("Initializing Polkassembly service...")
-	polkassemblyService, err := polkassembly.NewService(log.Default(), b.db)
-	if err != nil {
-		log.Printf("WARNING: Failed to initialize Polkassembly service: %v", err)
-		polkassemblyService = nil
-	} else {
-		log.Println("Polkassembly service initialized successfully")
-	}
-	b.polkassemblyService = polkassemblyService
-
-	b.feedbackHandler = feedback.NewHandler(feedback.Config{
+func (b *Bot) initHandlers() {
+	// Create feedback handler config
+	feedbackConfig := feedback.Config{
 		DB:                  b.db,
-		NetworkManager:      b.networks,
-		RefManager:          b.refManager,
 		FeedbackRoleID:      b.config.FeedbackRoleID,
 		GuildID:             b.config.GuildID,
-		PolkassemblyService: polkassemblyService,
+		PolkassemblyService: b.polkassembly,
+	}
+
+	feedbackHandler := feedback.NewHandler(feedbackConfig)
+
+	// Create referendum handler
+	referendumHandler := referendum.NewHandler(b.db, b.config)
+
+	// Store handlers
+	b.handlers = []interface{}{
+		feedbackHandler,
+		referendumHandler,
+	}
+
+	// Register Discord event handlers
+	b.session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
+		log.Printf("Logged in as: %v#%v", s.State.User.Username, s.State.User.Discriminator)
 	})
 
-	b.messageMonitor = discord.NewMessageMonitor(discord.MonitorConfig{
-		DB:             b.db,
-		NetworkManager: b.networks,
-		RefManager:     b.refManager,
-		Session:        b.session,
-		GuildID:        b.config.GuildID,
+	// Message create handler
+	b.session.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
+		// Ignore bot messages
+		if m.Author.ID == s.State.User.ID {
+			return
+		}
+
+		// Handle feedback command
+		if feedbackHandler != nil {
+			feedbackHandler.HandleMessage(s, m)
+		}
 	})
+
+	// Thread create handler
+	b.session.AddHandler(func(s *discordgo.Session, t *discordgo.ThreadCreate) {
+		if referendumHandler != nil {
+			referendumHandler.HandleThreadCreate(s, t)
+		}
+	})
+
+	// Thread update handler
+	b.session.AddHandler(func(s *discordgo.Session, t *discordgo.ThreadUpdate) {
+		if referendumHandler != nil {
+			referendumHandler.HandleThreadUpdate(s, t)
+		}
+	})
+}
+
+func (b *Bot) Start() error {
+	// Open Discord connection
+	if err := b.session.Open(); err != nil {
+		return fmt.Errorf("failed to open Discord connection: %w", err)
+	}
+
+	// Create context for services
+	ctx, cancel := context.WithCancel(context.Background())
+	b.cancelFunc = cancel
+
+	// Start indexer service
+	go func() {
+		log.Println("Starting indexer service")
+		data.IndexerService(ctx, b.db, 5*time.Minute, 4)
+	}()
+
+	// Start referendum sync service
+	go func() {
+		log.Println("Starting referendum sync service")
+		referendum.StartPeriodicSync(ctx, b.session, b.db, b.config, 10*time.Minute)
+	}()
+
+	// Start Polkassembly reply monitor if service is available
+	if b.polkassembly != nil {
+		go func() {
+			log.Println("Starting Polkassembly reply monitor")
+			polkassemblyLogger := log.New(os.Stdout, "[ReplyMonitor] ", log.LstdFlags)
+			replyMonitor := polkassembly.NewReplyMonitor(b.db, b.polkassembly, b.session, polkassemblyLogger)
+			replyMonitor.Start(ctx, 2*time.Minute)
+		}()
+	}
 
 	return nil
 }
 
-func (b *Bot) registerHandlers() {
-	b.session.AddHandler(b.handleReady)
-	b.session.AddHandler(b.feedbackHandler.HandleMessage)
-	b.session.AddHandler(b.handleThreadUpdate)
-}
-
-func (b *Bot) Start() error {
-	return b.session.Open()
-}
-
 func (b *Bot) Stop() {
-	b.cancel()
-	b.wg.Wait()
-	b.session.Close()
-}
-
-func (b *Bot) handleThreadUpdate(s *discordgo.Session, t *discordgo.ThreadUpdate) {
-	b.refManager.HandleThreadUpdate(t)
-}
-
-func (b *Bot) handleReady(s *discordgo.Session, event *discordgo.Ready) {
-	log.Printf("Discord bot logged in as %s", event.User.Username)
-
-	// Initial thread sync
-	if err := b.refManager.SyncThreads(s, b.config.GuildID); err != nil {
-		log.Printf("Failed to sync threads: %v", err)
+	// Cancel context to stop services
+	if b.cancelFunc != nil {
+		b.cancelFunc()
 	}
 
-	// Start monitoring for new messages from Polkassembly
-	b.wg.Add(1)
-	go func() {
-		defer b.wg.Done()
-		b.messageMonitor.Start(b.ctx)
-	}()
-
-	// Start Polkassembly reply monitor
-	if b.polkassemblyService != nil {
-		b.wg.Add(1)
-		go func() {
-			defer b.wg.Done()
-			b.polkassemblyService.StartReplyMonitor(b.ctx, 5*time.Minute)
-		}()
+	// Close Discord session
+	if b.session != nil {
+		b.session.Close()
 	}
 
-	// Start indexer service
-	b.wg.Add(1)
-	go func() {
-		defer b.wg.Done()
-		interval := time.Duration(b.config.IndexerIntervalMinutes) * time.Minute
-		data.IndexerService(b.ctx, b.db, interval, b.config.IndexerWorkers)
-	}()
-
-	// Start periodic thread sync (every 5 minutes)
-	b.wg.Add(1)
-	go func() {
-		defer b.wg.Done()
-		ticker := time.NewTicker(5 * time.Minute)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-b.ctx.Done():
-				log.Println("Stopping thread sync")
-				return
-			case <-ticker.C:
-				log.Println("Running periodic thread sync")
-				if err := b.refManager.SyncThreads(s, b.config.GuildID); err != nil {
-					log.Printf("Failed to sync threads: %v", err)
-				}
-			}
+	// Close database connection
+	if b.db != nil {
+		sqlDB, err := b.db.DB()
+		if err == nil {
+			sqlDB.Close()
 		}
-	}()
+	}
+
+	// Close Redis connection
+	if b.redis != nil {
+		b.redis.Close()
+	}
 }
