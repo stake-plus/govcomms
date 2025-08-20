@@ -105,7 +105,7 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 	author := "DAO Feedback"
 	var isFirstMessage bool
 	var commentID string
-	var refID uint64
+	var msgID uint64
 
 	// First transaction - save the message
 	err := h.config.DB.Transaction(func(tx *gorm.DB) error {
@@ -113,13 +113,13 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 		if err := tx.First(&ref, threadInfo.RefDBID).Error; err != nil {
 			return fmt.Errorf("referendum not found: %w", err)
 		}
-		refID = ref.ID
 
+		// Check if this is the first internal message
 		var msgCount int64
-		tx.Model(&types.RefMessage{}).Where("ref_id = ?", ref.ID).Count(&msgCount)
+		tx.Model(&types.RefMessage{}).Where("ref_id = ? AND internal = ?", ref.ID, true).Count(&msgCount)
 		isFirstMessage = msgCount == 0
 
-		log.Printf("Message count for ref %d: %d, isFirstMessage: %v", ref.ID, msgCount, isFirstMessage)
+		log.Printf("Internal message count for ref %d: %d, isFirstMessage: %v", ref.ID, msgCount, isFirstMessage)
 
 		msg := types.RefMessage{
 			RefID:     ref.ID,
@@ -133,6 +133,7 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 			return err
 		}
 
+		msgID = msg.ID
 		return nil
 	})
 
@@ -152,11 +153,11 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 					log.Printf("Timeout posting to Polkassembly - will need to manually check for comment ID for ref %d", threadInfo.RefID)
 				}
 			} else if commentID != "" {
-				// Store the comment ID in a separate transaction
-				if err := h.config.DB.Model(&types.Ref{}).Where("id = ?", refID).Update("polkassembly_comment_id", commentID).Error; err != nil {
-					log.Printf("Failed to store Polkassembly comment ID: %v", err)
+				// Update the message with the comment ID
+				if err := h.config.DB.Model(&types.RefMessage{}).Where("id = ?", msgID).Update("polkassembly_comment_id", commentID).Error; err != nil {
+					log.Printf("Failed to store Polkassembly comment ID in message: %v", err)
 				} else {
-					log.Printf("Stored Polkassembly comment ID %s for ref %d", commentID, threadInfo.RefID)
+					log.Printf("Stored Polkassembly comment ID %s for message %d", commentID, msgID)
 				}
 			}
 		} else {
@@ -181,6 +182,13 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
 			Name:  "Polkassembly",
 			Value: fmt.Sprintf("✅ Posted to Polkassembly with comment ID %s", commentID),
+		})
+
+		// Add link to the comment
+		polkassemblyURL := fmt.Sprintf("https://%s.polkassembly.io/referenda/%d#%s", strings.ToLower(network.Name), threadInfo.RefID, commentID)
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:  "View on Polkassembly",
+			Value: fmt.Sprintf("[Direct link to comment](%s)", polkassemblyURL),
 		})
 	} else if isFirstMessage && h.polkassembly != nil && commentID == "" {
 		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
