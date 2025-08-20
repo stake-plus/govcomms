@@ -128,7 +128,7 @@ func (rm *ReplyMonitor) checkReferendumReplies(ref types.Ref, ourMessage *types.
 	rm.logger.Printf("Checking replies for %s ref %d (our comment ID: %s)", networkName, ref.RefID, *ourMessage.PolkassemblyCommentID)
 
 	// Get all comments for this referendum from Polkassembly
-	comments, err := rm.getComments(networkName, int(ref.RefID))
+	comments, rawJSON, err := rm.getCommentsWithRaw(networkName, int(ref.RefID))
 	if err != nil {
 		rm.logger.Printf("Failed to get comments for %s ref %d: %v", networkName, ref.RefID, err)
 		return
@@ -136,9 +136,19 @@ func (rm *ReplyMonitor) checkReferendumReplies(ref types.Ref, ourMessage *types.
 
 	rm.logger.Printf("Found %d total comments for %s ref %d", len(comments), networkName, ref.RefID)
 
+	// Log raw JSON for debugging
+	if len(comments) > 0 {
+		rm.logger.Printf("Raw API response: %s", rawJSON)
+	}
+
 	// Find replies to our comment
 	var newReplies []PolkassemblyComment
 	for _, comment := range comments {
+		// Skip our own comment
+		if comment.ID == *ourMessage.PolkassemblyCommentID {
+			continue
+		}
+
 		// Check if this is a reply to our comment
 		if comment.ParentCommentID != nil && *comment.ParentCommentID == *ourMessage.PolkassemblyCommentID {
 			// Check if we already have this reply
@@ -158,13 +168,18 @@ func (rm *ReplyMonitor) checkReferendumReplies(ref types.Ref, ourMessage *types.
 }
 
 func (rm *ReplyMonitor) getComments(network string, refID int) ([]PolkassemblyComment, error) {
+	comments, _, err := rm.getCommentsWithRaw(network, refID)
+	return comments, err
+}
+
+func (rm *ReplyMonitor) getCommentsWithRaw(network string, refID int) ([]PolkassemblyComment, string, error) {
 	// Use v2 API to get comments for a referendum
 	url := fmt.Sprintf("https://%s.polkassembly.io/api/v2/ReferendumV2/%d/comments", network, refID)
 	rm.logger.Printf("Fetching comments from: %s", url)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	req.Header.Set("Accept", "application/json")
@@ -173,35 +188,36 @@ func (rm *ReplyMonitor) getComments(network string, refID int) ([]PolkassemblyCo
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
-	// Check if response is HTML (error page)
 	bodyStr := string(body)
+
+	// Check if response is HTML (error page)
 	if strings.HasPrefix(strings.TrimSpace(bodyStr), "<") {
 		rm.logger.Printf("Got HTML response instead of JSON from %s", url)
-		return []PolkassemblyComment{}, nil
+		return []PolkassemblyComment{}, "", nil
 	}
 
 	// Parse the response - the API returns an array of comments directly
 	var comments []PolkassemblyComment
 	if err := json.Unmarshal(body, &comments); err != nil {
 		rm.logger.Printf("Failed to parse comments response: %v", err)
-		return []PolkassemblyComment{}, nil
+		return []PolkassemblyComment{}, "", nil
 	}
 
-	return comments, nil
+	return comments, bodyStr, nil
 }
 
 func (rm *ReplyMonitor) processReply(ref types.Ref, reply PolkassemblyComment, network types.Network) {
