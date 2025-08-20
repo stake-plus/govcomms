@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -54,8 +54,12 @@ func runSync(session *discordgo.Session, db *gorm.DB, guildID string) {
 	}
 
 	networkMap := make(map[string]uint8)
+	channelNetworkMap := make(map[string]uint8)
 	for _, net := range networks {
 		networkMap[net.Name] = net.ID
+		if net.DiscordChannelID != "" {
+			channelNetworkMap[net.DiscordChannelID] = net.ID
+		}
 	}
 
 	log.Printf("Found %d active threads to check", len(threads.Threads))
@@ -65,7 +69,14 @@ func runSync(session *discordgo.Session, db *gorm.DB, guildID string) {
 			continue
 		}
 
-		networkID, refID, err := parseThreadTitle(thread.Name)
+		// Determine network from parent channel
+		networkID, exists := channelNetworkMap[thread.ParentID]
+		if !exists {
+			continue
+		}
+
+		// Extract referendum ID from title
+		refID, err := parseRefIDFromTitle(thread.Name)
 		if err != nil {
 			continue
 		}
@@ -80,7 +91,6 @@ func runSync(session *discordgo.Session, db *gorm.DB, guildID string) {
 
 		var refThread types.RefThread
 		err = db.Where("thread_id = ?", thread.ID).First(&refThread).Error
-
 		if err == gorm.ErrRecordNotFound {
 			refThread = types.RefThread{
 				ThreadID:  thread.ID,
@@ -114,23 +124,25 @@ func runSync(session *discordgo.Session, db *gorm.DB, guildID string) {
 	log.Printf("Thread sync completed")
 }
 
+func parseRefIDFromTitle(title string) (uint32, error) {
+	// Extract referendum number from title
+	// Title format: "1711: [PULLED - Watch out for MEDIUM PRESSURE proposal]"
+	parts := strings.SplitN(title, ":", 2)
+	if len(parts) == 0 {
+		return 0, fmt.Errorf("no referendum number found")
+	}
+
+	refNumStr := strings.TrimSpace(parts[0])
+	refNum, err := strconv.ParseUint(refNumStr, 10, 32)
+	if err != nil {
+		return 0, fmt.Errorf("invalid referendum number: %s", refNumStr)
+	}
+
+	return uint32(refNum), nil
+}
+
 func parseThreadTitle(title string) (networkID uint8, refID uint32, err error) {
-	polkadotPattern := regexp.MustCompile(`(?i)(?:polkadot|dot)\s*#?\s*(\d+)`)
-	kusamaPattern := regexp.MustCompile(`(?i)(?:kusama|ksm)\s*#?\s*(\d+)`)
-
-	if matches := polkadotPattern.FindStringSubmatch(title); matches != nil {
-		networkID = 1
-		ref, _ := strconv.ParseUint(matches[1], 10, 32)
-		refID = uint32(ref)
-		return networkID, refID, nil
-	}
-
-	if matches := kusamaPattern.FindStringSubmatch(title); matches != nil {
-		networkID = 2
-		ref, _ := strconv.ParseUint(matches[1], 10, 32)
-		refID = uint32(ref)
-		return networkID, refID, nil
-	}
-
-	return 0, 0, fmt.Errorf("no referendum found in title: %s", title)
+	// This function is kept for backwards compatibility but is deprecated
+	// Use parseRefIDFromTitle and determine network from parent channel instead
+	return 0, 0, fmt.Errorf("deprecated function - use parseRefIDFromTitle")
 }

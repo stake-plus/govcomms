@@ -3,7 +3,6 @@ package referendum
 import (
 	"fmt"
 	"log"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -39,7 +38,7 @@ func (h *Handler) processThread(s *discordgo.Session, thread *discordgo.Channel)
 		return
 	}
 
-	networkID, refID, err := h.parseThreadTitle(thread.Name)
+	networkID, refID, err := h.parseThreadTitle(thread.Name, thread.ParentID)
 	if err != nil {
 		return
 	}
@@ -58,7 +57,6 @@ func (h *Handler) processThread(s *discordgo.Session, thread *discordgo.Channel)
 
 	var refThread types.RefThread
 	err = h.db.Where("thread_id = ?", thread.ID).First(&refThread).Error
-
 	if err == gorm.ErrRecordNotFound {
 		refThread = types.RefThread{
 			ThreadID:  thread.ID,
@@ -68,7 +66,6 @@ func (h *Handler) processThread(s *discordgo.Session, thread *discordgo.Channel)
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
-
 		if err := h.db.Create(&refThread).Error; err != nil {
 			log.Printf("Failed to create thread mapping: %v", err)
 		} else {
@@ -83,27 +80,31 @@ func (h *Handler) processThread(s *discordgo.Session, thread *discordgo.Channel)
 	}
 }
 
-func (h *Handler) parseThreadTitle(title string) (networkID uint8, refID uint32, err error) {
-	polkadotPattern := regexp.MustCompile(`(?i)(?:polkadot|dot)\s*#?\s*(\d+)`)
-	kusamaPattern := regexp.MustCompile(`(?i)(?:kusama|ksm)\s*#?\s*(\d+)`)
+func (h *Handler) parseThreadTitle(title string, parentChannelID string) (networkID uint8, refID uint32, err error) {
+	// First determine network from parent channel
+	var network types.Network
+	err = h.db.Where("discord_channel_id = ?", parentChannelID).First(&network).Error
+	if err != nil {
+		return 0, 0, fmt.Errorf("no network found for channel %s", parentChannelID)
+	}
+	networkID = network.ID
 
-	title = strings.ToLower(title)
-
-	if matches := polkadotPattern.FindStringSubmatch(title); matches != nil {
-		networkID = 1
-		ref, _ := strconv.ParseUint(matches[1], 10, 32)
-		refID = uint32(ref)
-		return networkID, refID, nil
+	// Extract referendum number from title
+	// Title format: "1711: [PULLED - Watch out for MEDIUM PRESSURE proposal]"
+	// Extract the number at the beginning
+	parts := strings.SplitN(title, ":", 2)
+	if len(parts) == 0 {
+		return 0, 0, fmt.Errorf("no referendum number found in title: %s", title)
 	}
 
-	if matches := kusamaPattern.FindStringSubmatch(title); matches != nil {
-		networkID = 2
-		ref, _ := strconv.ParseUint(matches[1], 10, 32)
-		refID = uint32(ref)
-		return networkID, refID, nil
+	// Try to parse the first part as a number
+	refNumStr := strings.TrimSpace(parts[0])
+	refNum, err := strconv.ParseUint(refNumStr, 10, 32)
+	if err != nil {
+		return 0, 0, fmt.Errorf("invalid referendum number in title: %s", title)
 	}
 
-	return 0, 0, fmt.Errorf("no referendum found in title: %s", title)
+	return networkID, uint32(refNum), nil
 }
 
 type ThreadInfo struct {
