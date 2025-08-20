@@ -69,6 +69,7 @@ func (rm *ReplyMonitor) checkForReplies() {
 	err := rm.db.Where("finalized = ? AND polkassembly_comment_id IS NOT NULL AND polkassembly_comment_id != ''", false).
 		Where("last_reply_check IS NULL OR last_reply_check < ?", time.Now().Add(-2*time.Minute)).
 		Find(&refs).Error
+
 	if err != nil {
 		rm.logger.Printf("Failed to get refs for reply check: %v", err)
 		return
@@ -136,9 +137,9 @@ func (rm *ReplyMonitor) checkReferendumReplies(ref types.Ref) {
 }
 
 func (rm *ReplyMonitor) getComments(network string, refID int) ([]PolkassemblyComment, error) {
-	// Use v2 API to get all comments for a referendum
-	url := fmt.Sprintf("https://%s.polkassembly.io/api/v2/posts/on-chain-post?proposalType=referendums_v2&postId=%d", network, refID)
-
+	// Use v2 API to get comments for a referendum
+	// The correct endpoint is /api/v2/ReferendumV2/{id}/comments
+	url := fmt.Sprintf("https://%s.polkassembly.io/api/v2/ReferendumV2/%d/comments", network, refID)
 	rm.logger.Printf("Fetching comments from: %s", url)
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -173,22 +174,14 @@ func (rm *ReplyMonitor) getComments(network string, refID int) ([]PolkassemblyCo
 		return []PolkassemblyComment{}, nil
 	}
 
-	// Parse the response - the API returns a post object with comments array
-	var response struct {
-		Comments []PolkassemblyComment `json:"comments"`
+	// Parse the response - the API returns an array of comments directly
+	var comments []PolkassemblyComment
+	if err := json.Unmarshal(body, &comments); err != nil {
+		rm.logger.Printf("Failed to parse comments response: %v", err)
+		return []PolkassemblyComment{}, nil
 	}
 
-	if err := json.Unmarshal(body, &response); err != nil {
-		// Try parsing as array directly (different API versions)
-		var comments []PolkassemblyComment
-		if err2 := json.Unmarshal(body, &comments); err2 != nil {
-			rm.logger.Printf("Failed to parse comments response: %v (original error: %v)", err2, err)
-			return []PolkassemblyComment{}, nil
-		}
-		return comments, nil
-	}
-
-	return response.Comments, nil
+	return comments, nil
 }
 
 func (rm *ReplyMonitor) processReply(ref types.Ref, reply PolkassemblyComment, network types.Network) {
