@@ -24,14 +24,21 @@ type ReplyMonitor struct {
 }
 
 type PolkassemblyComment struct {
-	ID              string    `json:"id"`
-	UserID          int       `json:"userId"`
-	Username        string    `json:"username"`
-	Content         string    `json:"content"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
-	ParentCommentID *string   `json:"parentCommentId"`
-	IsDeleted       bool      `json:"isDeleted"`
+	ID              string                `json:"id"`
+	UserID          int                   `json:"userId"`
+	Username        string                `json:"username"`
+	Content         string                `json:"content"`
+	CreatedAt       time.Time             `json:"createdAt"`
+	UpdatedAt       time.Time             `json:"updatedAt"`
+	ParentCommentID *string               `json:"parentCommentId"`
+	IsDeleted       bool                  `json:"isDeleted"`
+	PublicUser      *PolkassemblyUser     `json:"publicUser"`
+	Children        []PolkassemblyComment `json:"children"`
+}
+
+type PolkassemblyUser struct {
+	ID       int    `json:"id"`
+	Username string `json:"username"`
 }
 
 func NewReplyMonitor(db *gorm.DB, polkassemblyService *Service, discord *discordgo.Session, logger *log.Logger) *ReplyMonitor {
@@ -128,22 +135,19 @@ func (rm *ReplyMonitor) checkReferendumReplies(ref types.Ref, ourMessage *types.
 	rm.logger.Printf("Checking replies for %s ref %d (our comment ID: %s)", networkName, ref.RefID, *ourMessage.PolkassemblyCommentID)
 
 	// Get all comments for this referendum from Polkassembly
-	comments, rawJSON, err := rm.getCommentsWithRaw(networkName, int(ref.RefID))
+	comments, err := rm.getComments(networkName, int(ref.RefID))
 	if err != nil {
 		rm.logger.Printf("Failed to get comments for %s ref %d: %v", networkName, ref.RefID, err)
 		return
 	}
 
-	rm.logger.Printf("Found %d total comments for %s ref %d", len(comments), networkName, ref.RefID)
-
-	// Log raw JSON for debugging
-	if len(comments) > 0 {
-		rm.logger.Printf("Raw API response: %s", rawJSON)
-	}
+	// Flatten the comment tree to process all comments
+	flatComments := rm.flattenComments(comments)
+	rm.logger.Printf("Found %d total comments (including nested) for %s ref %d", len(flatComments), networkName, ref.RefID)
 
 	// Find replies to our comment
 	var newReplies []PolkassemblyComment
-	for _, comment := range comments {
+	for _, comment := range flatComments {
 		// Skip our own comment
 		if comment.ID == *ourMessage.PolkassemblyCommentID {
 			continue
@@ -156,7 +160,11 @@ func (rm *ReplyMonitor) checkReferendumReplies(ref types.Ref, ourMessage *types.
 			err := rm.db.Where("ref_id = ? AND polkassembly_comment_id = ?", ref.ID, comment.ID).First(&existing).Error
 			if err == gorm.ErrRecordNotFound {
 				newReplies = append(newReplies, comment)
-				rm.logger.Printf("Found new reply from %s (comment ID: %s)", comment.Username, comment.ID)
+				username := comment.Username
+				if comment.PublicUser != nil && comment.PublicUser.Username != "" {
+					username = comment.PublicUser.Username
+				}
+				rm.logger.Printf("Found new reply from %s (comment ID: %s)", username, comment.ID)
 			}
 		}
 	}
@@ -167,19 +175,25 @@ func (rm *ReplyMonitor) checkReferendumReplies(ref types.Ref, ourMessage *types.
 	}
 }
 
-func (rm *ReplyMonitor) getComments(network string, refID int) ([]PolkassemblyComment, error) {
-	comments, _, err := rm.getCommentsWithRaw(network, refID)
-	return comments, err
+func (rm *ReplyMonitor) flattenComments(comments []PolkassemblyComment) []PolkassemblyComment {
+	var flat []PolkassemblyComment
+	for _, comment := range comments {
+		flat = append(flat, comment)
+		if len(comment.Children) > 0 {
+			flat = append(flat, rm.flattenComments(comment.Children)...)
+		}
+	}
+	return flat
 }
 
-func (rm *ReplyMonitor) getCommentsWithRaw(network string, refID int) ([]PolkassemblyComment, string, error) {
+func (rm *ReplyMonitor) getComments(network string, refID int) ([]PolkassemblyComment, error) {
 	// Use v2 API to get comments for a referendum
 	url := fmt.Sprintf("https://%s.polkassembly.io/api/v2/ReferendumV2/%d/comments", network, refID)
 	rm.logger.Printf("Fetching comments from: %s", url)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	req.Header.Set("Accept", "application/json")
@@ -188,49 +202,53 @@ func (rm *ReplyMonitor) getCommentsWithRaw(network string, refID int) ([]Polkass
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, "", fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-
-	bodyStr := string(body)
 
 	// Check if response is HTML (error page)
+	bodyStr := string(body)
 	if strings.HasPrefix(strings.TrimSpace(bodyStr), "<") {
 		rm.logger.Printf("Got HTML response instead of JSON from %s", url)
-		return []PolkassemblyComment{}, "", nil
+		return []PolkassemblyComment{}, nil
 	}
 
-	// Parse the response - the API returns an array of comments directly
+	// Parse the response - the API returns an array of comments with nested children
 	var comments []PolkassemblyComment
 	if err := json.Unmarshal(body, &comments); err != nil {
 		rm.logger.Printf("Failed to parse comments response: %v", err)
-		return []PolkassemblyComment{}, "", nil
+		return []PolkassemblyComment{}, nil
 	}
 
-	return comments, bodyStr, nil
+	return comments, nil
 }
 
 func (rm *ReplyMonitor) processReply(ref types.Ref, reply PolkassemblyComment, network types.Network) {
-	rm.logger.Printf("Processing reply from %s for %s ref %d", reply.Username, network.Name, ref.RefID)
+	username := reply.Username
+	if reply.PublicUser != nil && reply.PublicUser.Username != "" {
+		username = reply.PublicUser.Username
+	}
+
+	rm.logger.Printf("Processing reply from %s for %s ref %d", username, network.Name, ref.RefID)
 
 	// Store the reply in database
 	msg := types.RefMessage{
 		RefID:                 ref.ID,
-		Author:                reply.Username,
+		Author:                username,
 		Body:                  reply.Content,
 		Internal:              false,
 		PolkassemblyCommentID: &reply.ID,
-		PolkassemblyUsername:  reply.Username,
+		PolkassemblyUsername:  username,
 		CreatedAt:             reply.CreatedAt,
 	}
 
@@ -256,6 +274,12 @@ func (rm *ReplyMonitor) processReply(ref types.Ref, reply PolkassemblyComment, n
 }
 
 func (rm *ReplyMonitor) postReplyToDiscord(threadID string, reply PolkassemblyComment, networkName string, refID uint64) {
+	// Get username from publicUser if available
+	username := reply.Username
+	if reply.PublicUser != nil && reply.PublicUser.Username != "" {
+		username = reply.PublicUser.Username
+	}
+
 	// Clean up the content - remove excessive markdown/HTML if present
 	content := strings.TrimSpace(reply.Content)
 
@@ -268,7 +292,7 @@ func (rm *ReplyMonitor) postReplyToDiscord(threadID string, reply PolkassemblyCo
 	// Create embed for the reply
 	embed := &discordgo.MessageEmbed{
 		Author: &discordgo.MessageEmbedAuthor{
-			Name:    fmt.Sprintf("Reply from %s via Polkassembly", reply.Username),
+			Name:    fmt.Sprintf("Reply from %s via Polkassembly", username),
 			IconURL: "https://polkassembly.io/favicon.ico",
 		},
 		Description: content,
@@ -296,5 +320,5 @@ func (rm *ReplyMonitor) postReplyToDiscord(threadID string, reply PolkassemblyCo
 		return
 	}
 
-	rm.logger.Printf("Posted reply from %s to Discord thread %s", reply.Username, threadID)
+	rm.logger.Printf("Posted reply from %s to Discord thread %s", username, threadID)
 }
