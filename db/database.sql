@@ -3,6 +3,7 @@ DROP TABLE IF EXISTS dao_votes;
 DROP TABLE IF EXISTS ref_subs;
 DROP TABLE IF EXISTS ref_proponents;
 DROP TABLE IF EXISTS ref_messages;
+DROP TABLE IF EXISTS ref_threads;
 DROP TABLE IF EXISTS refs;
 DROP TABLE IF EXISTS network_rpcs;
 DROP TABLE IF EXISTS dao_members;
@@ -79,7 +80,7 @@ CREATE TABLE IF NOT EXISTS `refs` (
   `decision_deposit_amount` varchar(64) DEFAULT NULL,
   `submission_deposit_who` varchar(128) DEFAULT NULL,
   `submission_deposit_amount` varchar(64) DEFAULT NULL,
-  `polkassembly_comment_id` int unsigned DEFAULT NULL,
+  `polkassembly_comment_id` varchar(64) DEFAULT NULL,
   `last_reply_check` timestamp NULL DEFAULT NULL,
   `finalized` tinyint(1) DEFAULT '0',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -93,6 +94,22 @@ CREATE TABLE IF NOT EXISTS `refs` (
   CONSTRAINT `fk_proposal_network` FOREIGN KEY (`network_id`) REFERENCES `networks` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Thread mapping table for Discord threads to referenda
+CREATE TABLE IF NOT EXISTS `ref_threads` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `thread_id` varchar(64) NOT NULL,
+  `ref_db_id` bigint unsigned NOT NULL,
+  `network_id` tinyint unsigned NOT NULL,
+  `ref_id` bigint unsigned NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_thread_id` (`thread_id`),
+  KEY `idx_ref_db_id` (`ref_db_id`),
+  KEY `idx_network_ref` (`network_id`, `ref_id`),
+  CONSTRAINT `fk_thread_ref` FOREIGN KEY (`ref_db_id`) REFERENCES `refs` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Messages between DAO and proponents with Polkassembly integration
 CREATE TABLE IF NOT EXISTS `ref_messages` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
@@ -102,6 +119,7 @@ CREATE TABLE IF NOT EXISTS `ref_messages` (
   `internal` tinyint(1) DEFAULT '0',
   `polkassembly_user_id` int unsigned DEFAULT NULL,
   `polkassembly_username` varchar(128) DEFAULT NULL,
+  `polkassembly_comment_id` varchar(64) DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `idx_message_proposal` (`ref_id`),

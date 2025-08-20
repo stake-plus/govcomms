@@ -58,6 +58,8 @@ func runSync(session *discordgo.Session, db *gorm.DB, guildID string) {
 		networkMap[net.Name] = net.ID
 	}
 
+	log.Printf("Found %d active threads to check", len(threads.Threads))
+
 	for _, thread := range threads.Threads {
 		if thread.Type != discordgo.ChannelTypeGuildPublicThread {
 			continue
@@ -68,9 +70,11 @@ func runSync(session *discordgo.Session, db *gorm.DB, guildID string) {
 			continue
 		}
 
+		log.Printf("Thread '%s' (ID: %s) parsed as network %d ref %d", thread.Name, thread.ID, networkID, refID)
+
 		var ref types.Ref
 		if err := db.Where("network_id = ? AND ref_id = ?", networkID, refID).First(&ref).Error; err != nil {
-			log.Printf("Referendum not found for thread %s", thread.Name)
+			log.Printf("Referendum not found in DB for thread %s (network %d ref %d)", thread.Name, networkID, refID)
 			continue
 		}
 
@@ -86,14 +90,28 @@ func runSync(session *discordgo.Session, db *gorm.DB, guildID string) {
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
 			}
-
 			if err := db.Create(&refThread).Error; err != nil {
 				log.Printf("Failed to create thread mapping: %v", err)
 			} else {
-				log.Printf("Synced thread: %s -> %s ref #%d", thread.ID, networks[networkID-1].Name, refID)
+				networkName := "Unknown"
+				for _, net := range networks {
+					if net.ID == networkID {
+						networkName = net.Name
+						break
+					}
+				}
+				log.Printf("Created thread mapping: %s -> %s ref #%d (DB ID: %d)", thread.ID, networkName, refID, ref.ID)
 			}
+		} else if err == nil {
+			if err := db.Model(&refThread).Update("updated_at", time.Now()).Error; err != nil {
+				log.Printf("Failed to update thread mapping: %v", err)
+			}
+		} else {
+			log.Printf("Database error checking thread: %v", err)
 		}
 	}
+
+	log.Printf("Thread sync completed")
 }
 
 func parseThreadTitle(title string) (networkID uint8, refID uint32, err error) {
