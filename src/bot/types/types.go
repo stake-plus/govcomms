@@ -89,7 +89,7 @@ type RefMessage struct {
 	Internal              bool `gorm:"default:false"`
 	PolkassemblyUserID    *uint32
 	PolkassemblyUsername  string
-	PolkassemblyCommentID *string `gorm:"type:varchar(64)"`
+	PolkassemblyCommentID *string `gorm:"type:varchar(64)"` // Add this field
 }
 
 // Proposal participants
