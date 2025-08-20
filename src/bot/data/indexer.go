@@ -14,14 +14,15 @@ import (
 )
 
 type NetworkIndexer struct {
-	networkID   uint8
-	networkName string
-	db          *gorm.DB
-	rpcURL      string
-	client      *polkadot.Client
-	mu          sync.Mutex
-	running     bool
-	workers     int
+	networkID    uint8
+	networkName  string
+	db           *gorm.DB
+	rpcURL       string
+	client       *polkadot.Client
+	mu           sync.Mutex
+	running      bool
+	workers      int
+	currentBlock uint32
 }
 
 type MultiNetworkIndexer struct {
@@ -121,6 +122,21 @@ func (ni *NetworkIndexer) Run(ctx context.Context, interval time.Duration) {
 func (ni *NetworkIndexer) indexOnce(ctx context.Context) {
 	log.Printf("%s indexer: Starting index run", ni.networkName)
 
+	// Get current block number
+	header, err := ni.client.GetHeader(nil)
+	if err != nil {
+		log.Printf("%s indexer: Failed to get current block: %v", ni.networkName, err)
+		return
+	}
+
+	currentBlock, err := polkadot.DecodeU32(header.Number)
+	if err != nil {
+		log.Printf("%s indexer: Failed to parse block number: %v", ni.networkName, err)
+		return
+	}
+	ni.currentBlock = currentBlock
+	log.Printf("%s indexer: Current block height: %d", ni.networkName, currentBlock)
+
 	refCount, err := ni.client.GetReferendumCount()
 	if err != nil {
 		log.Printf("%s indexer: Failed to get referendum count: %v", ni.networkName, err)
@@ -201,13 +217,18 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 			UpdatedAt: time.Now(),
 		}
 
-		// Calculate submitted time - block number * 6 seconds per block
-		if refInfo.Submitted > 0 {
-			// Use current time minus the age in blocks
-			blocksAgo := refInfo.Submitted
-			secondsAgo := blocksAgo * 6
-			submittedTime := time.Now().Add(-time.Duration(secondsAgo) * time.Second)
-			ref.SubmittedAt = &submittedTime
+		// Calculate submitted time - submitted block number * 6 seconds per block
+		if refInfo.Submitted > 0 && ni.currentBlock > 0 {
+			// Calculate blocks ago
+			blocksAgo := int64(ni.currentBlock) - int64(refInfo.Submitted)
+			if blocksAgo > 0 {
+				secondsAgo := blocksAgo * 6
+				submittedTime := time.Now().Add(-time.Duration(secondsAgo) * time.Second)
+				// Only set if the date is reasonable (after 1970)
+				if submittedTime.Year() >= 1970 {
+					ref.SubmittedAt = &submittedTime
+				}
+			}
 		}
 
 		if refInfo.Proposal != "" {
