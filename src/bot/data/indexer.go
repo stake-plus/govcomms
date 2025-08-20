@@ -201,8 +201,12 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 			UpdatedAt: time.Now(),
 		}
 
+		// Calculate submitted time - block number * 6 seconds per block
 		if refInfo.Submitted > 0 {
-			submittedTime := time.Now().Add(-time.Duration(refInfo.Submitted*6) * time.Second)
+			// Use current time minus the age in blocks
+			blocksAgo := refInfo.Submitted
+			secondsAgo := blocksAgo * 6
+			submittedTime := time.Now().Add(-time.Duration(secondsAgo) * time.Second)
 			ref.SubmittedAt = &submittedTime
 		}
 
@@ -246,7 +250,6 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 		if refInfo.Status != "Ongoing" {
 			ref.Finalized = true
 			ref.Approved = refInfo.Status == "Approved"
-
 			now := uint64(time.Now().Unix())
 			switch refInfo.Status {
 			case "Approved":
@@ -311,7 +314,6 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 		if refInfo.Status != "Ongoing" && !ref.Finalized {
 			updates["finalized"] = true
 			updates["approved"] = refInfo.Status == "Approved"
-
 			now := uint64(time.Now().Unix())
 			switch refInfo.Status {
 			case "Approved":
@@ -336,7 +338,6 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 				}
 			}
 			updates["confirm_end"] = now
-
 			log.Printf("%s ref #%d finalized with status: %s", ni.networkName, refID, refInfo.Status)
 		}
 
@@ -350,11 +351,13 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 
 func IndexerService(ctx context.Context, db *gorm.DB, interval time.Duration, workers int) {
 	log.Printf("Starting indexer service with %d workers, interval: %v", workers, interval)
+
 	indexer := NewMultiNetworkIndexer(db, workers)
 	if err := indexer.StartAll(ctx, interval, workers); err != nil {
 		log.Printf("Failed to start indexer service: %v", err)
 		return
 	}
+
 	<-ctx.Done()
 	log.Println("Indexer service stopping")
 }
