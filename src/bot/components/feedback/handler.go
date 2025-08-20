@@ -3,8 +3,6 @@ package feedback
 import (
 	"fmt"
 	"log"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -115,12 +113,13 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 		if err := tx.First(&ref, threadInfo.RefDBID).Error; err != nil {
 			return fmt.Errorf("referendum not found: %w", err)
 		}
-
 		refID = ref.ID
 
 		var msgCount int64
 		tx.Model(&types.RefMessage{}).Where("ref_id = ?", ref.ID).Count(&msgCount)
 		isFirstMessage = msgCount == 0
+
+		log.Printf("Message count for ref %d: %d, isFirstMessage: %v", ref.ID, msgCount, isFirstMessage)
 
 		msg := types.RefMessage{
 			RefID:     ref.ID,
@@ -142,22 +141,29 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 	}
 
 	// Post to Polkassembly if first message (outside transaction)
-	if isFirstMessage && h.polkassembly != nil {
-		commentID, err = h.polkassembly.PostFirstMessage(strings.ToLower(network.Name), int(threadInfo.RefID), feedbackMsg)
-		if err != nil {
-			log.Printf("Failed to post to Polkassembly: %v", err)
-			// Check if it's a timeout - the post might have succeeded
-			if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
-				log.Printf("Timeout posting to Polkassembly - will need to manually check for comment ID for ref %d", threadInfo.RefID)
+	if isFirstMessage {
+		if h.polkassembly != nil {
+			log.Printf("Attempting to post first message to Polkassembly for %s ref #%d", network.Name, threadInfo.RefID)
+			commentID, err = h.polkassembly.PostFirstMessage(strings.ToLower(network.Name), int(threadInfo.RefID), feedbackMsg)
+			if err != nil {
+				log.Printf("Failed to post to Polkassembly: %v", err)
+				// Check if it's a timeout - the post might have succeeded
+				if strings.Contains(err.Error(), "timeout") || strings.Contains(err.Error(), "deadline exceeded") {
+					log.Printf("Timeout posting to Polkassembly - will need to manually check for comment ID for ref %d", threadInfo.RefID)
+				}
+			} else if commentID != "" {
+				// Store the comment ID in a separate transaction
+				if err := h.config.DB.Model(&types.Ref{}).Where("id = ?", refID).Update("polkassembly_comment_id", commentID).Error; err != nil {
+					log.Printf("Failed to store Polkassembly comment ID: %v", err)
+				} else {
+					log.Printf("Stored Polkassembly comment ID %s for ref %d", commentID, threadInfo.RefID)
+				}
 			}
-		} else if commentID != "" {
-			// Store the comment ID in a separate transaction
-			if err := h.config.DB.Model(&types.Ref{}).Where("id = ?", refID).Update("polkassembly_comment_id", commentID).Error; err != nil {
-				log.Printf("Failed to store Polkassembly comment ID: %v", err)
-			} else {
-				log.Printf("Stored Polkassembly comment ID %s for ref %d", commentID, threadInfo.RefID)
-			}
+		} else {
+			log.Printf("Polkassembly service is not available - skipping Polkassembly post")
 		}
+	} else {
+		log.Printf("Not the first message for ref %d - skipping Polkassembly post", threadInfo.RefID)
 	}
 
 	// Send Discord response
@@ -176,15 +182,21 @@ func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.M
 			Name:  "Polkassembly",
 			Value: fmt.Sprintf("✅ Posted to Polkassembly with comment ID %s", commentID),
 		})
-	} else if isFirstMessage && h.polkassembly != nil {
+	} else if isFirstMessage && h.polkassembly != nil && commentID == "" {
 		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
 			Name:  "Polkassembly",
 			Value: "⚠️ Posted to Polkassembly but couldn't confirm comment ID (timeout)",
+		})
+	} else if isFirstMessage && h.polkassembly == nil {
+		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
+			Name:  "Polkassembly",
+			Value: "❌ Polkassembly service unavailable",
 		})
 	}
 
 	s.ChannelMessageSendEmbed(m.ChannelID, embed)
 	log.Printf("Feedback submitted for %s/%d: %d chars", network.Name, threadInfo.RefID, len(feedbackMsg))
+
 	return nil
 }
 
@@ -201,22 +213,4 @@ func (h *Handler) hasRole(s *discordgo.Session, guildID, userID, roleID string) 
 	}
 
 	return false
-}
-
-func (h *Handler) parseThreadTitle(title string) (networkID uint8, refID uint32) {
-	// Polkadot pattern
-	polkadotPattern := regexp.MustCompile(`(?i)(?:polkadot|dot)\s*#?\s*(\d+)`)
-	if matches := polkadotPattern.FindStringSubmatch(title); matches != nil {
-		ref, _ := strconv.ParseUint(matches[1], 10, 32)
-		return 1, uint32(ref)
-	}
-
-	// Kusama pattern
-	kusamaPattern := regexp.MustCompile(`(?i)(?:kusama|ksm)\s*#?\s*(\d+)`)
-	if matches := kusamaPattern.FindStringSubmatch(title); matches != nil {
-		ref, _ := strconv.ParseUint(matches[1], 10, 32)
-		return 2, uint32(ref)
-	}
-
-	return 0, 0
 }
