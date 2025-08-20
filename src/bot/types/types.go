@@ -64,7 +64,6 @@ type Ref struct {
 	DecisionDepositAmount   *string
 	SubmissionDepositWho    *string
 	SubmissionDepositAmount *string
-	PolkassemblyCommentID   *string `gorm:"type:varchar(64)"` // Changed to string
 	LastReplyCheck          *time.Time
 	Finalized               bool
 	CreatedAt               time.Time
@@ -90,7 +89,7 @@ type RefMessage struct {
 	Internal              bool `gorm:"default:false"`
 	PolkassemblyUserID    *uint32
 	PolkassemblyUsername  string
-	PolkassemblyCommentID *string `gorm:"type:varchar(64)"` // Add this field
+	PolkassemblyCommentID *string `gorm:"type:varchar(64)"`
 }
 
 // Proposal participants

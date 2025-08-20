@@ -27,8 +27,11 @@ func (s *Service) RecoverCommentID(network string, refID int) error {
 		return fmt.Errorf("failed to find referendum: %w", err)
 	}
 
-	if ref.PolkassemblyCommentID != nil && *ref.PolkassemblyCommentID != "" {
-		s.logger.Printf("Referendum already has comment ID: %s", *ref.PolkassemblyCommentID)
+	// Check if we already have a comment ID in ref_messages
+	var msg types.RefMessage
+	err = s.db.Where("ref_id = ? AND internal = ? AND polkassembly_comment_id IS NOT NULL", ref.ID, true).First(&msg).Error
+	if err == nil && msg.PolkassemblyCommentID != nil && *msg.PolkassemblyCommentID != "" {
+		s.logger.Printf("Referendum already has comment ID in messages: %s", *msg.PolkassemblyCommentID)
 		return nil
 	}
 
@@ -41,7 +44,12 @@ func (s *Service) RecoverCommentID(network string, refID int) error {
 		return fmt.Errorf("no comment found for referendum")
 	}
 
-	err = s.db.Model(&ref).Update("polkassembly_comment_id", commentID).Error
+	// Store comment ID in the first internal message for this ref
+	err = s.db.Model(&types.RefMessage{}).
+		Where("ref_id = ? AND internal = ?", ref.ID, true).
+		Order("created_at ASC").
+		Limit(1).
+		Update("polkassembly_comment_id", commentID).Error
 	if err != nil {
 		return fmt.Errorf("failed to update comment ID: %w", err)
 	}
@@ -51,10 +59,19 @@ func (s *Service) RecoverCommentID(network string, refID int) error {
 }
 
 func (s *Service) RecoverAllCommentIDs() {
-	var refs []types.Ref
-	s.db.Where("polkassembly_comment_id IS NULL OR polkassembly_comment_id = ''").Find(&refs)
+	// Find all refs where we have internal messages but no polkassembly comment ID
+	var messages []types.RefMessage
+	s.db.Where("internal = ? AND (polkassembly_comment_id IS NULL OR polkassembly_comment_id = '')", true).
+		Group("ref_id").
+		Find(&messages)
 
-	for _, ref := range refs {
+	for _, msg := range messages {
+		var ref types.Ref
+		if err := s.db.First(&ref, msg.RefID).Error; err != nil {
+			log.Printf("Failed to get ref for message %d: %v", msg.ID, err)
+			continue
+		}
+
 		var network types.Network
 		if err := s.db.First(&network, ref.NetworkID).Error; err != nil {
 			log.Printf("Failed to get network for ref %d: %v", ref.RefID, err)
