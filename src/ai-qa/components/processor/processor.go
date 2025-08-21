@@ -469,24 +469,6 @@ func (p *Processor) extractGoogleDocID(link string) string {
 	return ""
 }
 
-func (p *Processor) extractGoogleDriveFileID(link string) string {
-	patterns := []string{
-		`/file/d/([a-zA-Z0-9-_]+)`,
-		`id=([a-zA-Z0-9-_]+)`,
-		`/open\?id=([a-zA-Z0-9-_]+)`,
-	}
-
-	for _, pattern := range patterns {
-		re := regexp.MustCompile(pattern)
-		matches := re.FindStringSubmatch(link)
-		if len(matches) > 1 {
-			return matches[1]
-		}
-	}
-
-	return ""
-}
-
 func (p *Processor) isTextContent(content string) bool {
 	if len(content) == 0 {
 		return false

@@ -27,15 +27,16 @@ func NewClaudeClient(apiKey, systemPrompt string) *ClaudeClient {
 
 func (c *ClaudeClient) Ask(content string, question string) (string, error) {
 	reqBody := map[string]interface{}{
-		"model": "claude-3-opus-20240229",
+		"model": "claude-3-haiku-20240307",
 		"messages": []map[string]string{
 			{
 				"role":    "user",
-				"content": fmt.Sprintf("Proposal Content:\n%s\n\nQuestion: %s", content, question),
+				"content": fmt.Sprintf("Proposal Content:\n%s\n\nQuestion: %s\n\nProvide a direct, concise answer.", content, question),
 			},
 		},
-		"system":     c.systemPrompt,
-		"max_tokens": 1000,
+		"system":      c.systemPrompt,
+		"max_tokens":  500,
+		"temperature": 0.2,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -64,7 +65,7 @@ func (c *ClaudeClient) Ask(content string, question string) (string, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Claude API error: %s", string(body))
+		return "", fmt.Errorf("claude API error: %s", string(body))
 	}
 
 	var result struct {

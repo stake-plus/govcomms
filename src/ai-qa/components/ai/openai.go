@@ -20,7 +20,7 @@ func NewOpenAIClient(apiKey, systemPrompt string) *OpenAIClient {
 		apiKey:       apiKey,
 		systemPrompt: systemPrompt,
 		httpClient: &http.Client{
-			Timeout: 90 * time.Second,
+			Timeout: 30 * time.Second,
 		},
 	}
 }
@@ -33,15 +33,15 @@ func (c *OpenAIClient) Ask(content string, question string) (string, error) {
 		},
 		{
 			"role":    "user",
-			"content": fmt.Sprintf("Proposal Content:\n%s\n\nQuestion: %s", content, question),
+			"content": fmt.Sprintf("Proposal Content:\n%s\n\nQuestion: %s\n\nProvide a direct, concise answer.", content, question),
 		},
 	}
 
 	reqBody := map[string]interface{}{
-		"model":       "gpt-5",
+		"model":       "gpt-4o-mini",
 		"messages":    messages,
-		"temperature": 0.3,
-		"max_tokens":  5000,
+		"temperature": 0.2,
+		"max_tokens":  500,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -69,7 +69,7 @@ func (c *OpenAIClient) Ask(content string, question string) (string, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("OpenAI API error: %s", string(body))
+		return "", fmt.Errorf("openAI API error: %s", string(body))
 	}
 
 	var result struct {
