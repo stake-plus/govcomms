@@ -90,7 +90,8 @@ func (p *Processor) RefreshProposal(network string, refID uint32) error {
 }
 
 func (p *Processor) fetchProposalFromPolkassembly(network string, refID uint32) (string, error) {
-	url := fmt.Sprintf("https://%s.polkassembly.io/api/v2/posts/on-chain-post?proposalType=referendums_v2&postId=%d", network, refID)
+	// Use the correct v2 API endpoint format for referenda
+	url := fmt.Sprintf("https://%s.polkassembly.io/api/v2/posts/referenda/%d", network, refID)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -98,6 +99,7 @@ func (p *Processor) fetchProposalFromPolkassembly(network string, refID uint32) 
 	}
 
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
@@ -105,48 +107,132 @@ func (p *Processor) fetchProposalFromPolkassembly(network string, refID uint32) 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API returned status %d", resp.StatusCode)
-	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
 	}
 
-	var result struct {
+	if resp.StatusCode != http.StatusOK {
+		// Try alternative endpoint format
+		url = fmt.Sprintf("https://%s.polkassembly.io/api/v1/posts/on-chain-post?proposalType=referendums_v2&postId=%d", network, refID)
+
+		req, err = http.NewRequest("GET", url, nil)
+		if err != nil {
+			return "", err
+		}
+
+		req.Header.Set("Accept", "application/json")
+
+		resp2, err := p.httpClient.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp2.Body.Close()
+
+		body, err = io.ReadAll(resp2.Body)
+		if err != nil {
+			return "", err
+		}
+
+		if resp2.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("API returned status %d and %d", resp.StatusCode, resp2.StatusCode)
+		}
+	}
+
+	// First try to unmarshal as a post object
+	var postResult struct {
+		Post struct {
+			Content     string `json:"content"`
+			Title       string `json:"title"`
+			Description string `json:"description"`
+		} `json:"post"`
+	}
+
+	if err := json.Unmarshal(body, &postResult); err == nil && postResult.Post.Content != "" {
+		var content strings.Builder
+		if postResult.Post.Title != "" {
+			content.WriteString("Title: " + postResult.Post.Title + "\n\n")
+		}
+		if postResult.Post.Description != "" {
+			content.WriteString("Description: " + postResult.Post.Description + "\n\n")
+		}
+		if postResult.Post.Content != "" {
+			content.WriteString(postResult.Post.Content)
+		}
+		return content.String(), nil
+	}
+
+	// Try direct structure
+	var directResult struct {
 		Content     string `json:"content"`
 		Title       string `json:"title"`
 		Description string `json:"description"`
 	}
 
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", err
+	if err := json.Unmarshal(body, &directResult); err == nil {
+		var content strings.Builder
+		if directResult.Title != "" {
+			content.WriteString("Title: " + directResult.Title + "\n\n")
+		}
+		if directResult.Description != "" {
+			content.WriteString("Description: " + directResult.Description + "\n\n")
+		}
+		if directResult.Content != "" {
+			content.WriteString(directResult.Content)
+		}
+
+		if content.Len() > 0 {
+			return content.String(), nil
+		}
 	}
 
-	var content strings.Builder
-	if result.Title != "" {
-		content.WriteString("Title: " + result.Title + "\n\n")
-	}
-	if result.Description != "" {
-		content.WriteString("Description: " + result.Description + "\n\n")
-	}
-	if result.Content != "" {
-		content.WriteString(result.Content)
+	// Try to extract any text content from the response
+	var genericResult map[string]interface{}
+	if err := json.Unmarshal(body, &genericResult); err == nil {
+		var content strings.Builder
+
+		// Look for common fields
+		fields := []string{"content", "description", "text", "body", "proposal", "details"}
+		for _, field := range fields {
+			if val, ok := genericResult[field]; ok {
+				if strVal, ok := val.(string); ok && strVal != "" {
+					content.WriteString(strVal + "\n\n")
+				}
+			}
+		}
+
+		// Check nested post object
+		if post, ok := genericResult["post"].(map[string]interface{}); ok {
+			for _, field := range fields {
+				if val, ok := post[field]; ok {
+					if strVal, ok := val.(string); ok && strVal != "" {
+						content.WriteString(strVal + "\n\n")
+					}
+				}
+			}
+		}
+
+		if content.Len() > 0 {
+			return content.String(), nil
+		}
 	}
 
-	return content.String(), nil
+	return "", fmt.Errorf("unable to parse proposal content from API response")
 }
 
 func (p *Processor) extractLinks(content string) []string {
 	var links []string
+	seen := make(map[string]bool)
 
 	urlRegex := regexp.MustCompile(`https?://[^\s<>"{}|\\^\[\]]+`)
 	matches := urlRegex.FindAllString(content, -1)
 
 	for _, match := range matches {
 		match = strings.TrimRight(match, ".,;:!?)")
-		links = append(links, match)
+		if !seen[match] {
+			seen[match] = true
+			links = append(links, match)
+		}
 	}
 
 	return links
@@ -204,12 +290,17 @@ func (p *Processor) downloadGoogleDoc(link string) (string, error) {
 		return "", fmt.Errorf("failed to download: status %d", resp.StatusCode)
 	}
 
-	content, err := io.ReadAll(resp.Body)
+	content, err := io.ReadAll(io.LimitReader(resp.Body, 500000))
 	if err != nil {
 		return "", err
 	}
 
-	return string(content), nil
+	contentStr := string(content)
+	if len(contentStr) > 50000 {
+		contentStr = contentStr[:50000] + "\n\n[Content truncated...]"
+	}
+
+	return contentStr, nil
 }
 
 func (p *Processor) downloadGoogleDriveFile(link string) (string, error) {
@@ -230,12 +321,16 @@ func (p *Processor) downloadGoogleDriveFile(link string) (string, error) {
 		return "", fmt.Errorf("failed to download: status %d", resp.StatusCode)
 	}
 
-	content, err := io.ReadAll(resp.Body)
+	content, err := io.ReadAll(io.LimitReader(resp.Body, 500000))
 	if err != nil {
 		return "", err
 	}
 
 	contentStr := string(content)
+	if !p.isTextContent(contentStr) {
+		return "", fmt.Errorf("file appears to be binary")
+	}
+
 	if len(contentStr) > 50000 {
 		contentStr = contentStr[:50000] + "\n\n[Content truncated...]"
 	}
@@ -254,7 +349,15 @@ func (p *Processor) downloadGenericFile(link string) (string, error) {
 		return "", fmt.Errorf("failed to download: status %d", resp.StatusCode)
 	}
 
-	content, err := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "image") ||
+		strings.Contains(contentType, "video") ||
+		strings.Contains(contentType, "audio") ||
+		strings.Contains(contentType, "application/octet-stream") {
+		return "", fmt.Errorf("binary content type: %s", contentType)
+	}
+
+	content, err := io.ReadAll(io.LimitReader(resp.Body, 500000))
 	if err != nil {
 		return "", err
 	}
@@ -307,14 +410,25 @@ func (p *Processor) extractGoogleDriveFileID(link string) string {
 }
 
 func (p *Processor) isTextContent(content string) bool {
+	if len(content) == 0 {
+		return false
+	}
+
 	nullCount := 0
-	for _, r := range content[:min(1000, len(content))] {
-		if r == 0 {
+	controlCount := 0
+	checkLen := min(1000, len(content))
+
+	for i := 0; i < checkLen; i++ {
+		c := content[i]
+		if c == 0 {
 			nullCount++
+		}
+		if c < 32 && c != '\n' && c != '\r' && c != '\t' {
+			controlCount++
 		}
 	}
 
-	return nullCount < 10
+	return nullCount < 5 && controlCount < 50
 }
 
 func (p *Processor) getCacheFilePath(network string, refID uint32) string {
