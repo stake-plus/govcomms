@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -76,8 +77,10 @@ func (p *Processor) RefreshProposal(network string, refID uint32) error {
 				log.Printf("Failed to download %s: %v", link, err)
 				continue
 			}
-			fullContent.WriteString(fmt.Sprintf("\n\n## Document: %s\n\n", link))
-			fullContent.WriteString(content)
+			if content != "" {
+				fullContent.WriteString(fmt.Sprintf("\n\n## Document: %s\n\n", link))
+				fullContent.WriteString(content)
+			}
 		}
 	}
 
@@ -246,6 +249,18 @@ func (p *Processor) isDocumentLink(link string) bool {
 
 	linkLower := strings.ToLower(link)
 
+	// Skip image and video links
+	skipExtensions := []string{
+		".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg",
+		".mp4", ".avi", ".mov", ".webm", ".mp3", ".wav",
+	}
+
+	for _, ext := range skipExtensions {
+		if strings.HasSuffix(linkLower, ext) {
+			return false
+		}
+	}
+
 	if strings.Contains(linkLower, "docs.google.com") ||
 		strings.Contains(linkLower, "drive.google.com") {
 		return true
@@ -261,15 +276,116 @@ func (p *Processor) isDocumentLink(link string) bool {
 }
 
 func (p *Processor) downloadDocument(link string) (string, error) {
+	// Handle PDF files specially
+	if strings.HasSuffix(strings.ToLower(link), ".pdf") {
+		return p.downloadPDF(link)
+	}
+
 	if strings.Contains(link, "docs.google.com") {
 		return p.downloadGoogleDoc(link)
 	}
 
 	if strings.Contains(link, "drive.google.com") {
+		// Check if it's a PDF on Google Drive
+		if p.isGoogleDrivePDF(link) {
+			return p.downloadGoogleDrivePDF(link)
+		}
 		return p.downloadGoogleDriveFile(link)
 	}
 
 	return p.downloadGenericFile(link)
+}
+
+func (p *Processor) downloadPDF(link string) (string, error) {
+	// Download PDF to temp file
+	tempPDF := filepath.Join(p.tempDir, "temp_"+hex.EncodeToString([]byte(link)[:8])+".pdf")
+	defer os.Remove(tempPDF)
+
+	resp, err := p.httpClient.Get(link)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to download PDF: status %d", resp.StatusCode)
+	}
+
+	// Save PDF to temp file
+	file, err := os.Create(tempPDF)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	_, err = io.Copy(file, resp.Body)
+	if err != nil {
+		return "", err
+	}
+	file.Close()
+
+	// Try to extract text using pdftotext command
+	text, err := p.extractPDFText(tempPDF)
+	if err != nil {
+		log.Printf("Failed to extract PDF text: %v", err)
+		return "", fmt.Errorf("PDF text extraction not available")
+	}
+
+	return text, nil
+}
+
+func (p *Processor) extractPDFText(pdfPath string) (string, error) {
+	// Try pdftotext first (poppler-utils)
+	cmd := exec.Command("pdftotext", "-layout", "-nopgbrk", pdfPath, "-")
+	output, err := cmd.Output()
+	if err == nil {
+		text := string(output)
+		if len(text) > 50000 {
+			text = text[:50000] + "\n\n[PDF content truncated...]"
+		}
+		return text, nil
+	}
+
+	// Try pdfgrep as fallback
+	cmd = exec.Command("pdfgrep", ".", pdfPath)
+	output, err = cmd.Output()
+	if err == nil {
+		text := string(output)
+		if len(text) > 50000 {
+			text = text[:50000] + "\n\n[PDF content truncated...]"
+		}
+		return text, nil
+	}
+
+	return "", fmt.Errorf("no PDF text extraction tool available")
+}
+
+func (p *Processor) isGoogleDrivePDF(link string) bool {
+	// Make a HEAD request to check content type
+	fileID := p.extractGoogleDriveFileID(link)
+	if fileID == "" {
+		return false
+	}
+
+	checkURL := fmt.Sprintf("https://drive.google.com/uc?export=download&id=%s", fileID)
+	resp, err := p.httpClient.Head(checkURL)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	contentType := resp.Header.Get("Content-Type")
+	return strings.Contains(contentType, "pdf")
+}
+
+func (p *Processor) downloadGoogleDrivePDF(link string) (string, error) {
+	fileID := p.extractGoogleDriveFileID(link)
+	if fileID == "" {
+		return "", fmt.Errorf("could not extract file ID")
+	}
+
+	downloadURL := fmt.Sprintf("https://drive.google.com/uc?export=download&id=%s", fileID)
+	return p.downloadPDF(downloadURL)
 }
 
 func (p *Processor) downloadGoogleDoc(link string) (string, error) {
@@ -297,7 +413,7 @@ func (p *Processor) downloadGoogleDoc(link string) (string, error) {
 
 	contentStr := string(content)
 	if len(contentStr) > 50000 {
-		contentStr = contentStr[:50000] + "\n\n[Content truncated...]"
+		contentStr = contentStr[:50000] + "\n\n[Document content truncated...]"
 	}
 
 	return contentStr, nil
@@ -319,6 +435,27 @@ func (p *Processor) downloadGoogleDriveFile(link string) (string, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("failed to download: status %d", resp.StatusCode)
+	}
+
+	contentType := resp.Header.Get("Content-Type")
+	if strings.Contains(contentType, "pdf") {
+		// Handle as PDF
+		tempPDF := filepath.Join(p.tempDir, "temp_gdrive.pdf")
+		defer os.Remove(tempPDF)
+
+		file, err := os.Create(tempPDF)
+		if err != nil {
+			return "", err
+		}
+		defer file.Close()
+
+		_, err = io.Copy(file, resp.Body)
+		if err != nil {
+			return "", err
+		}
+		file.Close()
+
+		return p.extractPDFText(tempPDF)
 	}
 
 	content, err := io.ReadAll(io.LimitReader(resp.Body, 500000))
@@ -350,6 +487,28 @@ func (p *Processor) downloadGenericFile(link string) (string, error) {
 	}
 
 	contentType := resp.Header.Get("Content-Type")
+
+	// Handle PDFs
+	if strings.Contains(contentType, "pdf") {
+		tempPDF := filepath.Join(p.tempDir, "temp_generic.pdf")
+		defer os.Remove(tempPDF)
+
+		file, err := os.Create(tempPDF)
+		if err != nil {
+			return "", err
+		}
+		defer file.Close()
+
+		_, err = io.Copy(file, resp.Body)
+		if err != nil {
+			return "", err
+		}
+		file.Close()
+
+		return p.extractPDFText(tempPDF)
+	}
+
+	// Skip binary content types
 	if strings.Contains(contentType, "image") ||
 		strings.Contains(contentType, "video") ||
 		strings.Contains(contentType, "audio") ||
@@ -428,7 +587,8 @@ func (p *Processor) isTextContent(content string) bool {
 		}
 	}
 
-	return nullCount < 5 && controlCount < 50
+	// More strict checking for binary content
+	return nullCount < 2 && controlCount < 10
 }
 
 func (p *Processor) getCacheFilePath(network string, refID uint32) string {
