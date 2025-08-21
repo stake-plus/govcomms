@@ -37,3 +37,7 @@ type QAHistory struct {
 	Answer    string    `gorm:"type:text"`
 	CreatedAt time.Time `gorm:"index"`
 }
+
+func (QAHistory) TableName() string {
+	return "qa_history"
+}
