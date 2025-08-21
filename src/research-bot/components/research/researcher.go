@@ -138,7 +138,7 @@ Example format:
 				"content": fmt.Sprintf("%s\n\nProposal:\n%s", prompt, content),
 			},
 		},
-		"temperature":           0.1,
+		"temperature":           1,
 		"max_completion_tokens": 2000,
 	}
 
@@ -256,7 +256,7 @@ Evidence: [Brief explanation with specific details found]`, claim.Claim, claim.U
 				"content": prompt,
 			},
 		},
-		"temperature":           0.1,
+		"temperature":           1,
 		"max_completion_tokens": 1000,
 	}
 
@@ -418,7 +418,7 @@ Example format:
 				"content": fmt.Sprintf("%s\n\nProposal:\n%s", prompt, content),
 			},
 		},
-		"temperature":           0.1,
+		"temperature":           1,
 		"max_completion_tokens": 2000,
 	}
 
@@ -530,7 +530,7 @@ Evidence: [Specific findings about the proponent's credentials]`, info.Type, inf
 				"content": prompt,
 			},
 		},
-		"temperature":           0.1,
+		"temperature":           1,
 		"max_completion_tokens": 1000,
 	}
 
