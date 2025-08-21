@@ -6,9 +6,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/stake-plus/govcomms/src/bot/bot"
-	"github.com/stake-plus/govcomms/src/bot/config"
-	"github.com/stake-plus/govcomms/src/bot/data"
+	"github.com/stake-plus/govcomms/src/feedback/bot"
+	"github.com/stake-plus/govcomms/src/feedback/config"
+	"github.com/stake-plus/govcomms/src/feedback/data"
 )
 
 func main() {

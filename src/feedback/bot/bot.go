@@ -9,12 +9,12 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/redis/go-redis/v9"
-	"github.com/stake-plus/govcomms/src/bot/components/feedback"
-	"github.com/stake-plus/govcomms/src/bot/components/network"
-	"github.com/stake-plus/govcomms/src/bot/components/polkassembly"
-	"github.com/stake-plus/govcomms/src/bot/components/referendum"
-	"github.com/stake-plus/govcomms/src/bot/config"
-	"github.com/stake-plus/govcomms/src/bot/data"
+	"github.com/stake-plus/govcomms/src/feedback/components/feedback"
+	"github.com/stake-plus/govcomms/src/feedback/components/network"
+	"github.com/stake-plus/govcomms/src/feedback/components/polkassembly"
+	"github.com/stake-plus/govcomms/src/feedback/components/referendum"
+	"github.com/stake-plus/govcomms/src/feedback/config"
+	"github.com/stake-plus/govcomms/src/feedback/data"
 	"gorm.io/gorm"
 )
 
