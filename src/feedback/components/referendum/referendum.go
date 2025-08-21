@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/stake-plus/govcomms/src/bot/config"
-	"github.com/stake-plus/govcomms/src/bot/types"
+	"github.com/stake-plus/govcomms/src/feedback/config"
+	"github.com/stake-plus/govcomms/src/feedback/types"
 	"gorm.io/gorm"
 )
 

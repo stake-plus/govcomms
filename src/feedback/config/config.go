@@ -5,7 +5,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/stake-plus/govcomms/src/bot/data"
+	"github.com/stake-plus/govcomms/src/feedback/data"
 	"gorm.io/gorm"
 )
 

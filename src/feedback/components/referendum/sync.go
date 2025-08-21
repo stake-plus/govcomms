@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/stake-plus/govcomms/src/bot/config"
-	"github.com/stake-plus/govcomms/src/bot/types"
+	"github.com/stake-plus/govcomms/src/feedback/config"
+	"github.com/stake-plus/govcomms/src/feedback/types"
 	"gorm.io/gorm"
 )
 
@@ -139,10 +139,4 @@ func parseRefIDFromTitle(title string) (uint32, error) {
 	}
 
 	return uint32(refNum), nil
-}
-
-func parseThreadTitle(title string) (networkID uint8, refID uint32, err error) {
-	// This function is kept for backwards compatibility but is deprecated
-	// Use parseRefIDFromTitle and determine network from parent channel instead
-	return 0, 0, fmt.Errorf("deprecated function - use parseRefIDFromTitle")
 }

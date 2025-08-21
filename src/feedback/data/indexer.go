@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stake-plus/govcomms/src/bot/types"
+	"github.com/stake-plus/govcomms/src/feedback/types"
 	polkadot "github.com/stake-plus/govcomms/src/polkadot-go"
 	"gorm.io/gorm"
 )

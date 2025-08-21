@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stake-plus/govcomms/src/bot/data"
-	"github.com/stake-plus/govcomms/src/bot/types"
+	"github.com/stake-plus/govcomms/src/feedback/data"
+	"github.com/stake-plus/govcomms/src/feedback/types"
 	"gorm.io/gorm"
 )
 

@@ -1,110 +1,65 @@
-# Variables
-BINARY_NAME=govcomms-bot
-BUILD_DIR=bin
-SRC_DIR=src/bot
-POLKADOT_DIR=src/polkadot-go
-
-# Go commands
-GOCMD=go
-GOBUILD=$(GOCMD) build
-GOCLEAN=$(GOCMD) clean
-GOTEST=$(GOCMD) test
-GOGET=$(GOCMD) get
-GOMOD=$(GOCMD) mod
-GOFMT=$(GOCMD) fmt
-
-# Build variables
-BINARY_UNIX=$(BUILD_DIR)/$(BINARY_NAME)
-BINARY_WIN=$(BUILD_DIR)/$(BINARY_NAME).exe
-
-# Get OS
+# Detect OS
 ifeq ($(OS),Windows_NT)
-    BINARY=$(BINARY_WIN)
-    RM=del /Q
-    MKDIR=mkdir
+    BINARY_EXT = .exe
+    RM = del /Q
+    MKDIR = mkdir
+    SEP = \\
 else
-    BINARY=$(BINARY_UNIX)
-    RM=rm -f
-    MKDIR=mkdir -p
+    BINARY_EXT =
+    RM = rm -rf
+    MKDIR = mkdir -p
+    SEP = /
 endif
 
-# Phony targets
-.PHONY: all build clean test deps run fmt help
+# Binary names
+FEEDBACK_BIN = bin$(SEP)feedback-bot$(BINARY_EXT)
+AIQA_BIN = bin$(SEP)ai-qa-bot$(BINARY_EXT)
+POLKADOT_BIN = bin$(SEP)polkadot-test$(BINARY_EXT)
 
-# Default target
-all: deps build
+.PHONY: all build clean feedback ai-qa polkadot-go run-feedback run-ai-qa install test
 
-# Help target
-help:
-	@echo Available targets:
-	@echo   make build    - Build the bot binary
-	@echo   make run      - Run the bot directly
-	@echo   make clean    - Clean build artifacts
-	@echo   make deps     - Download dependencies
-	@echo   make test     - Run tests
-	@echo   make fmt      - Format code
-	@echo   make all      - Download deps and build
+all: build
 
-# Download dependencies
-deps:
-	$(GOMOD) download
-	$(GOMOD) tidy
+build: feedback ai-qa
 
-# Build the bot binary
-build:
-	@echo Building bot...
-	@$(MKDIR) $(BUILD_DIR)
-	$(GOBUILD) -o $(BINARY) $(SRC_DIR)/main.go
-	@echo Bot built: $(BINARY)
+feedback:
+	$(MKDIR) bin
+	go build -o $(FEEDBACK_BIN) ./src/feedback
 
-# Build for specific platforms
-build-windows:
-	@echo Building for Windows...
-	@$(MKDIR) $(BUILD_DIR)
-	GOOS=windows GOARCH=amd64 $(GOBUILD) -o $(BINARY_WIN) $(SRC_DIR)/main.go
-	@echo Windows binary built: $(BINARY_WIN)
+ai-qa:
+	$(MKDIR) bin
+	go build -o $(AIQA_BIN) ./src/ai-qa
+
+polkadot-go:
+	$(MKDIR) bin
+	go build -o $(POLKADOT_BIN) ./src/polkadot-go
+
+clean:
+ifeq ($(OS),Windows_NT)
+	if exist bin $(RM) bin$(SEP)*
+else
+	$(RM) bin/
+endif
+
+run-feedback:
+	$(FEEDBACK_BIN)
+
+run-ai-qa:
+	$(AIQA_BIN)
+
+install:
+	go mod download
+
+test:
+	go test ./...
+
+# Build all binaries for both platforms
+build-all: build-linux build-windows
 
 build-linux:
-	@echo Building for Linux...
-	@$(MKDIR) $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 $(GOBUILD) -o $(BINARY_UNIX) $(SRC_DIR)/main.go
-	@echo Linux binary built: $(BINARY_UNIX)
+	GOOS=linux GOARCH=amd64 go build -o bin/feedback-bot-linux ./src/feedback
+	GOOS=linux GOARCH=amd64 go build -o bin/ai-qa-bot-linux ./src/ai-qa
 
-build-mac:
-	@echo Building for macOS...
-	@$(MKDIR) $(BUILD_DIR)
-	GOOS=darwin GOARCH=amd64 $(GOBUILD) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin $(SRC_DIR)/main.go
-	@echo macOS binary built: $(BUILD_DIR)/$(BINARY_NAME)-darwin
-
-# Build all platforms
-build-all: build-windows build-linux build-mac
-
-# Run the bot directly
-run:
-	@echo Running bot...
-	$(GOCMD) run $(SRC_DIR)/main.go
-
-# Clean build artifacts
-clean:
-	@echo Cleaning...
-	$(GOCLEAN)
-	@$(RM) $(BUILD_DIR)$(if $(findstring Windows_NT,$(OS)),\*,/*)
-	@echo Clean complete
-
-# Run tests
-test:
-	@echo Running tests...
-	$(GOTEST) -v ./$(SRC_DIR)/...
-	$(GOTEST) -v ./$(POLKADOT_DIR)/...
-
-# Format code
-fmt:
-	@echo Formatting code...
-	$(GOFMT) ./$(SRC_DIR)/...
-	$(GOFMT) ./$(POLKADOT_DIR)/...
-	@echo Formatting complete
-
-# Development mode with auto-restart on file changes (requires entr or watchexec)
-dev:
-	@echo Starting in development mode...
-	$(GOCMD) run $(SRC_DIR)/main.go
+build-windows:
+	GOOS=windows GOARCH=amd64 go build -o bin/feedback-bot.exe ./src/feedback
+	GOOS=windows GOARCH=amd64 go build -o bin/ai-qa-bot.exe ./src/ai-qa

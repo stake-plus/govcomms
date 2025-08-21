@@ -4,7 +4,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stake-plus/govcomms/src/bot/types"
+	"github.com/stake-plus/govcomms/src/ai-qa/types"
 	"gorm.io/gorm"
 )
 
@@ -60,17 +60,6 @@ func (m *Manager) GetByName(name string) *types.Network {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.byName[strings.ToLower(name)]
-}
-
-func (m *Manager) GetAll() map[uint8]*types.Network {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	result := make(map[uint8]*types.Network)
-	for k, v := range m.networks {
-		result[k] = v
-	}
-	return result
 }
 
 func (m *Manager) FindByChannelID(channelID string) *types.Network {

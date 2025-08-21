@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/stake-plus/govcomms/src/bot/types"
+	"github.com/stake-plus/govcomms/src/feedback/types"
 	"gorm.io/gorm"
 )
 

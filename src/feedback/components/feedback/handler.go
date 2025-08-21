@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/stake-plus/govcomms/src/bot/components/network"
-	"github.com/stake-plus/govcomms/src/bot/components/polkassembly"
-	"github.com/stake-plus/govcomms/src/bot/components/referendum"
-	"github.com/stake-plus/govcomms/src/bot/types"
+	"github.com/stake-plus/govcomms/src/feedback/components/network"
+	"github.com/stake-plus/govcomms/src/feedback/components/polkassembly"
+	"github.com/stake-plus/govcomms/src/feedback/components/referendum"
+	"github.com/stake-plus/govcomms/src/feedback/types"
 	"gorm.io/gorm"
 )
 

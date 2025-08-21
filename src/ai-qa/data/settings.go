@@ -3,7 +3,7 @@ package data
 import (
 	"sync"
 
-	"github.com/stake-plus/govcomms/src/bot/types"
+	"github.com/stake-plus/govcomms/src/ai-qa/types"
 	"gorm.io/gorm"
 )
 
