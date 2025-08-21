@@ -40,7 +40,7 @@ func (c *OpenAIClient) Ask(content string, question string) (string, error) {
 	reqBody := map[string]interface{}{
 		"model":                 "gpt-5-mini",
 		"messages":              messages,
-		"temperature":           0.2,
+		"temperature":           1,
 		"max_completion_tokens": 2000,
 	}
 
