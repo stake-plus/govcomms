@@ -115,10 +115,16 @@ func (r *Researcher) extractClaims(content string) ([]Claim, error) {
 
 For each claim, provide the URL where it can be verified if mentioned.
 
-Respond with a JSON array of objects with "claim" and "verification_url" fields.
-Only include claims that can potentially be verified through online sources.`
+Respond with ONLY a JSON object containing a "claims" array. Each item should have "claim" and "verification_url" fields.
+Example format:
+{
+  "claims": [
+    {"claim": "Video has 100k views", "verification_url": "https://youtube.com/..."},
+    {"claim": "Delivered 5 reports last year", "verification_url": ""}
+  ]
+}`
 
-	systemPrompt := "You are a claim extraction expert. Extract only factual, verifiable claims from proposals."
+	systemPrompt := "You are a claim extraction expert. Extract only factual, verifiable claims from proposals. Always respond with valid JSON."
 
 	reqBody := map[string]interface{}{
 		"model": "gpt-5-mini",
@@ -134,7 +140,6 @@ Only include claims that can potentially be verified through online sources.`
 		},
 		"temperature":           0.1,
 		"max_completion_tokens": 2000,
-		"response_format":       map[string]string{"type": "json_object"},
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -161,16 +166,30 @@ Only include claims that can potentially be verified through online sources.`
 		return nil, err
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("OpenAI API error - Status: %d, Body: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("OpenAI API error: status %d", resp.StatusCode)
+	}
+
 	var result struct {
 		Choices []struct {
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+		} `json:"error"`
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
+		log.Printf("Failed to parse OpenAI response: %s", string(body))
 		return nil, err
+	}
+
+	if result.Error.Message != "" {
+		return nil, fmt.Errorf("OpenAI error: %s", result.Error.Message)
 	}
 
 	if len(result.Choices) == 0 {
@@ -182,7 +201,8 @@ Only include claims that can potentially be verified through online sources.`
 	}
 
 	if err := json.Unmarshal([]byte(result.Choices[0].Message.Content), &claimsResponse); err != nil {
-		return nil, err
+		log.Printf("Failed to parse claims JSON: %s", result.Choices[0].Message.Content)
+		return nil, fmt.Errorf("failed to parse claims: %w", err)
 	}
 
 	return claimsResponse.Claims, nil
@@ -219,17 +239,17 @@ func (r *Researcher) verifySingleClaim(claim Claim) VerificationResult {
 URL to check (if provided): %s
 
 Instructions:
-1. If a URL is provided, verify the claim against that specific source
+1. If a URL is provided, research information from that source
 2. If no URL provided, search for reliable sources to verify
 3. Check for exact numbers, dates, and facts
 4. Provide specific evidence for or against the claim
 
-Respond with:
-- Status: "Verified", "Not Verified", or "Failed to Verify"
-- Evidence: Brief explanation with specific details found`, claim.Claim, claim.URL)
+Respond with exactly this format:
+Status: [Verified/Not Verified/Failed to Verify]
+Evidence: [Brief explanation with specific details found]`, claim.Claim, claim.URL)
 
 	reqBody := map[string]interface{}{
-		"model": "o3-deep-research",
+		"model": "gpt-5-mini",
 		"messages": []map[string]string{
 			{
 				"role":    "user",
@@ -335,7 +355,7 @@ func (r *Researcher) parseVerificationResponse(response string) (VerificationSta
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "Status:") {
 			statusStr := strings.TrimSpace(strings.TrimPrefix(line, "Status:"))
-			statusStr = strings.Trim(statusStr, `"`)
+			statusStr = strings.Trim(statusStr, `"[]`)
 
 			switch strings.ToLower(statusStr) {
 			case "verified":
@@ -375,9 +395,16 @@ func (r *Researcher) extractProponentInfo(content string) ([]ProponentInfo, erro
 5. Company/organization information
 6. Professional experience claims
 
-Respond with a JSON array of objects with "type" (github/linkedin/experience/etc), "url", and "info" fields.`
+Respond with ONLY a JSON object containing a "proponent_info" array. Each item should have "type", "url", and "info" fields.
+Example format:
+{
+  "proponent_info": [
+    {"type": "github", "url": "https://github.com/username", "info": "Lead developer profile"},
+    {"type": "experience", "url": "", "info": "5 years blockchain development"}
+  ]
+}`
 
-	systemPrompt := "You are an expert at extracting professional information for verification."
+	systemPrompt := "You are an expert at extracting professional information for verification. Always respond with valid JSON."
 
 	reqBody := map[string]interface{}{
 		"model": "gpt-5-mini",
@@ -393,7 +420,6 @@ Respond with a JSON array of objects with "type" (github/linkedin/experience/etc
 		},
 		"temperature":           0.1,
 		"max_completion_tokens": 2000,
-		"response_format":       map[string]string{"type": "json_object"},
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -420,6 +446,11 @@ Respond with a JSON array of objects with "type" (github/linkedin/experience/etc
 		return nil, err
 	}
 
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("OpenAI API error - Status: %d, Body: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("OpenAI API error: status %d", resp.StatusCode)
+	}
+
 	var result struct {
 		Choices []struct {
 			Message struct {
@@ -441,7 +472,8 @@ Respond with a JSON array of objects with "type" (github/linkedin/experience/etc
 	}
 
 	if err := json.Unmarshal([]byte(result.Choices[0].Message.Content), &infoResponse); err != nil {
-		return nil, err
+		log.Printf("Failed to parse proponent info JSON: %s", result.Choices[0].Message.Content)
+		return nil, fmt.Errorf("failed to parse proponent info: %w", err)
 	}
 
 	return infoResponse.ProponentInfo, nil
@@ -486,12 +518,12 @@ Instructions:
 4. Look for red flags or inconsistencies
 5. Assess credibility and relevance to the proposal
 
-Respond with:
-- Status: "Verified", "Not Verified", or "Failed to Verify"
-- Evidence: Specific findings about the proponent's credentials`, info.Type, info.URL, info.Info)
+Respond with exactly this format:
+Status: [Verified/Not Verified/Failed to Verify]
+Evidence: [Specific findings about the proponent's credentials]`, info.Type, info.URL, info.Info)
 
 	reqBody := map[string]interface{}{
-		"model": "o3-deep-research",
+		"model": "gpt-5-mini",
 		"messages": []map[string]string{
 			{
 				"role":    "user",
