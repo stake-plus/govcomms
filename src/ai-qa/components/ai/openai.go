@@ -20,7 +20,7 @@ func NewOpenAIClient(apiKey, systemPrompt string) *OpenAIClient {
 		apiKey:       apiKey,
 		systemPrompt: systemPrompt,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 90 * time.Second,
 		},
 	}
 }
@@ -38,10 +38,10 @@ func (c *OpenAIClient) Ask(content string, question string) (string, error) {
 	}
 
 	reqBody := map[string]interface{}{
-		"model":       "gpt-4-turbo-preview",
+		"model":       "gpt-5",
 		"messages":    messages,
 		"temperature": 0.3,
-		"max_tokens":  1000,
+		"max_tokens":  5000,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
