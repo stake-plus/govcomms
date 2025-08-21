@@ -70,18 +70,24 @@ func (p *Processor) RefreshProposal(network string, refID uint32) error {
 	fullContent.WriteString(proposalContent)
 	fullContent.WriteString("\n\n")
 
+	processedDocs := 0
 	for _, link := range links {
 		if p.isDocumentLink(link) {
 			content, err := p.downloadDocument(link)
 			if err != nil {
-				log.Printf("Failed to download %s: %v", link, err)
+				log.Printf("Failed to download or extract %s: %v", link, err)
 				continue
 			}
-			if content != "" {
+			if content != "" && p.isValidTextContent(content) {
 				fullContent.WriteString(fmt.Sprintf("\n\n## Document: %s\n\n", link))
 				fullContent.WriteString(content)
+				processedDocs++
 			}
 		}
+	}
+
+	if processedDocs == 0 && len(links) > 0 {
+		fullContent.WriteString("\n\n*Note: Additional documents were linked but could not be extracted as text.*")
 	}
 
 	cacheFile := p.getCacheFilePath(network, refID)
@@ -93,7 +99,6 @@ func (p *Processor) RefreshProposal(network string, refID uint32) error {
 }
 
 func (p *Processor) fetchProposalFromPolkassembly(network string, refID uint32) (string, error) {
-	// Use the correct v2 API endpoint format for referenda
 	url := fmt.Sprintf("https://%s.polkassembly.io/api/v2/posts/referenda/%d", network, refID)
 
 	req, err := http.NewRequest("GET", url, nil)
@@ -116,7 +121,6 @@ func (p *Processor) fetchProposalFromPolkassembly(network string, refID uint32) 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// Try alternative endpoint format
 		url = fmt.Sprintf("https://%s.polkassembly.io/api/v1/posts/on-chain-post?proposalType=referendums_v2&postId=%d", network, refID)
 
 		req, err = http.NewRequest("GET", url, nil)
@@ -142,7 +146,6 @@ func (p *Processor) fetchProposalFromPolkassembly(network string, refID uint32) 
 		}
 	}
 
-	// First try to unmarshal as a post object
 	var postResult struct {
 		Post struct {
 			Content     string `json:"content"`
@@ -165,7 +168,6 @@ func (p *Processor) fetchProposalFromPolkassembly(network string, refID uint32) 
 		return content.String(), nil
 	}
 
-	// Try direct structure
 	var directResult struct {
 		Content     string `json:"content"`
 		Title       string `json:"title"`
@@ -189,12 +191,10 @@ func (p *Processor) fetchProposalFromPolkassembly(network string, refID uint32) 
 		}
 	}
 
-	// Try to extract any text content from the response
 	var genericResult map[string]interface{}
 	if err := json.Unmarshal(body, &genericResult); err == nil {
 		var content strings.Builder
 
-		// Look for common fields
 		fields := []string{"content", "description", "text", "body", "proposal", "details"}
 		for _, field := range fields {
 			if val, ok := genericResult[field]; ok {
@@ -204,7 +204,6 @@ func (p *Processor) fetchProposalFromPolkassembly(network string, refID uint32) 
 			}
 		}
 
-		// Check nested post object
 		if post, ok := genericResult["post"].(map[string]interface{}); ok {
 			for _, field := range fields {
 				if val, ok := post[field]; ok {
@@ -242,17 +241,26 @@ func (p *Processor) extractLinks(content string) []string {
 }
 
 func (p *Processor) isDocumentLink(link string) bool {
-	docExtensions := []string{
-		".pdf", ".doc", ".docx", ".txt", ".md", ".rtf",
-		".odt", ".csv", ".json", ".xml",
+	linkLower := strings.ToLower(link)
+
+	// Skip social media and other non-document links
+	skipDomains := []string{
+		"twitter.com", "x.com", "facebook.com", "instagram.com",
+		"youtube.com", "youtu.be", "reddit.com", "github.com/issues",
+		"polkadot.subsquare.io", "kusama.subsquare.io",
 	}
 
-	linkLower := strings.ToLower(link)
+	for _, domain := range skipDomains {
+		if strings.Contains(linkLower, domain) {
+			return false
+		}
+	}
 
 	// Skip image and video links
 	skipExtensions := []string{
-		".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg",
-		".mp4", ".avi", ".mov", ".webm", ".mp3", ".wav",
+		".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".webp",
+		".mp4", ".avi", ".mov", ".webm", ".mp3", ".wav", ".flac",
+		".zip", ".tar", ".gz", ".rar", ".7z",
 	}
 
 	for _, ext := range skipExtensions {
@@ -261,9 +269,15 @@ func (p *Processor) isDocumentLink(link string) bool {
 		}
 	}
 
+	// Include Google Docs/Drive
 	if strings.Contains(linkLower, "docs.google.com") ||
 		strings.Contains(linkLower, "drive.google.com") {
 		return true
+	}
+
+	// Include specific document extensions
+	docExtensions := []string{
+		".pdf", ".txt", ".md", ".rtf", ".odt",
 	}
 
 	for _, ext := range docExtensions {
@@ -276,8 +290,13 @@ func (p *Processor) isDocumentLink(link string) bool {
 }
 
 func (p *Processor) downloadDocument(link string) (string, error) {
-	// Handle PDF files specially
-	if strings.HasSuffix(strings.ToLower(link), ".pdf") {
+	// Skip PDF files for now if we can't extract text
+	if strings.HasSuffix(strings.ToLower(link), ".pdf") ||
+		strings.Contains(strings.ToLower(link), "drive.google.com/file") {
+		// Check if PDF tools are available
+		if !p.hasPDFTools() {
+			return "", fmt.Errorf("PDF extraction tools not available")
+		}
 		return p.downloadPDF(link)
 	}
 
@@ -285,20 +304,16 @@ func (p *Processor) downloadDocument(link string) (string, error) {
 		return p.downloadGoogleDoc(link)
 	}
 
-	if strings.Contains(link, "drive.google.com") {
-		// Check if it's a PDF on Google Drive
-		if p.isGoogleDrivePDF(link) {
-			return p.downloadGoogleDrivePDF(link)
-		}
-		return p.downloadGoogleDriveFile(link)
-	}
-
 	return p.downloadGenericFile(link)
 }
 
+func (p *Processor) hasPDFTools() bool {
+	_, err := exec.LookPath("pdftotext")
+	return err == nil
+}
+
 func (p *Processor) downloadPDF(link string) (string, error) {
-	// Download PDF to temp file
-	tempPDF := filepath.Join(p.tempDir, "temp_"+hex.EncodeToString([]byte(link)[:8])+".pdf")
+	tempPDF := filepath.Join(p.tempDir, "temp_"+hex.EncodeToString([]byte(link)[:min(8, len(link))])+".pdf")
 	defer os.Remove(tempPDF)
 
 	resp, err := p.httpClient.Get(link)
@@ -311,81 +326,52 @@ func (p *Processor) downloadPDF(link string) (string, error) {
 		return "", fmt.Errorf("failed to download PDF: status %d", resp.StatusCode)
 	}
 
-	// Save PDF to temp file
 	file, err := os.Create(tempPDF)
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
 
 	_, err = io.Copy(file, resp.Body)
+	file.Close()
 	if err != nil {
 		return "", err
 	}
-	file.Close()
 
-	// Try to extract text using pdftotext command
 	text, err := p.extractPDFText(tempPDF)
 	if err != nil {
-		log.Printf("Failed to extract PDF text: %v", err)
-		return "", fmt.Errorf("PDF text extraction not available")
+		return "", fmt.Errorf("PDF text extraction failed: %w", err)
+	}
+
+	// Validate extracted text
+	if !p.isValidTextContent(text) {
+		return "", fmt.Errorf("PDF contains invalid or binary content")
 	}
 
 	return text, nil
 }
 
 func (p *Processor) extractPDFText(pdfPath string) (string, error) {
-	// Try pdftotext first (poppler-utils)
-	cmd := exec.Command("pdftotext", "-layout", "-nopgbrk", pdfPath, "-")
+	cmd := exec.Command("pdftotext", "-layout", "-nopgbrk", "-enc", "UTF-8", pdfPath, "-")
 	output, err := cmd.Output()
-	if err == nil {
-		text := string(output)
-		if len(text) > 50000 {
-			text = text[:50000] + "\n\n[PDF content truncated...]"
-		}
-		return text, nil
-	}
-
-	// Try pdfgrep as fallback
-	cmd = exec.Command("pdfgrep", ".", pdfPath)
-	output, err = cmd.Output()
-	if err == nil {
-		text := string(output)
-		if len(text) > 50000 {
-			text = text[:50000] + "\n\n[PDF content truncated...]"
-		}
-		return text, nil
-	}
-
-	return "", fmt.Errorf("no PDF text extraction tool available")
-}
-
-func (p *Processor) isGoogleDrivePDF(link string) bool {
-	// Make a HEAD request to check content type
-	fileID := p.extractGoogleDriveFileID(link)
-	if fileID == "" {
-		return false
-	}
-
-	checkURL := fmt.Sprintf("https://drive.google.com/uc?export=download&id=%s", fileID)
-	resp, err := p.httpClient.Head(checkURL)
 	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-
-	contentType := resp.Header.Get("Content-Type")
-	return strings.Contains(contentType, "pdf")
-}
-
-func (p *Processor) downloadGoogleDrivePDF(link string) (string, error) {
-	fileID := p.extractGoogleDriveFileID(link)
-	if fileID == "" {
-		return "", fmt.Errorf("could not extract file ID")
+		return "", err
 	}
 
-	downloadURL := fmt.Sprintf("https://drive.google.com/uc?export=download&id=%s", fileID)
-	return p.downloadPDF(downloadURL)
+	text := string(output)
+
+	// Clean up the text
+	text = strings.ReplaceAll(text, "\x00", "")
+	text = strings.TrimSpace(text)
+
+	if len(text) < 100 {
+		return "", fmt.Errorf("extracted text too short")
+	}
+
+	if len(text) > 50000 {
+		text = text[:50000] + "\n\n[PDF content truncated...]"
+	}
+
+	return text, nil
 }
 
 func (p *Processor) downloadGoogleDoc(link string) (string, error) {
@@ -412,64 +398,11 @@ func (p *Processor) downloadGoogleDoc(link string) (string, error) {
 	}
 
 	contentStr := string(content)
+	contentStr = strings.ReplaceAll(contentStr, "\x00", "")
+	contentStr = strings.TrimSpace(contentStr)
+
 	if len(contentStr) > 50000 {
 		contentStr = contentStr[:50000] + "\n\n[Document content truncated...]"
-	}
-
-	return contentStr, nil
-}
-
-func (p *Processor) downloadGoogleDriveFile(link string) (string, error) {
-	fileID := p.extractGoogleDriveFileID(link)
-	if fileID == "" {
-		return "", fmt.Errorf("could not extract file ID")
-	}
-
-	downloadURL := fmt.Sprintf("https://drive.google.com/uc?export=download&id=%s", fileID)
-
-	resp, err := p.httpClient.Get(downloadURL)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to download: status %d", resp.StatusCode)
-	}
-
-	contentType := resp.Header.Get("Content-Type")
-	if strings.Contains(contentType, "pdf") {
-		// Handle as PDF
-		tempPDF := filepath.Join(p.tempDir, "temp_gdrive.pdf")
-		defer os.Remove(tempPDF)
-
-		file, err := os.Create(tempPDF)
-		if err != nil {
-			return "", err
-		}
-		defer file.Close()
-
-		_, err = io.Copy(file, resp.Body)
-		if err != nil {
-			return "", err
-		}
-		file.Close()
-
-		return p.extractPDFText(tempPDF)
-	}
-
-	content, err := io.ReadAll(io.LimitReader(resp.Body, 500000))
-	if err != nil {
-		return "", err
-	}
-
-	contentStr := string(content)
-	if !p.isTextContent(contentStr) {
-		return "", fmt.Errorf("file appears to be binary")
-	}
-
-	if len(contentStr) > 50000 {
-		contentStr = contentStr[:50000] + "\n\n[Content truncated...]"
 	}
 
 	return contentStr, nil
@@ -488,43 +421,29 @@ func (p *Processor) downloadGenericFile(link string) (string, error) {
 
 	contentType := resp.Header.Get("Content-Type")
 
-	// Handle PDFs
-	if strings.Contains(contentType, "pdf") {
-		tempPDF := filepath.Join(p.tempDir, "temp_generic.pdf")
-		defer os.Remove(tempPDF)
-
-		file, err := os.Create(tempPDF)
-		if err != nil {
-			return "", err
-		}
-		defer file.Close()
-
-		_, err = io.Copy(file, resp.Body)
-		if err != nil {
-			return "", err
-		}
-		file.Close()
-
-		return p.extractPDFText(tempPDF)
-	}
-
-	// Skip binary content types
-	if strings.Contains(contentType, "image") ||
+	// Skip binary types
+	if strings.Contains(contentType, "pdf") ||
+		strings.Contains(contentType, "image") ||
 		strings.Contains(contentType, "video") ||
 		strings.Contains(contentType, "audio") ||
-		strings.Contains(contentType, "application/octet-stream") {
+		strings.Contains(contentType, "application/octet-stream") ||
+		strings.Contains(contentType, "application/zip") {
 		return "", fmt.Errorf("binary content type: %s", contentType)
 	}
 
-	content, err := io.ReadAll(io.LimitReader(resp.Body, 500000))
+	content, err := io.ReadAll(io.LimitReader(resp.Body, 100000))
 	if err != nil {
 		return "", err
 	}
 
 	contentStr := string(content)
+
 	if !p.isTextContent(contentStr) {
 		return "", fmt.Errorf("file appears to be binary")
 	}
+
+	contentStr = strings.ReplaceAll(contentStr, "\x00", "")
+	contentStr = strings.TrimSpace(contentStr)
 
 	if len(contentStr) > 50000 {
 		contentStr = contentStr[:50000] + "\n\n[Content truncated...]"
@@ -573,22 +492,51 @@ func (p *Processor) isTextContent(content string) bool {
 		return false
 	}
 
+	checkLen := min(1000, len(content))
 	nullCount := 0
 	controlCount := 0
-	checkLen := min(1000, len(content))
+	printableCount := 0
 
 	for i := 0; i < checkLen; i++ {
 		c := content[i]
 		if c == 0 {
 			nullCount++
-		}
-		if c < 32 && c != '\n' && c != '\r' && c != '\t' {
+		} else if c >= 32 && c <= 126 {
+			printableCount++
+		} else if c == '\n' || c == '\r' || c == '\t' {
+			// Allow these control characters
+		} else if c < 32 || c > 126 {
 			controlCount++
 		}
 	}
 
-	// More strict checking for binary content
-	return nullCount < 2 && controlCount < 10
+	// Must be mostly printable ASCII
+	printableRatio := float64(printableCount) / float64(checkLen)
+	return nullCount == 0 && controlCount < 50 && printableRatio > 0.7
+}
+
+func (p *Processor) isValidTextContent(content string) bool {
+	if len(content) < 50 {
+		return false
+	}
+
+	// Check for PDF binary markers
+	if strings.Contains(content, "%PDF") && strings.Contains(content, "endobj") {
+		return false
+	}
+
+	// Check for excessive non-printable characters
+	nonPrintable := 0
+	checkLen := min(500, len(content))
+
+	for i := 0; i < checkLen; i++ {
+		c := content[i]
+		if c < 32 && c != '\n' && c != '\r' && c != '\t' {
+			nonPrintable++
+		}
+	}
+
+	return nonPrintable < 10
 }
 
 func (p *Processor) getCacheFilePath(network string, refID uint32) string {
