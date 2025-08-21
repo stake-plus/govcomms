@@ -139,7 +139,7 @@ Example format:
 			},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 5000,
+		"max_completion_tokens": 25000,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -257,7 +257,7 @@ Evidence: [Brief explanation with specific details found]`, claim.Claim, claim.U
 			},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 5000,
+		"max_completion_tokens": 25000,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -419,7 +419,7 @@ Example format:
 			},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 5000,
+		"max_completion_tokens": 25000,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -531,7 +531,7 @@ Evidence: [Specific findings about the proponent's credentials]`, info.Type, inf
 			},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 5000,
+		"max_completion_tokens": 25000,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
