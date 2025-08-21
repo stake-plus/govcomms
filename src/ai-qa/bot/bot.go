@@ -23,6 +23,7 @@ type Bot struct {
 	aiClient       ai.Client
 	networkManager *network.Manager
 	refManager     *referendum.Manager
+	contextManager *processor.ContextManager
 	cancelFunc     context.CancelFunc
 }
 
@@ -54,6 +55,7 @@ func New(cfg *config.Config, db *gorm.DB) (*Bot, error) {
 	}
 
 	proc := processor.NewProcessor(cfg.TempDir, db)
+	contextMgr := processor.NewContextManager(db)
 
 	bot := &Bot{
 		config:         cfg,
@@ -63,6 +65,7 @@ func New(cfg *config.Config, db *gorm.DB) (*Bot, error) {
 		aiClient:       aiClient,
 		networkManager: networkManager,
 		refManager:     refManager,
+		contextManager: contextMgr,
 	}
 
 	bot.initHandlers()
@@ -85,6 +88,8 @@ func (b *Bot) initHandlers() {
 			b.handleQuestion(s, m)
 		} else if content == "!refresh" {
 			b.handleRefresh(s, m)
+		} else if content == "!context" {
+			b.handleShowContext(s, m)
 		}
 	})
 }
@@ -121,31 +126,86 @@ func (b *Bot) handleQuestion(s *discordgo.Session, m *discordgo.MessageCreate) {
 		return
 	}
 
-	answer, err := b.aiClient.Ask(content, question)
+	// Get previous Q&A context
+	qaContext, err := b.contextManager.BuildContext(threadInfo.NetworkID, uint32(threadInfo.RefID))
+	if err != nil {
+		log.Printf("Error building context: %v", err)
+		qaContext = ""
+	}
+
+	// Combine proposal content with Q&A history
+	fullContent := content + qaContext
+
+	answer, err := b.aiClient.Ask(fullContent, question)
 	if err != nil {
 		log.Printf("Error getting AI response: %v", err)
 		s.ChannelMessageSend(m.ChannelID, "Failed to generate answer. Please try again.")
 		return
 	}
 
+	// Save Q&A to history
+	err = b.contextManager.SaveQA(threadInfo.NetworkID, uint32(threadInfo.RefID), m.ChannelID, m.Author.ID, question, answer)
+	if err != nil {
+		log.Printf("Error saving Q&A history: %v", err)
+	}
+
 	b.sendLongMessage(s, m.ChannelID, m.Author.ID, answer)
 }
 
+func (b *Bot) handleShowContext(s *discordgo.Session, m *discordgo.MessageCreate) {
+	if b.config.QARoleID != "" && !b.hasRole(s, b.config.GuildID, m.Author.ID, b.config.QARoleID) {
+		return
+	}
+
+	threadInfo, err := b.refManager.FindThread(m.ChannelID)
+	if err != nil || threadInfo == nil {
+		s.ChannelMessageSend(m.ChannelID, "This command must be used in a referendum thread.")
+		return
+	}
+
+	qas, err := b.contextManager.GetRecentQAs(threadInfo.NetworkID, uint32(threadInfo.RefID), 10)
+	if err != nil {
+		s.ChannelMessageSend(m.ChannelID, "Failed to retrieve context.")
+		return
+	}
+
+	if len(qas) == 0 {
+		s.ChannelMessageSend(m.ChannelID, "No previous Q&A found for this referendum.")
+		return
+	}
+
+	var response strings.Builder
+	response.WriteString("**Recent Q&A History:**\n")
+
+	for _, qa := range qas {
+		response.WriteString(fmt.Sprintf("\n**Q:** %s\n**A:** ", qa.Question))
+		if len(qa.Answer) > 200 {
+			response.WriteString(qa.Answer[:200] + "...")
+		} else {
+			response.WriteString(qa.Answer)
+		}
+		response.WriteString("\n")
+
+		if response.Len() > 1800 {
+			response.WriteString("\n*[Truncated]*")
+			break
+		}
+	}
+
+	s.ChannelMessageSend(m.ChannelID, response.String())
+}
+
 func (b *Bot) sendLongMessage(s *discordgo.Session, channelID string, userID string, message string) {
-	// Add user mention to first message
 	firstMessage := fmt.Sprintf("<@%s> %s", userID, message)
 
-	// If the message fits in one Discord message
 	if len(firstMessage) <= 2000 {
 		s.ChannelMessageSend(channelID, firstMessage)
 		return
 	}
 
-	// Split into multiple messages
 	messages := b.splitMessage(message, userID)
 	for i, msg := range messages {
 		if i > 0 {
-			// Add a small delay between messages to avoid rate limits
 			s.ChannelTyping(channelID)
 		}
 		s.ChannelMessageSend(channelID, msg)
@@ -153,22 +213,18 @@ func (b *Bot) sendLongMessage(s *discordgo.Session, channelID string, userID str
 }
 
 func (b *Bot) splitMessage(message string, userID string) []string {
-	const maxLength = 1900 // Leave some buffer for formatting
+	const maxLength = 1900
 	var messages []string
 
-	// First message includes the user mention
 	firstMaxLength := maxLength - len(fmt.Sprintf("<@%s> ", userID))
 
-	// Split by paragraphs first to preserve formatting
 	paragraphs := strings.Split(message, "\n\n")
 
 	var currentMessage strings.Builder
 	isFirst := true
 
 	for _, paragraph := range paragraphs {
-		// Check if paragraph itself is too long
 		if len(paragraph) > maxLength {
-			// If we have content, save it first
 			if currentMessage.Len() > 0 {
 				if isFirst {
 					messages = append(messages, fmt.Sprintf("<@%s> %s", userID, currentMessage.String()))
@@ -179,7 +235,6 @@ func (b *Bot) splitMessage(message string, userID string) []string {
 				currentMessage.Reset()
 			}
 
-			// Split long paragraph by sentences
 			sentences := b.splitBySentences(paragraph)
 			for _, sentence := range sentences {
 				effectiveMaxLength := maxLength
@@ -205,14 +260,12 @@ func (b *Bot) splitMessage(message string, userID string) []string {
 				currentMessage.WriteString(sentence)
 			}
 		} else {
-			// Check if adding this paragraph would exceed limit
 			effectiveMaxLength := maxLength
 			if isFirst {
 				effectiveMaxLength = firstMaxLength
 			}
 
 			if currentMessage.Len()+len(paragraph)+4 > effectiveMaxLength {
-				// Save current message and start new one
 				if currentMessage.Len() > 0 {
 					if isFirst {
 						messages = append(messages, fmt.Sprintf("<@%s> %s", userID, currentMessage.String()))
@@ -231,7 +284,6 @@ func (b *Bot) splitMessage(message string, userID string) []string {
 		}
 	}
 
-	// Add any remaining content
 	if currentMessage.Len() > 0 {
 		if isFirst {
 			messages = append(messages, fmt.Sprintf("<@%s> %s", userID, currentMessage.String()))
@@ -240,7 +292,6 @@ func (b *Bot) splitMessage(message string, userID string) []string {
 		}
 	}
 
-	// Add continuation indicators
 	for i := 1; i < len(messages)-1; i++ {
 		messages[i] = messages[i] + "\n*(continued...)*"
 	}
@@ -255,7 +306,6 @@ func (b *Bot) splitBySentences(text string) []string {
 	var sentences []string
 	var current strings.Builder
 
-	// Simple sentence splitting by common terminators
 	for _, char := range text {
 		current.WriteRune(char)
 		if char == '.' || char == '!' || char == '?' {
@@ -264,12 +314,10 @@ func (b *Bot) splitBySentences(text string) []string {
 		}
 	}
 
-	// Add any remaining text
 	if current.Len() > 0 {
 		sentences = append(sentences, strings.TrimSpace(current.String()))
 	}
 
-	// If no sentences found, split by spaces
 	if len(sentences) == 0 || (len(sentences) == 1 && len(sentences[0]) > 1900) {
 		words := strings.Fields(text)
 		var chunks []string
