@@ -174,12 +174,6 @@ EVIDENCE: [One sentence explanation with specific details found]`, claim.Claim, 
 		},
 		"temperature":           1,
 		"max_completion_tokens": 25000,
-		"tools": []map[string]interface{}{
-			{
-				"type": "web_search_preview",
-			},
-		},
-		"tool_choice": "auto",
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -349,12 +343,6 @@ Respond with JSON array only:
 		},
 		"temperature":           1,
 		"max_completion_tokens": 25000,
-		"tools": []map[string]interface{}{
-			{
-				"type": "web_search_preview",
-			},
-		},
-		"tool_choice": "auto",
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -513,12 +501,6 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 		},
 		"temperature":           1,
 		"max_completion_tokens": 25000,
-		"tools": []map[string]interface{}{
-			{
-				"type": "web_search_preview",
-			},
-		},
-		"tool_choice": "auto",
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
