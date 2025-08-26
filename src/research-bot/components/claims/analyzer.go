@@ -28,57 +28,77 @@ func (a *Analyzer) ExtractTopClaims(ctx context.Context, proposalContent string)
 		proposalContent = proposalContent[:maxContentLength] + "\n\n[Content truncated for analysis]"
 	}
 
-	prompt := `Analyze this proposal and identify ALL verifiable claims about deliverables, metrics, and achievements.
+	prompt := fmt.Sprintf(`Analyze this blockchain governance proposal and extract verifiable claims that can be checked online.
 
-First, count the TOTAL number of verifiable claims in the proposal.
+Focus ONLY on claims that can be verified through:
+- GitHub repositories and activity
+- LinkedIn profiles
+- Official project websites
+- Twitter/X accounts with metrics
+- YouTube channels with view counts
+- Published documentation or reports
+- Previous blockchain transactions or proposals
 
-Then select the 10 MOST IMPORTANT claims to verify based on:
-- Financial impact (budget items, costs, payments)
-- Deliverable claims (what was actually produced)
-- Performance metrics (views, engagement, participation)
-- Team credentials and experience
-- Previous work or grants
+SKIP claims about:
+- Private Telegram groups or Discord servers
+- Unverifiable meetup attendance
+- General statements without specific metrics
+- Internal team activities without public proof
+
+For each claim, extract any URLs mentioned in the proposal that could help verify it.
+
+Count total verifiable claims, then select the 10 MOST IMPORTANT based on:
+1. Financial amounts requested or spent
+2. Deliverables with public proof (videos, code, documents)
+3. Team member credentials that can be verified online
+4. Metrics that can be independently checked
 
 Respond with JSON:
 {
   "total_claims": 25,
   "top_claims": [
-    {"claim": "Requested 1,625 DOT total funding", "category": "financial"},
-    {"claim": "Delivered 41 live broadcasts totaling 57 hours", "category": "deliverables"},
-    {"claim": "Reached 11,950 cumulative views across platforms", "category": "metrics"}
+    {
+      "claim": "Requested 1,625 DOT total funding",
+      "category": "financial",
+      "url": "",
+      "context": "Main funding request"
+    },
+    {
+      "claim": "César Escobedo founder of Polkadot México with GitHub profile",
+      "category": "team",
+      "url": "https://github.com/cesarescobedo",
+      "context": "Team lead credentials"
+    },
+    {
+      "claim": "Published 41 videos on YouTube channel",
+      "category": "deliverables",
+      "url": "https://youtube.com/@polkadotamericas",
+      "context": "Content creation metrics"
+    }
   ]
-}`
+}
 
-	request := openai.ChatRequest{
-		Model: "gpt-5-mini",
-		Messages: []openai.Message{
-			{Role: "system", Content: "Extract and prioritize verifiable claims. Output valid JSON only."},
-			{Role: "user", Content: fmt.Sprintf("%s\n\nProposal:\n%s", prompt, proposalContent)},
-		},
-		Temperature:         1,
-		MaxCompletionTokens: 25000,
-	}
+Proposal:
+%s`, proposalContent)
 
-	log.Printf("Extracting top claims from proposal (content length: %d chars)", len(proposalContent))
-
-	response, err := a.client.CreateChatCompletion(ctx, request)
+	response, err := a.client.CreateResponseNoSearch(ctx, prompt)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	if len(response.Choices) == 0 || response.Choices[0].Message.Content == "" {
+	responseText := response.GetText()
+	if responseText == "" {
 		return []Claim{}, 0, nil
 	}
 
 	var claimsResponse ClaimsResponse
-	responseContent := strings.TrimSpace(response.Choices[0].Message.Content)
 
-	if err := json.Unmarshal([]byte(responseContent), &claimsResponse); err != nil {
+	if err := json.Unmarshal([]byte(responseText), &claimsResponse); err != nil {
 		// Try to extract JSON if embedded
-		startIdx := strings.Index(responseContent, "{")
-		endIdx := strings.LastIndex(responseContent, "}")
+		startIdx := strings.Index(responseText, "{")
+		endIdx := strings.LastIndex(responseText, "}")
 		if startIdx >= 0 && endIdx > startIdx {
-			jsonStr := responseContent[startIdx : endIdx+1]
+			jsonStr := responseText[startIdx : endIdx+1]
 			if err := json.Unmarshal([]byte(jsonStr), &claimsResponse); err != nil {
 				log.Printf("Failed to parse claims response: %v", err)
 				return []Claim{}, 0, nil
@@ -88,38 +108,46 @@ Respond with JSON:
 		}
 	}
 
-	log.Printf("Found %d total claims, returning top %d for verification",
+	log.Printf("Found %d total verifiable claims, returning top %d for verification",
 		claimsResponse.TotalClaims, len(claimsResponse.TopClaims))
 
 	return claimsResponse.TopClaims, claimsResponse.TotalClaims, nil
 }
 
 func (a *Analyzer) VerifySingleClaim(ctx context.Context, claim Claim) VerificationResult {
-	prompt := fmt.Sprintf(`You are a verification detective. Use web search to verify this specific claim:
+	prompt := fmt.Sprintf(`You are a blockchain governance proposal detective. Verify this specific claim using web search.
 
 Claim: "%s"
-Category: %s
+Category: %s`, claim.Claim, claim.Category)
 
-Instructions:
-1. Search the web for evidence supporting or refuting this claim
-2. Look for official sources, GitHub repos, social media profiles, documentation
-3. Verify specific numbers, dates, and facts
-4. Be skeptical and thorough
-
-Respond with EXACTLY this format:
-STATUS: [Valid/Rejected/Unknown]
-EVIDENCE: [One sentence explanation with specific details found]`, claim.Claim, claim.Category)
-
-	request := openai.ChatRequest{
-		Model: "gpt-5-mini",
-		Messages: []openai.Message{
-			{Role: "user", Content: prompt},
-		},
-		Temperature:         1,
-		MaxCompletionTokens: 25000,
+	if claim.URL != "" {
+		prompt += fmt.Sprintf("\nProposal provided URL: %s", claim.URL)
+	}
+	if claim.Context != "" {
+		prompt += fmt.Sprintf("\nContext: %s", claim.Context)
 	}
 
-	response, err := a.client.CreateChatCompletionWithWebSearch(ctx, request)
+	prompt += `
+
+Instructions:
+1. If a URL was provided, search for and verify information at that specific location
+2. For GitHub claims: Check repositories, commit history, contributor activity
+3. For LinkedIn/Twitter: Verify the person exists and their stated credentials
+4. For metrics (views, followers): Get current numbers if possible
+5. For financial claims: Look for on-chain data or official announcements
+6. Be skeptical - look for evidence that confirms OR refutes the claim
+
+Provide your verdict as:
+- VALID: Clear evidence supports the claim
+- REJECTED: Evidence contradicts the claim
+- UNKNOWN: Cannot find sufficient evidence online
+
+Format your response EXACTLY as:
+STATUS: [Valid/Rejected/Unknown]
+EVIDENCE: [One sentence with specific details found]
+SOURCE: [Primary URL where you found the evidence, or "No source found"]`
+
+	response, err := a.client.CreateResponseWithWebSearch(ctx, prompt)
 	if err != nil {
 		return VerificationResult{
 			Claim:    claim.Claim,
@@ -128,19 +156,21 @@ EVIDENCE: [One sentence explanation with specific details found]`, claim.Claim, 
 		}
 	}
 
-	if len(response.Choices) == 0 {
-		return VerificationResult{
-			Claim:    claim.Claim,
-			Status:   StatusUnknown,
-			Evidence: "No response",
-		}
+	responseText := response.GetText()
+	citations := response.GetCitations()
+
+	status, evidence, sourceURL := a.parseVerificationResponse(responseText)
+
+	// Use first citation if no source URL was parsed
+	if sourceURL == "" && len(citations) > 0 {
+		sourceURL = citations[0]
 	}
 
-	status, evidence := a.parseVerificationResponse(response.Choices[0].Message.Content)
 	return VerificationResult{
-		Claim:    claim.Claim,
-		Status:   status,
-		Evidence: evidence,
+		Claim:     claim.Claim,
+		Status:    status,
+		Evidence:  evidence,
+		SourceURL: sourceURL,
 	}
 }
 
@@ -195,15 +225,18 @@ func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]Verifica
 	}
 }
 
-func (a *Analyzer) parseVerificationResponse(response string) (VerificationStatus, string) {
+func (a *Analyzer) parseVerificationResponse(response string) (VerificationStatus, string, string) {
 	lines := strings.Split(response, "\n")
 	var status VerificationStatus = StatusUnknown
 	var evidence string
+	var sourceURL string
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(strings.ToUpper(line), "STATUS:") {
-			statusStr := strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(line), "STATUS:"))
+		upper := strings.ToUpper(line)
+
+		if strings.HasPrefix(upper, "STATUS:") {
+			statusStr := strings.TrimSpace(strings.TrimPrefix(upper, "STATUS:"))
 			switch statusStr {
 			case "VALID":
 				status = StatusValid
@@ -212,10 +245,15 @@ func (a *Analyzer) parseVerificationResponse(response string) (VerificationStatu
 			default:
 				status = StatusUnknown
 			}
-		} else if strings.HasPrefix(strings.ToUpper(line), "EVIDENCE:") {
+		} else if strings.HasPrefix(upper, "EVIDENCE:") {
 			evidence = strings.TrimSpace(strings.TrimPrefix(line, "EVIDENCE:"))
 			if evidence == "" {
-				evidence = strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(line), "EVIDENCE:"))
+				evidence = strings.TrimSpace(strings.TrimPrefix(upper, "EVIDENCE:"))
+			}
+		} else if strings.HasPrefix(upper, "SOURCE:") {
+			sourceURL = strings.TrimSpace(strings.TrimPrefix(line, "SOURCE:"))
+			if sourceURL == "" || sourceURL == "NO SOURCE FOUND" {
+				sourceURL = ""
 			}
 		}
 	}
@@ -224,5 +262,5 @@ func (a *Analyzer) parseVerificationResponse(response string) (VerificationStatu
 		evidence = "Unable to determine"
 	}
 
-	return status, evidence
+	return status, evidence, sourceURL
 }

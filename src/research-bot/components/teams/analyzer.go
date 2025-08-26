@@ -27,50 +27,52 @@ func (a *Analyzer) ExtractTeamMembers(ctx context.Context, proposalContent strin
 		proposalContent = proposalContent[:maxContentLength] + "\n\n[Content truncated]"
 	}
 
-	prompt := `Extract all team members mentioned in this proposal with their roles and social profiles.
+	prompt := fmt.Sprintf(`Extract team members from this proposal. Focus on finding their verifiable online profiles.
 
 Look for:
-- Names of people working on the project
-- Their roles or responsibilities
-- GitHub profiles
-- Twitter/X profiles
-- LinkedIn profiles
+- Full names of team members
+- Their roles in the project
+- GitHub usernames or profile URLs (look for github.com links or @mentions)
+- LinkedIn profile URLs
+- Twitter/X handles or profile URLs
+- Any other professional links mentioned
 
-Respond with JSON array only:
+Extract URLs exactly as they appear in the proposal. If only a username is mentioned, construct the likely URL.
+
+Respond with JSON array:
 [
-  {"name": "John Doe", "role": "Lead Developer", "github": "https://github.com/johndoe", "twitter": "", "linkedin": ""}
-]`
+  {
+    "name": "César Escobedo",
+    "role": "Founder/Lead",
+    "github": "https://github.com/cesarescobedo",
+    "twitter": "https://twitter.com/cesarescobedo",
+    "linkedin": ""
+  }
+]
 
-	request := openai.ChatRequest{
-		Model: "gpt-5-mini",
-		Messages: []openai.Message{
-			{Role: "system", Content: "Extract team member information. Output valid JSON array only."},
-			{Role: "user", Content: fmt.Sprintf("%s\n\nProposal:\n%s", prompt, proposalContent)},
-		},
-		Temperature:         1,
-		MaxCompletionTokens: 25000,
-	}
+Only include team members where you find at least a name and role. Include empty strings for missing profile URLs.
 
-	log.Printf("Extracting team members from proposal")
+Proposal:
+%s`, proposalContent)
 
-	response, err := a.client.CreateChatCompletionWithWebSearch(ctx, request)
+	response, err := a.client.CreateResponseNoSearch(ctx, prompt)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(response.Choices) == 0 || response.Choices[0].Message.Content == "" {
+	responseText := response.GetText()
+	if responseText == "" {
 		return []TeamMember{}, nil
 	}
 
 	var members []TeamMember
-	responseContent := strings.TrimSpace(response.Choices[0].Message.Content)
 
-	if err := json.Unmarshal([]byte(responseContent), &members); err != nil {
+	if err := json.Unmarshal([]byte(responseText), &members); err != nil {
 		// Try to extract JSON array if embedded
-		startIdx := strings.Index(responseContent, "[")
-		endIdx := strings.LastIndex(responseContent, "]")
+		startIdx := strings.Index(responseText, "[")
+		endIdx := strings.LastIndex(responseText, "]")
 		if startIdx >= 0 && endIdx > startIdx {
-			jsonStr := responseContent[startIdx : endIdx+1]
+			jsonStr := responseText[startIdx : endIdx+1]
 			if err := json.Unmarshal([]byte(jsonStr), &members); err != nil {
 				return []TeamMember{}, nil
 			}
@@ -136,42 +138,57 @@ func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember)
 }
 
 func (a *Analyzer) analyzeSingleMember(ctx context.Context, member TeamMember) TeamAnalysisResult {
-	profileInfo := ""
-	if member.GitHub != "" {
-		profileInfo += fmt.Sprintf("\nGitHub: %s", member.GitHub)
-	}
-	if member.Twitter != "" {
-		profileInfo += fmt.Sprintf("\nTwitter: %s", member.Twitter)
-	}
-	if member.LinkedIn != "" {
-		profileInfo += fmt.Sprintf("\nLinkedIn: %s", member.LinkedIn)
-	}
-
-	prompt := fmt.Sprintf(`You are analyzing a team member for a blockchain project proposal. Use web search to verify:
+	prompt := fmt.Sprintf(`Verify this team member for a blockchain/Polkadot project using web search.
 
 Name: %s
-Role: %s%s
+Role: %s`, member.Name, member.Role)
+
+	// Add profile URLs if provided
+	hasProfiles := false
+	if member.GitHub != "" {
+		prompt += fmt.Sprintf("\nGitHub: %s", member.GitHub)
+		hasProfiles = true
+	}
+	if member.Twitter != "" {
+		prompt += fmt.Sprintf("\nTwitter: %s", member.Twitter)
+		hasProfiles = true
+	}
+	if member.LinkedIn != "" {
+		prompt += fmt.Sprintf("\nLinkedIn: %s", member.LinkedIn)
+		hasProfiles = true
+	}
+
+	prompt += `
 
 Tasks:
-1. Verify if this is a real person (check profiles, activity, history)
-2. Verify if they have the skills for their stated role
-3. Assess their capability for blockchain/Web3 development
+1. Verify if this is a real person:`
+
+	if hasProfiles {
+		prompt += `
+   - Check if the provided profile URLs are valid and active
+   - Verify the profiles belong to the named person
+   - Check for consistent identity across profiles`
+	} else {
+		prompt += `
+   - Search for this person online
+   - Look for any professional profiles or mentions`
+	}
+
+	prompt += `
+2. Verify their skills for the stated role:
+   - For developers: Check GitHub contributions, repositories, commit history
+   - For designers: Look for portfolio or design work
+   - For community managers: Check social media activity and engagement
+   - Look for blockchain/Web3/Polkadot experience specifically
+
+3. Assess capability for this project based on evidence found
 
 Respond with EXACTLY this format:
 IS_REAL: [true/false]
 HAS_SKILLS: [true/false]
-CAPABILITY: [One sentence assessment of their capability for this project]`, member.Name, member.Role, profileInfo)
+CAPABILITY: [One detailed sentence about their verified experience and suitability]`
 
-	request := openai.ChatRequest{
-		Model: "gpt-5-mini",
-		Messages: []openai.Message{
-			{Role: "user", Content: prompt},
-		},
-		Temperature:         1,
-		MaxCompletionTokens: 25000,
-	}
-
-	response, err := a.client.CreateChatCompletionWithWebSearch(ctx, request)
+	response, err := a.client.CreateResponseWithWebSearch(ctx, prompt)
 	if err != nil {
 		return TeamAnalysisResult{
 			Name:            member.Name,
@@ -182,7 +199,8 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 		}
 	}
 
-	if len(response.Choices) == 0 {
+	responseText := response.GetText()
+	if responseText == "" {
 		return TeamAnalysisResult{
 			Name:            member.Name,
 			Role:            member.Role,
@@ -192,7 +210,7 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 		}
 	}
 
-	return a.parseTeamAnalysisResponse(member, response.Choices[0].Message.Content)
+	return a.parseTeamAnalysisResponse(member, responseText)
 }
 
 func (a *Analyzer) parseTeamAnalysisResponse(member TeamMember, response string) TeamAnalysisResult {
