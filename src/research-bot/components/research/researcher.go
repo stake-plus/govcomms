@@ -63,7 +63,7 @@ Respond with JSON array of claims:
 			{"role": "user", "content": fmt.Sprintf("%s\n\nProposal:\n%s", prompt, content)},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 2000,
+		"max_completion_tokens": 20000,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -339,7 +339,7 @@ Respond with JSON array:
 			{"role": "user", "content": fmt.Sprintf("%s\n\nProposal:\n%s", prompt, content)},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 2000,
+		"max_completion_tokens": 20000,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
