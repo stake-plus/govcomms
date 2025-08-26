@@ -32,7 +32,7 @@ type ResponseRequest struct {
 	Tools               []map[string]interface{} `json:"tools,omitempty"`
 	ToolChoice          interface{}              `json:"tool_choice,omitempty"`
 	Temperature         float64                  `json:"temperature,omitempty"`
-	MaxCompletionTokens int                      `json:"max_completion_tokens,omitempty"`
+	MaxCompletionTokens int                      `json:"max_output_tokens,omitempty"`
 }
 
 // ResponseOutput from the Responses API
