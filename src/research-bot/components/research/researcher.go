@@ -74,13 +74,8 @@ Respond with JSON:
 			{"role": "user", "content": fmt.Sprintf("%s\n\nProposal:\n%s", prompt, content)},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 4000,
-		"tools": []map[string]interface{}{
-			{
-				"type": "web_search",
-			},
-		},
-		"tool_choice": "auto",
+		"max_completion_tokens": 25000,
+		"tool_choice":           "auto",
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -180,13 +175,8 @@ EVIDENCE: [One sentence explanation with specific details found]`, claim.Claim, 
 			{"role": "user", "content": prompt},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 500,
-		"tools": []map[string]interface{}{
-			{
-				"type": "web_search",
-			},
-		},
-		"tool_choice": "auto",
+		"max_completion_tokens": 25000,
+		"tool_choice":           "auto",
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -355,13 +345,8 @@ Respond with JSON array only:
 			{"role": "user", "content": fmt.Sprintf("%s\n\nProposal:\n%s", prompt, content)},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 2000,
-		"tools": []map[string]interface{}{
-			{
-				"type": "web_search",
-			},
-		},
-		"tool_choice": "auto",
+		"max_completion_tokens": 25000,
+		"tool_choice":           "auto",
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -519,13 +504,8 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 			{"role": "user", "content": prompt},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 500,
-		"tools": []map[string]interface{}{
-			{
-				"type": "web_search",
-			},
-		},
-		"tool_choice": "auto",
+		"max_completion_tokens": 25000,
+		"tool_choice":           "auto",
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
