@@ -96,52 +96,112 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	s.ChannelTyping(m.ChannelID)
 
-	// Send initial message
-	initialMsg, _ := s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🔍 Starting claim verification for %s referendum #%d...", network.Name, threadInfo.RefID))
-
 	go func() {
 		// Create context with 5 minute timeout
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
-		// Extract and verify claims
-		claims, err := b.researcher.ExtractClaims(ctx, network.Name, uint32(threadInfo.RefID))
+		// Extract claims
+		claims, totalClaims, err := b.researcher.ExtractTopClaims(ctx, network.Name, uint32(threadInfo.RefID))
 		if err != nil {
 			if err == context.DeadlineExceeded {
-				s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, "⏱️ Verification timeout - process took longer than 5 minutes")
+				s.ChannelMessageSend(m.ChannelID, "⏱️ Verification timeout - process took longer than 5 minutes")
 			} else if err.Error() == "proposal content not found" {
-				s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, "Proposal content not found. Please run !refresh first.")
+				s.ChannelMessageSend(m.ChannelID, "Proposal content not found. Please run !refresh first.")
 			} else {
-				s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, fmt.Sprintf("Error extracting claims: %v", err))
+				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error extracting claims: %v", err))
 			}
 			return
 		}
 
 		if len(claims) == 0 {
-			s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, "No verifiable claims found in the proposal.")
+			s.ChannelMessageSend(m.ChannelID, "No verifiable claims found in the proposal.")
 			return
 		}
 
-		// Post list of claims being verified
-		claimsList := "**Claims to verify:**\n"
+		// Send header message
+		headerMsg := fmt.Sprintf("🔍 **Verifying Top Claims for %s Referendum #%d**\n", network.Name, threadInfo.RefID)
+		headerMsg += fmt.Sprintf("Found %d total claims, verifying top %d most important:\n", totalClaims, len(claims))
+		s.ChannelMessageSend(m.ChannelID, headerMsg)
+
+		// Create a message for each claim
+		claimMessages := make(map[int]*discordgo.Message)
 		for i, claim := range claims {
-			claimsList += fmt.Sprintf("%d. %s\n", i+1, claim.Claim)
-		}
-		s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, claimsList+"\n⏳ Verifying claims...")
-
-		// Verify claims with timeout
-		results, err := b.researcher.VerifyClaims(ctx, claims)
-		if err != nil {
-			if err == context.DeadlineExceeded {
-				s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, claimsList+"\n⏱️ Verification timeout - exceeded 5 minute limit")
-			} else {
-				s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, claimsList+fmt.Sprintf("\n❌ Verification failed: %v", err))
+			msgContent := fmt.Sprintf("**Claim %d:** %s\n⏳ *Verifying...*", i+1, claim.Claim)
+			msg, err := s.ChannelMessageSend(m.ChannelID, msgContent)
+			if err == nil {
+				claimMessages[i] = msg
 			}
-			return
+			time.Sleep(100 * time.Millisecond) // Small delay to avoid rate limiting
 		}
 
-		// Send verification results
-		b.sendVerificationResults(s, m.ChannelID, results)
+		// Verify claims and update messages as they complete
+		resultsChan := make(chan struct {
+			index  int
+			result research.VerificationResult
+		}, len(claims))
+
+		for i, claim := range claims {
+			go func(idx int, c research.Claim) {
+				result := b.researcher.VerifySingleClaimWithContext(ctx, c)
+				select {
+				case resultsChan <- struct {
+					index  int
+					result research.VerificationResult
+				}{index: idx, result: result}:
+				case <-ctx.Done():
+				}
+			}(i, claim)
+		}
+
+		// Collect results and update messages
+		validCount := 0
+		rejectedCount := 0
+		unknownCount := 0
+
+		for i := 0; i < len(claims); i++ {
+			select {
+			case res := <-resultsChan:
+				statusEmoji := "❓"
+				switch res.result.Status {
+				case research.StatusValid:
+					statusEmoji = "✅"
+					validCount++
+				case research.StatusRejected:
+					statusEmoji = "❌"
+					rejectedCount++
+				case research.StatusUnknown:
+					statusEmoji = "❓"
+					unknownCount++
+				}
+
+				// Update the message
+				if msg, exists := claimMessages[res.index]; exists {
+					updatedContent := fmt.Sprintf("**Claim %d:** %s\n%s **%s** - %s",
+						res.index+1,
+						claims[res.index].Claim,
+						statusEmoji,
+						res.result.Status,
+						res.result.Evidence)
+
+					s.ChannelMessageEdit(m.ChannelID, msg.ID, updatedContent)
+				}
+
+			case <-ctx.Done():
+				// Update remaining messages as timeout
+				for idx, msg := range claimMessages {
+					s.ChannelMessageEdit(m.ChannelID, msg.ID,
+						fmt.Sprintf("**Claim %d:** %s\n⏱️ **Timeout** - Verification exceeded time limit",
+							idx+1, claims[idx].Claim))
+				}
+				return
+			}
+		}
+
+		// Send summary message
+		summaryMsg := fmt.Sprintf("\n📊 **Verification Complete**\n✅ Valid: %d | ❌ Rejected: %d | ❓ Unknown: %d",
+			validCount, rejectedCount, unknownCount)
+		s.ChannelMessageSend(m.ChannelID, summaryMsg)
 	}()
 }
 
@@ -216,71 +276,6 @@ func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
 		// Send team analysis results
 		b.sendTeamResults(s, m.ChannelID, results)
 	}()
-}
-
-func (b *Bot) sendVerificationResults(s *discordgo.Session, channelID string, results []research.VerificationResult) {
-	embed := &discordgo.MessageEmbed{
-		Title:  "📊 Claim Verification Results",
-		Color:  0x3498db,
-		Fields: []*discordgo.MessageEmbedField{},
-		Footer: &discordgo.MessageEmbedFooter{
-			Text: time.Now().Format("Jan 02, 2006 15:04 MST"),
-		},
-	}
-
-	validCount := 0
-	rejectedCount := 0
-	unknownCount := 0
-
-	for _, result := range results {
-		statusEmoji := "❓"
-		switch result.Status {
-		case research.StatusValid:
-			statusEmoji = "✅"
-			validCount++
-		case research.StatusRejected:
-			statusEmoji = "❌"
-			rejectedCount++
-		case research.StatusUnknown:
-			statusEmoji = "❓"
-			unknownCount++
-		}
-
-		fieldValue := fmt.Sprintf("%s **%s**\n%s", statusEmoji, result.Status, result.Evidence)
-		if len(fieldValue) > 1024 {
-			fieldValue = fieldValue[:1021] + "..."
-		}
-
-		claimName := result.Claim
-		if len(claimName) > 256 {
-			claimName = claimName[:253] + "..."
-		}
-
-		embed.Fields = append(embed.Fields, &discordgo.MessageEmbedField{
-			Name:   claimName,
-			Value:  fieldValue,
-			Inline: false,
-		})
-
-		if len(embed.Fields) >= 25 {
-			break
-		}
-	}
-
-	// Set color based on results
-	if validCount > rejectedCount {
-		embed.Color = 0x00ff00 // Green
-	} else if rejectedCount > validCount {
-		embed.Color = 0xff0000 // Red
-	} else {
-		embed.Color = 0xffff00 // Yellow
-	}
-
-	// Add summary
-	embed.Description = fmt.Sprintf("**Summary:** ✅ Valid: %d | ❌ Rejected: %d | ❓ Unknown: %d",
-		validCount, rejectedCount, unknownCount)
-
-	s.ChannelMessageSendEmbed(channelID, embed)
 }
 
 func (b *Bot) sendTeamResults(s *discordgo.Session, channelID string, results []research.TeamAnalysisResult) {

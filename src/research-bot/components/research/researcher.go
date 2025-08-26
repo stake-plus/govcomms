@@ -33,89 +33,85 @@ func NewResearcher(apiKey, tempDir string) *Researcher {
 	}
 }
 
-func (r *Researcher) ExtractClaims(ctx context.Context, network string, refID uint32) ([]Claim, error) {
+func (r *Researcher) ExtractTopClaims(ctx context.Context, network string, refID uint32) ([]Claim, int, error) {
 	content, err := r.getProposalContent(network, refID)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
-	prompt := `Analyze this proposal and extract ALL verifiable claims about historical deliverables, performance metrics, and factual statements that can be verified through web search.
+	// Truncate content if too long to leave room for response
+	maxContentLength := 10000
+	if len(content) > maxContentLength {
+		content = content[:maxContentLength] + "\n\n[Content truncated for analysis]"
+	}
 
-Focus on:
-- Past project completions and deliverables
-- GitHub activity, commits, repositories
-- Social media metrics (followers, views, engagement)
-- Previous grants or funding received
-- Specific numerical claims
-- Timeline claims about past events
-- Published work or documentation
+	prompt := `Analyze this proposal and identify ALL verifiable claims about deliverables, metrics, and achievements.
 
-Respond with JSON array of claims:
-[
-  {"claim": "Delivered 5 educational videos with 100k+ views", "category": "deliverables"},
-  {"claim": "GitHub repository has 500+ commits", "category": "development"}
-]`
+First, count the TOTAL number of verifiable claims in the proposal.
 
+Then select the 10 MOST IMPORTANT claims to verify based on:
+- Financial impact (budget items, costs, payments)
+- Deliverable claims (what was actually produced)
+- Performance metrics (views, engagement, participation)
+- Team credentials and experience
+- Previous work or grants
+
+Respond with JSON:
+{
+  "total_claims": 25,
+  "top_claims": [
+    {"claim": "Requested 1,625 DOT total funding", "category": "financial"},
+    {"claim": "Delivered 41 live broadcasts totaling 57 hours", "category": "deliverables"},
+    {"claim": "Reached 11,950 cumulative views across platforms", "category": "metrics"}
+  ]
+}`
+
+	// Enable web search by including tools
 	reqBody := map[string]interface{}{
 		"model": "gpt-5-mini",
 		"messages": []map[string]string{
-			{"role": "system", "content": "Extract verifiable claims from proposals. Output valid JSON only."},
+			{"role": "system", "content": "Extract and prioritize verifiable claims. Output valid JSON only."},
 			{"role": "user", "content": fmt.Sprintf("%s\n\nProposal:\n%s", prompt, content)},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 20000,
+		"max_completion_tokens": 4000,
+		"tools": []map[string]interface{}{
+			{
+				"type": "web_search",
+			},
+		},
+		"tool_choice": "auto",
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		log.Printf("Failed to marshal request body: %v", err)
-		return nil, err
+		return nil, 0, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
-		log.Printf("Failed to create request: %v", err)
-		return nil, err
+		return nil, 0, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+r.apiKey)
 
-	log.Printf("Making request to OpenAI for claim extraction (proposal length: %d chars)", len(content))
+	log.Printf("Extracting top claims from proposal (content length: %d chars)", len(content))
 
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
-		log.Printf("HTTP request failed: %v", err)
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Failed to read response body: %v", err)
-		return nil, err
+		return nil, 0, err
 	}
-
-	log.Printf("OpenAI response status: %d", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("OpenAI API error - Status: %d, Body: %s", resp.StatusCode, string(body))
-
-		// Try to parse error response
-		var errorResp struct {
-			Error struct {
-				Message string `json:"message"`
-				Type    string `json:"type"`
-				Code    string `json:"code"`
-			} `json:"error"`
-		}
-
-		if err := json.Unmarshal(body, &errorResp); err == nil && errorResp.Error.Message != "" {
-			return nil, fmt.Errorf("OpenAI API error: %s (type: %s, code: %s)",
-				errorResp.Error.Message, errorResp.Error.Type, errorResp.Error.Code)
-		}
-
-		return nil, fmt.Errorf("OpenAI API error: status %d", resp.StatusCode)
+		return nil, 0, fmt.Errorf("OpenAI API error: status %d", resp.StatusCode)
 	}
 
 	var result struct {
@@ -124,95 +120,45 @@ Respond with JSON array of claims:
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
-		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
-		} `json:"usage"`
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
-		log.Printf("Failed to unmarshal response: %v, body: %s", err, string(body))
-		return nil, err
+		return nil, 0, err
 	}
 
-	if len(result.Choices) == 0 {
-		log.Printf("No choices in OpenAI response. Full response: %s", string(body))
-		return nil, fmt.Errorf("no response from OpenAI")
+	if len(result.Choices) == 0 || result.Choices[0].Message.Content == "" {
+		return []Claim{}, 0, nil
 	}
 
-	log.Printf("OpenAI tokens used - Prompt: %d, Completion: %d, Total: %d",
-		result.Usage.PromptTokens, result.Usage.CompletionTokens, result.Usage.TotalTokens)
-
-	responseContent := result.Choices[0].Message.Content
-	log.Printf("OpenAI response content length: %d chars", len(responseContent))
-
-	var claims []Claim
-	if err := json.Unmarshal([]byte(responseContent), &claims); err != nil {
-		log.Printf("Failed to parse claims JSON: %v\nContent: %s", err, responseContent)
-		return nil, fmt.Errorf("failed to parse claims: %w", err)
+	var claimsResponse struct {
+		TotalClaims int     `json:"total_claims"`
+		TopClaims   []Claim `json:"top_claims"`
 	}
 
-	log.Printf("Successfully extracted %d claims", len(claims))
-	return claims, nil
-}
-
-func (r *Researcher) VerifyClaims(ctx context.Context, claims []Claim) ([]VerificationResult, error) {
-	var wg sync.WaitGroup
-	results := make([]VerificationResult, len(claims))
-	semaphore := make(chan struct{}, 3) // Max 3 concurrent verifications
-
-	log.Printf("Starting verification of %d claims", len(claims))
-
-	for i, claim := range claims {
-		select {
-		case <-ctx.Done():
-			log.Printf("Context cancelled during claim verification")
-			return nil, ctx.Err()
-		default:
-		}
-
-		wg.Add(1)
-		go func(index int, c Claim) {
-			defer wg.Done()
-
-			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-ctx.Done():
-				results[index] = VerificationResult{
-					Claim:    c.Claim,
-					Status:   StatusUnknown,
-					Evidence: "Verification cancelled due to timeout",
-				}
-				return
+	responseContent := strings.TrimSpace(result.Choices[0].Message.Content)
+	if err := json.Unmarshal([]byte(responseContent), &claimsResponse); err != nil {
+		// Try to extract JSON if embedded
+		startIdx := strings.Index(responseContent, "{")
+		endIdx := strings.LastIndex(responseContent, "}")
+		if startIdx >= 0 && endIdx > startIdx {
+			jsonStr := responseContent[startIdx : endIdx+1]
+			if err := json.Unmarshal([]byte(jsonStr), &claimsResponse); err != nil {
+				log.Printf("Failed to parse claims response: %v", err)
+				return []Claim{}, 0, nil
 			}
-
-			log.Printf("Verifying claim %d: %s", index+1, c.Claim)
-			result := r.verifySingleClaim(ctx, c)
-			results[index] = result
-			log.Printf("Claim %d verification result: %s", index+1, result.Status)
-		}(i, claim)
+		} else {
+			return []Claim{}, 0, nil
+		}
 	}
 
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
+	log.Printf("Found %d total claims, returning top %d for verification",
+		claimsResponse.TotalClaims, len(claimsResponse.TopClaims))
 
-	select {
-	case <-done:
-		log.Printf("All claims verified successfully")
-		return results, nil
-	case <-ctx.Done():
-		log.Printf("Context timeout during claim verification")
-		return results, ctx.Err()
-	}
+	return claimsResponse.TopClaims, claimsResponse.TotalClaims, nil
 }
 
-func (r *Researcher) verifySingleClaim(ctx context.Context, claim Claim) VerificationResult {
-	prompt := fmt.Sprintf(`You are a verification detective. Your task is to verify this specific claim using web search:
+func (r *Researcher) VerifySingleClaimWithContext(ctx context.Context, claim Claim) VerificationResult {
+	prompt := fmt.Sprintf(`You are a verification detective. Use web search to verify this specific claim:
 
 Claim: "%s"
 Category: %s
@@ -227,6 +173,7 @@ Respond with EXACTLY this format:
 STATUS: [Valid/Rejected/Unknown]
 EVIDENCE: [One sentence explanation with specific details found]`, claim.Claim, claim.Category)
 
+	// Enable web search with tools parameter
 	reqBody := map[string]interface{}{
 		"model": "gpt-5-mini",
 		"messages": []map[string]string{
@@ -234,6 +181,12 @@ EVIDENCE: [One sentence explanation with specific details found]`, claim.Claim, 
 		},
 		"temperature":           1,
 		"max_completion_tokens": 500,
+		"tools": []map[string]interface{}{
+			{
+				"type": "web_search",
+			},
+		},
+		"tool_choice": "auto",
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -272,7 +225,7 @@ EVIDENCE: [One sentence explanation with specific details found]`, claim.Claim, 
 		return VerificationResult{
 			Claim:    claim.Claim,
 			Status:   StatusUnknown,
-			Evidence: "Failed to read verification response",
+			Evidence: "Failed to read response",
 		}
 	}
 
@@ -281,7 +234,7 @@ EVIDENCE: [One sentence explanation with specific details found]`, claim.Claim, 
 		return VerificationResult{
 			Claim:    claim.Claim,
 			Status:   StatusUnknown,
-			Evidence: "Verification API error",
+			Evidence: "API error",
 		}
 	}
 
@@ -297,7 +250,7 @@ EVIDENCE: [One sentence explanation with specific details found]`, claim.Claim, 
 		return VerificationResult{
 			Claim:    claim.Claim,
 			Status:   StatusUnknown,
-			Evidence: "Failed to parse verification response",
+			Evidence: "Failed to parse response",
 		}
 	}
 
@@ -311,10 +264,74 @@ EVIDENCE: [One sentence explanation with specific details found]`, claim.Claim, 
 	}
 }
 
+func (r *Researcher) ExtractClaims(ctx context.Context, network string, refID uint32) ([]Claim, error) {
+	claims, _, err := r.ExtractTopClaims(ctx, network, refID)
+	return claims, err
+}
+
+func (r *Researcher) VerifyClaims(ctx context.Context, claims []Claim) ([]VerificationResult, error) {
+	var wg sync.WaitGroup
+	results := make([]VerificationResult, len(claims))
+	semaphore := make(chan struct{}, 3)
+
+	log.Printf("Starting verification of %d claims", len(claims))
+
+	for i, claim := range claims {
+		select {
+		case <-ctx.Done():
+			log.Printf("Context cancelled during claim verification")
+			return nil, ctx.Err()
+		default:
+		}
+
+		wg.Add(1)
+		go func(index int, c Claim) {
+			defer wg.Done()
+
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-ctx.Done():
+				results[index] = VerificationResult{
+					Claim:    c.Claim,
+					Status:   StatusUnknown,
+					Evidence: "Verification cancelled due to timeout",
+				}
+				return
+			}
+
+			log.Printf("Verifying claim %d: %s", index+1, c.Claim)
+			result := r.VerifySingleClaimWithContext(ctx, c)
+			results[index] = result
+			log.Printf("Claim %d verification result: %s", index+1, result.Status)
+		}(i, claim)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Printf("All claims verified successfully")
+		return results, nil
+	case <-ctx.Done():
+		log.Printf("Context timeout during claim verification")
+		return results, ctx.Err()
+	}
+}
+
 func (r *Researcher) ExtractTeamMembers(ctx context.Context, network string, refID uint32) ([]TeamMember, error) {
 	content, err := r.getProposalContent(network, refID)
 	if err != nil {
 		return nil, err
+	}
+
+	maxContentLength := 10000
+	if len(content) > maxContentLength {
+		content = content[:maxContentLength] + "\n\n[Content truncated]"
 	}
 
 	prompt := `Extract all team members mentioned in this proposal with their roles and social profiles.
@@ -325,9 +342,8 @@ Look for:
 - GitHub profiles
 - Twitter/X profiles
 - LinkedIn profiles
-- Any other professional links
 
-Respond with JSON array:
+Respond with JSON array only:
 [
   {"name": "John Doe", "role": "Lead Developer", "github": "https://github.com/johndoe", "twitter": "", "linkedin": ""}
 ]`
@@ -335,22 +351,26 @@ Respond with JSON array:
 	reqBody := map[string]interface{}{
 		"model": "gpt-5-mini",
 		"messages": []map[string]string{
-			{"role": "system", "content": "Extract team member information. Output valid JSON only."},
+			{"role": "system", "content": "Extract team member information. Output valid JSON array only."},
 			{"role": "user", "content": fmt.Sprintf("%s\n\nProposal:\n%s", prompt, content)},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 20000,
+		"max_completion_tokens": 2000,
+		"tools": []map[string]interface{}{
+			{
+				"type": "web_search",
+			},
+		},
+		"tool_choice": "auto",
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
-		log.Printf("Failed to marshal team extraction request: %v", err)
 		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
-		log.Printf("Failed to create team extraction request: %v", err)
 		return nil, err
 	}
 
@@ -361,33 +381,18 @@ Respond with JSON array:
 
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
-		log.Printf("Team extraction HTTP request failed: %v", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("Failed to read team extraction response: %v", err)
 		return nil, err
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Printf("OpenAI team extraction error - Status: %d, Body: %s", resp.StatusCode, string(body))
-
-		var errorResp struct {
-			Error struct {
-				Message string `json:"message"`
-				Type    string `json:"type"`
-				Code    string `json:"code"`
-			} `json:"error"`
-		}
-
-		if err := json.Unmarshal(body, &errorResp); err == nil && errorResp.Error.Message != "" {
-			return nil, fmt.Errorf("OpenAI API error: %s", errorResp.Error.Message)
-		}
-
-		return nil, fmt.Errorf("OpenAI API error: status %d", resp.StatusCode)
+		log.Printf("OpenAI API error - Status: %d, Body: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("API error: status %d", resp.StatusCode)
 	}
 
 	var result struct {
@@ -399,18 +404,28 @@ Respond with JSON array:
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
-		log.Printf("Failed to unmarshal team extraction response: %v", err)
 		return nil, err
 	}
 
-	if len(result.Choices) == 0 {
-		return nil, fmt.Errorf("no response from OpenAI")
+	if len(result.Choices) == 0 || result.Choices[0].Message.Content == "" {
+		return []TeamMember{}, nil
 	}
 
 	var members []TeamMember
-	if err := json.Unmarshal([]byte(result.Choices[0].Message.Content), &members); err != nil {
-		log.Printf("Failed to parse team members JSON: %s", result.Choices[0].Message.Content)
-		return nil, fmt.Errorf("failed to parse team members: %w", err)
+	responseContent := strings.TrimSpace(result.Choices[0].Message.Content)
+
+	if err := json.Unmarshal([]byte(responseContent), &members); err != nil {
+		// Try to extract JSON array if embedded
+		startIdx := strings.Index(responseContent, "[")
+		endIdx := strings.LastIndex(responseContent, "]")
+		if startIdx >= 0 && endIdx > startIdx {
+			jsonStr := responseContent[startIdx : endIdx+1]
+			if err := json.Unmarshal([]byte(jsonStr), &members); err != nil {
+				return []TeamMember{}, nil
+			}
+		} else {
+			return []TeamMember{}, nil
+		}
 	}
 
 	log.Printf("Successfully extracted %d team members", len(members))
@@ -420,7 +435,7 @@ Respond with JSON array:
 func (r *Researcher) AnalyzeTeamMembers(ctx context.Context, members []TeamMember) ([]TeamAnalysisResult, error) {
 	var wg sync.WaitGroup
 	results := make([]TeamAnalysisResult, len(members))
-	semaphore := make(chan struct{}, 3) // Max 3 concurrent analyses
+	semaphore := make(chan struct{}, 3)
 
 	log.Printf("Starting analysis of %d team members", len(members))
 
@@ -505,6 +520,12 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 		},
 		"temperature":           1,
 		"max_completion_tokens": 500,
+		"tools": []map[string]interface{}{
+			{
+				"type": "web_search",
+			},
+		},
+		"tool_choice": "auto",
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -514,7 +535,7 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 			Role:            member.Role,
 			IsReal:          false,
 			HasStatedSkills: false,
-			Capability:      "Failed to analyze team member",
+			Capability:      "Failed to analyze",
 		}
 	}
 
@@ -525,7 +546,7 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 			Role:            member.Role,
 			IsReal:          false,
 			HasStatedSkills: false,
-			Capability:      "Failed to analyze team member",
+			Capability:      "Failed to analyze",
 		}
 	}
 
@@ -539,7 +560,7 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 			Role:            member.Role,
 			IsReal:          false,
 			HasStatedSkills: false,
-			Capability:      "Analysis request failed",
+			Capability:      "Request failed",
 		}
 	}
 	defer resp.Body.Close()
@@ -551,7 +572,7 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 			Role:            member.Role,
 			IsReal:          false,
 			HasStatedSkills: false,
-			Capability:      "Failed to read analysis response",
+			Capability:      "Failed to read response",
 		}
 	}
 
@@ -562,7 +583,7 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 			Role:            member.Role,
 			IsReal:          false,
 			HasStatedSkills: false,
-			Capability:      "Analysis API error",
+			Capability:      "API error",
 		}
 	}
 
@@ -580,7 +601,7 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 			Role:            member.Role,
 			IsReal:          false,
 			HasStatedSkills: false,
-			Capability:      "Failed to parse analysis response",
+			Capability:      "Failed to parse response",
 		}
 	}
 
@@ -614,7 +635,7 @@ func (r *Researcher) parseVerificationResponse(response string) (VerificationSta
 	}
 
 	if evidence == "" {
-		evidence = "Unable to determine verification details"
+		evidence = "Unable to determine"
 	}
 
 	return status, evidence
@@ -646,7 +667,7 @@ func (r *Researcher) parseTeamAnalysisResponse(member TeamMember, response strin
 	}
 
 	if result.Capability == "" {
-		result.Capability = "Unable to assess capability"
+		result.Capability = "Unable to assess"
 	}
 
 	return result
