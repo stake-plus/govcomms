@@ -73,7 +73,7 @@ Respond with JSON:
 			{"role": "user", "content": fmt.Sprintf("%s\n\nProposal:\n%s", prompt, content)},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 4000,
+		"max_completion_tokens": 25000,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -173,7 +173,7 @@ EVIDENCE: [One sentence explanation with specific details found]`, claim.Claim, 
 			{"role": "user", "content": prompt},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 500,
+		"max_completion_tokens": 25000,
 		"tools": []map[string]interface{}{
 			{
 				"type": "web_search_preview",
@@ -348,7 +348,7 @@ Respond with JSON array only:
 			{"role": "user", "content": fmt.Sprintf("%s\n\nProposal:\n%s", prompt, content)},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 2000,
+		"max_completion_tokens": 25000,
 		"tools": []map[string]interface{}{
 			{
 				"type": "web_search_preview",
@@ -512,7 +512,7 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 			{"role": "user", "content": prompt},
 		},
 		"temperature":           1,
-		"max_completion_tokens": 500,
+		"max_completion_tokens": 25000,
 		"tools": []map[string]interface{}{
 			{
 				"type": "web_search_preview",
