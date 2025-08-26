@@ -56,7 +56,7 @@ Respond with JSON:
 			{Role: "user", Content: fmt.Sprintf("%s\n\nProposal:\n%s", prompt, proposalContent)},
 		},
 		Temperature:         1,
-		MaxCompletionTokens: 4000,
+		MaxCompletionTokens: 25000,
 	}
 
 	log.Printf("Extracting top claims from proposal (content length: %d chars)", len(proposalContent))
@@ -116,7 +116,7 @@ EVIDENCE: [One sentence explanation with specific details found]`, claim.Claim, 
 			{Role: "user", Content: prompt},
 		},
 		Temperature:         1,
-		MaxCompletionTokens: 500,
+		MaxCompletionTokens: 25000,
 	}
 
 	response, err := a.client.CreateChatCompletionWithWebSearch(ctx, request)

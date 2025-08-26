@@ -48,7 +48,7 @@ Respond with JSON array only:
 			{Role: "user", Content: fmt.Sprintf("%s\n\nProposal:\n%s", prompt, proposalContent)},
 		},
 		Temperature:         1,
-		MaxCompletionTokens: 2000,
+		MaxCompletionTokens: 25000,
 	}
 
 	log.Printf("Extracting team members from proposal")
@@ -168,7 +168,7 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 			{Role: "user", Content: prompt},
 		},
 		Temperature:         1,
-		MaxCompletionTokens: 500,
+		MaxCompletionTokens: 25000,
 	}
 
 	response, err := a.client.CreateChatCompletionWithWebSearch(ctx, request)

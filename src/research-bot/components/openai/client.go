@@ -103,15 +103,6 @@ func (c *Client) CreateChatCompletion(ctx context.Context, request ChatRequest) 
 
 func (c *Client) CreateChatCompletionWithWebSearch(ctx context.Context, request ChatRequest) (*ChatResponse, error) {
 	// Add web search tool if not already present
-	if request.Tools == nil {
-		request.Tools = []map[string]interface{}{}
-	}
-	request.Tools = append(request.Tools, map[string]interface{}{
-		"type": "web_search_preview",
-	})
-	if request.ToolChoice == "" {
-		request.ToolChoice = "auto"
-	}
 
 	return c.CreateChatCompletion(ctx, request)
 }
