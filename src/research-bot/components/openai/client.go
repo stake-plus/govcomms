@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 )
@@ -19,7 +20,7 @@ func NewClient(apiKey string) *Client {
 	return &Client{
 		apiKey: apiKey,
 		httpClient: &http.Client{
-			Timeout: 120 * time.Second,
+			Timeout: 180 * time.Second, // Increased timeout for web search operations
 		},
 	}
 }
@@ -57,34 +58,46 @@ func (c *Client) CreateResponse(ctx context.Context, request ResponseRequest) (*
 		request.Temperature = 1
 	}
 	if request.MaxCompletionTokens == 0 {
-		request.MaxCompletionTokens = 4000
+		request.MaxCompletionTokens = 50000
 	}
 
 	jsonBody, err := json.Marshal(request)
 	if err != nil {
+		log.Printf("Failed to marshal request: %v", err)
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	log.Printf("Making request to OpenAI Responses API (model: %s, input length: %d chars, web_search: %v)",
+		request.Model, len(request.Input), len(request.Tools) > 0)
+
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/responses", bytes.NewBuffer(jsonBody))
 	if err != nil {
+		log.Printf("Failed to create request: %v", err)
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
+	startTime := time.Now()
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		log.Printf("HTTP request failed after %v: %v", time.Since(startTime), err)
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	log.Printf("OpenAI response received in %v, status: %d", time.Since(startTime), resp.StatusCode)
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("Failed to read response body: %v", err)
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		log.Printf("OpenAI API error - Status: %d, Body: %s", resp.StatusCode, string(body))
+
 		var errorResp struct {
 			Error struct {
 				Message string `json:"message"`
@@ -98,13 +111,20 @@ func (c *Client) CreateResponse(ctx context.Context, request ResponseRequest) (*
 				errorResp.Error.Message, errorResp.Error.Type, errorResp.Error.Code)
 		}
 
-		return nil, fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("API error: status %d", resp.StatusCode)
 	}
 
 	var result ResponseOutput
 	if err := json.Unmarshal(body, &result); err != nil {
+		log.Printf("Failed to unmarshal response: %v, body length: %d", err, len(body))
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
+
+	// Log response details
+	responseText := result.GetText()
+	citations := result.GetCitations()
+	log.Printf("Response parsed successfully - text length: %d chars, citations: %d",
+		len(responseText), len(citations))
 
 	return &result, nil
 }
@@ -120,7 +140,7 @@ func (c *Client) CreateResponseWithWebSearch(ctx context.Context, input string) 
 		},
 		ToolChoice:          "auto",
 		Temperature:         1,
-		MaxCompletionTokens: 100000,
+		MaxCompletionTokens: 50000,
 	}
 
 	return c.CreateResponse(ctx, request)
@@ -131,7 +151,7 @@ func (c *Client) CreateResponseNoSearch(ctx context.Context, input string) (*Res
 		Model:               "gpt-5-mini",
 		Input:               input,
 		Temperature:         1,
-		MaxCompletionTokens: 100000,
+		MaxCompletionTokens: 50000,
 	}
 
 	return c.CreateResponse(ctx, request)
