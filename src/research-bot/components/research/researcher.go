@@ -28,7 +28,7 @@ func NewResearcher(apiKey, tempDir string) *Researcher {
 		apiKey:  apiKey,
 		tempDir: tempDir,
 		httpClient: &http.Client{
-			Timeout: 60 * time.Second,
+			Timeout: 120 * time.Second,
 		},
 	}
 }
@@ -62,32 +62,60 @@ Respond with JSON array of claims:
 			{"role": "system", "content": "Extract verifiable claims from proposals. Output valid JSON only."},
 			{"role": "user", "content": fmt.Sprintf("%s\n\nProposal:\n%s", prompt, content)},
 		},
-		"temperature": 0.3,
-		"max_tokens":  4000,
+		"temperature":           1,
+		"max_completion_tokens": 2000,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
+		log.Printf("Failed to marshal request body: %v", err)
 		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
+		log.Printf("Failed to create request: %v", err)
 		return nil, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+r.apiKey)
 
+	log.Printf("Making request to OpenAI for claim extraction (proposal length: %d chars)", len(content))
+
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
+		log.Printf("HTTP request failed: %v", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("Failed to read response body: %v", err)
 		return nil, err
+	}
+
+	log.Printf("OpenAI response status: %d", resp.StatusCode)
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("OpenAI API error - Status: %d, Body: %s", resp.StatusCode, string(body))
+
+		// Try to parse error response
+		var errorResp struct {
+			Error struct {
+				Message string `json:"message"`
+				Type    string `json:"type"`
+				Code    string `json:"code"`
+			} `json:"error"`
+		}
+
+		if err := json.Unmarshal(body, &errorResp); err == nil && errorResp.Error.Message != "" {
+			return nil, fmt.Errorf("OpenAI API error: %s (type: %s, code: %s)",
+				errorResp.Error.Message, errorResp.Error.Type, errorResp.Error.Code)
+		}
+
+		return nil, fmt.Errorf("OpenAI API error: status %d", resp.StatusCode)
 	}
 
 	var result struct {
@@ -96,22 +124,36 @@ Respond with JSON array of claims:
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int `json:"prompt_tokens"`
+			CompletionTokens int `json:"completion_tokens"`
+			TotalTokens      int `json:"total_tokens"`
+		} `json:"usage"`
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
+		log.Printf("Failed to unmarshal response: %v, body: %s", err, string(body))
 		return nil, err
 	}
 
 	if len(result.Choices) == 0 {
+		log.Printf("No choices in OpenAI response. Full response: %s", string(body))
 		return nil, fmt.Errorf("no response from OpenAI")
 	}
 
+	log.Printf("OpenAI tokens used - Prompt: %d, Completion: %d, Total: %d",
+		result.Usage.PromptTokens, result.Usage.CompletionTokens, result.Usage.TotalTokens)
+
+	responseContent := result.Choices[0].Message.Content
+	log.Printf("OpenAI response content length: %d chars", len(responseContent))
+
 	var claims []Claim
-	if err := json.Unmarshal([]byte(result.Choices[0].Message.Content), &claims); err != nil {
-		log.Printf("Failed to parse claims JSON: %s", result.Choices[0].Message.Content)
+	if err := json.Unmarshal([]byte(responseContent), &claims); err != nil {
+		log.Printf("Failed to parse claims JSON: %v\nContent: %s", err, responseContent)
 		return nil, fmt.Errorf("failed to parse claims: %w", err)
 	}
 
+	log.Printf("Successfully extracted %d claims", len(claims))
 	return claims, nil
 }
 
@@ -120,9 +162,12 @@ func (r *Researcher) VerifyClaims(ctx context.Context, claims []Claim) ([]Verifi
 	results := make([]VerificationResult, len(claims))
 	semaphore := make(chan struct{}, 3) // Max 3 concurrent verifications
 
+	log.Printf("Starting verification of %d claims", len(claims))
+
 	for i, claim := range claims {
 		select {
 		case <-ctx.Done():
+			log.Printf("Context cancelled during claim verification")
 			return nil, ctx.Err()
 		default:
 		}
@@ -143,8 +188,10 @@ func (r *Researcher) VerifyClaims(ctx context.Context, claims []Claim) ([]Verifi
 				return
 			}
 
+			log.Printf("Verifying claim %d: %s", index+1, c.Claim)
 			result := r.verifySingleClaim(ctx, c)
 			results[index] = result
+			log.Printf("Claim %d verification result: %s", index+1, result.Status)
 		}(i, claim)
 	}
 
@@ -156,8 +203,10 @@ func (r *Researcher) VerifyClaims(ctx context.Context, claims []Claim) ([]Verifi
 
 	select {
 	case <-done:
+		log.Printf("All claims verified successfully")
 		return results, nil
 	case <-ctx.Done():
+		log.Printf("Context timeout during claim verification")
 		return results, ctx.Err()
 	}
 }
@@ -183,8 +232,8 @@ EVIDENCE: [One sentence explanation with specific details found]`, claim.Claim, 
 		"messages": []map[string]string{
 			{"role": "user", "content": prompt},
 		},
-		"temperature": 0.1,
-		"max_tokens":  500,
+		"temperature":           1,
+		"max_completion_tokens": 500,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -224,6 +273,15 @@ EVIDENCE: [One sentence explanation with specific details found]`, claim.Claim, 
 			Claim:    claim.Claim,
 			Status:   StatusUnknown,
 			Evidence: "Failed to read verification response",
+		}
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("OpenAI verification error - Status: %d, Body: %s", resp.StatusCode, string(body))
+		return VerificationResult{
+			Claim:    claim.Claim,
+			Status:   StatusUnknown,
+			Evidence: "Verification API error",
 		}
 	}
 
@@ -280,32 +338,56 @@ Respond with JSON array:
 			{"role": "system", "content": "Extract team member information. Output valid JSON only."},
 			{"role": "user", "content": fmt.Sprintf("%s\n\nProposal:\n%s", prompt, content)},
 		},
-		"temperature": 0.3,
-		"max_tokens":  2000,
+		"temperature":           1,
+		"max_completion_tokens": 2000,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
 	if err != nil {
+		log.Printf("Failed to marshal team extraction request: %v", err)
 		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
+		log.Printf("Failed to create team extraction request: %v", err)
 		return nil, err
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+r.apiKey)
 
+	log.Printf("Making request to OpenAI for team extraction")
+
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
+		log.Printf("Team extraction HTTP request failed: %v", err)
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("Failed to read team extraction response: %v", err)
 		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("OpenAI team extraction error - Status: %d, Body: %s", resp.StatusCode, string(body))
+
+		var errorResp struct {
+			Error struct {
+				Message string `json:"message"`
+				Type    string `json:"type"`
+				Code    string `json:"code"`
+			} `json:"error"`
+		}
+
+		if err := json.Unmarshal(body, &errorResp); err == nil && errorResp.Error.Message != "" {
+			return nil, fmt.Errorf("OpenAI API error: %s", errorResp.Error.Message)
+		}
+
+		return nil, fmt.Errorf("OpenAI API error: status %d", resp.StatusCode)
 	}
 
 	var result struct {
@@ -317,6 +399,7 @@ Respond with JSON array:
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
+		log.Printf("Failed to unmarshal team extraction response: %v", err)
 		return nil, err
 	}
 
@@ -330,6 +413,7 @@ Respond with JSON array:
 		return nil, fmt.Errorf("failed to parse team members: %w", err)
 	}
 
+	log.Printf("Successfully extracted %d team members", len(members))
 	return members, nil
 }
 
@@ -337,6 +421,8 @@ func (r *Researcher) AnalyzeTeamMembers(ctx context.Context, members []TeamMembe
 	var wg sync.WaitGroup
 	results := make([]TeamAnalysisResult, len(members))
 	semaphore := make(chan struct{}, 3) // Max 3 concurrent analyses
+
+	log.Printf("Starting analysis of %d team members", len(members))
 
 	for i, member := range members {
 		select {
@@ -363,6 +449,7 @@ func (r *Researcher) AnalyzeTeamMembers(ctx context.Context, members []TeamMembe
 				return
 			}
 
+			log.Printf("Analyzing team member %d: %s", index+1, m.Name)
 			result := r.analyzeSingleMember(ctx, m)
 			results[index] = result
 		}(i, member)
@@ -376,8 +463,10 @@ func (r *Researcher) AnalyzeTeamMembers(ctx context.Context, members []TeamMembe
 
 	select {
 	case <-done:
+		log.Printf("All team members analyzed successfully")
 		return results, nil
 	case <-ctx.Done():
+		log.Printf("Context timeout during team analysis")
 		return results, ctx.Err()
 	}
 }
@@ -414,8 +503,8 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 		"messages": []map[string]string{
 			{"role": "user", "content": prompt},
 		},
-		"temperature": 0.1,
-		"max_tokens":  500,
+		"temperature":           1,
+		"max_completion_tokens": 500,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
@@ -463,6 +552,17 @@ CAPABILITY: [One sentence assessment of their capability for this project]`, mem
 			IsReal:          false,
 			HasStatedSkills: false,
 			Capability:      "Failed to read analysis response",
+		}
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("OpenAI team analysis error - Status: %d, Body: %s", resp.StatusCode, string(body))
+		return TeamAnalysisResult{
+			Name:            member.Name,
+			Role:            member.Role,
+			IsReal:          false,
+			HasStatedSkills: false,
+			Capability:      "Analysis API error",
 		}
 	}
 
