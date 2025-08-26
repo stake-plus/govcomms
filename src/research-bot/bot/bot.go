@@ -2,15 +2,20 @@ package bot
 
 import (
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/stake-plus/govcomms/src/research-bot/components/claims"
 	"github.com/stake-plus/govcomms/src/research-bot/components/network"
 	"github.com/stake-plus/govcomms/src/research-bot/components/referendum"
-	"github.com/stake-plus/govcomms/src/research-bot/components/research"
+	"github.com/stake-plus/govcomms/src/research-bot/components/teams"
 	"github.com/stake-plus/govcomms/src/research-bot/config"
 	"gorm.io/gorm"
 )
@@ -21,7 +26,8 @@ type Bot struct {
 	session        *discordgo.Session
 	networkManager *network.Manager
 	refManager     *referendum.Manager
-	researcher     *research.Researcher
+	claimsAnalyzer *claims.Analyzer
+	teamsAnalyzer  *teams.Analyzer
 	cancelFunc     context.CancelFunc
 }
 
@@ -42,7 +48,8 @@ func New(cfg *config.Config, db *gorm.DB) (*Bot, error) {
 	}
 
 	refManager := referendum.NewManager(db)
-	researcher := research.NewResearcher(cfg.OpenAIKey, cfg.TempDir)
+	claimsAnalyzer := claims.NewAnalyzer(cfg.OpenAIKey)
+	teamsAnalyzer := teams.NewAnalyzer(cfg.OpenAIKey)
 
 	bot := &Bot{
 		config:         cfg,
@@ -50,7 +57,8 @@ func New(cfg *config.Config, db *gorm.DB) (*Bot, error) {
 		session:        session,
 		networkManager: networkManager,
 		refManager:     refManager,
-		researcher:     researcher,
+		claimsAnalyzer: claimsAnalyzer,
+		teamsAnalyzer:  teamsAnalyzer,
 	}
 
 	bot.initHandlers()
@@ -101,32 +109,37 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
+		// Get proposal content
+		proposalContent, err := b.getProposalContent(network.Name, uint32(threadInfo.RefID))
+		if err != nil {
+			s.ChannelMessageSend(m.ChannelID, "Proposal content not found. Please run !refresh first.")
+			return
+		}
+
 		// Extract claims
-		claims, totalClaims, err := b.researcher.ExtractTopClaims(ctx, network.Name, uint32(threadInfo.RefID))
+		topClaims, totalClaims, err := b.claimsAnalyzer.ExtractTopClaims(ctx, proposalContent)
 		if err != nil {
 			if err == context.DeadlineExceeded {
 				s.ChannelMessageSend(m.ChannelID, "⏱️ Verification timeout - process took longer than 5 minutes")
-			} else if err.Error() == "proposal content not found" {
-				s.ChannelMessageSend(m.ChannelID, "Proposal content not found. Please run !refresh first.")
 			} else {
 				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error extracting claims: %v", err))
 			}
 			return
 		}
 
-		if len(claims) == 0 {
+		if len(topClaims) == 0 {
 			s.ChannelMessageSend(m.ChannelID, "No verifiable claims found in the proposal.")
 			return
 		}
 
 		// Send header message
 		headerMsg := fmt.Sprintf("🔍 **Verifying Top Claims for %s Referendum #%d**\n", network.Name, threadInfo.RefID)
-		headerMsg += fmt.Sprintf("Found %d total claims, verifying top %d most important:\n", totalClaims, len(claims))
+		headerMsg += fmt.Sprintf("Found %d total claims, verifying top %d most important:\n", totalClaims, len(topClaims))
 		s.ChannelMessageSend(m.ChannelID, headerMsg)
 
 		// Create a message for each claim
 		claimMessages := make(map[int]*discordgo.Message)
-		for i, claim := range claims {
+		for i, claim := range topClaims {
 			msgContent := fmt.Sprintf("**Claim %d:** %s\n⏳ *Verifying...*", i+1, claim.Claim)
 			msg, err := s.ChannelMessageSend(m.ChannelID, msgContent)
 			if err == nil {
@@ -138,16 +151,16 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 		// Verify claims and update messages as they complete
 		resultsChan := make(chan struct {
 			index  int
-			result research.VerificationResult
-		}, len(claims))
+			result claims.VerificationResult
+		}, len(topClaims))
 
-		for i, claim := range claims {
-			go func(idx int, c research.Claim) {
-				result := b.researcher.VerifySingleClaimWithContext(ctx, c)
+		for i, claim := range topClaims {
+			go func(idx int, c claims.Claim) {
+				result := b.claimsAnalyzer.VerifySingleClaim(ctx, c)
 				select {
 				case resultsChan <- struct {
 					index  int
-					result research.VerificationResult
+					result claims.VerificationResult
 				}{index: idx, result: result}:
 				case <-ctx.Done():
 				}
@@ -159,18 +172,18 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 		rejectedCount := 0
 		unknownCount := 0
 
-		for i := 0; i < len(claims); i++ {
+		for i := 0; i < len(topClaims); i++ {
 			select {
 			case res := <-resultsChan:
 				statusEmoji := "❓"
 				switch res.result.Status {
-				case research.StatusValid:
+				case claims.StatusValid:
 					statusEmoji = "✅"
 					validCount++
-				case research.StatusRejected:
+				case claims.StatusRejected:
 					statusEmoji = "❌"
 					rejectedCount++
-				case research.StatusUnknown:
+				case claims.StatusUnknown:
 					statusEmoji = "❓"
 					unknownCount++
 				}
@@ -179,7 +192,7 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 				if msg, exists := claimMessages[res.index]; exists {
 					updatedContent := fmt.Sprintf("**Claim %d:** %s\n%s **%s** - %s",
 						res.index+1,
-						claims[res.index].Claim,
+						topClaims[res.index].Claim,
 						statusEmoji,
 						res.result.Status,
 						res.result.Evidence)
@@ -192,7 +205,7 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 				for idx, msg := range claimMessages {
 					s.ChannelMessageEdit(m.ChannelID, msg.ID,
 						fmt.Sprintf("**Claim %d:** %s\n⏱️ **Timeout** - Verification exceeded time limit",
-							idx+1, claims[idx].Claim))
+							idx+1, topClaims[idx].Claim))
 				}
 				return
 			}
@@ -233,13 +246,18 @@ func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
+		// Get proposal content
+		proposalContent, err := b.getProposalContent(network.Name, uint32(threadInfo.RefID))
+		if err != nil {
+			s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, "Proposal content not found. Please run !refresh first.")
+			return
+		}
+
 		// Extract team members
-		members, err := b.researcher.ExtractTeamMembers(ctx, network.Name, uint32(threadInfo.RefID))
+		members, err := b.teamsAnalyzer.ExtractTeamMembers(ctx, proposalContent)
 		if err != nil {
 			if err == context.DeadlineExceeded {
 				s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, "⏱️ Analysis timeout - process took longer than 5 minutes")
-			} else if err.Error() == "proposal content not found" {
-				s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, "Proposal content not found. Please run !refresh first.")
 			} else {
 				s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, fmt.Sprintf("Error extracting team members: %v", err))
 			}
@@ -263,7 +281,7 @@ func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
 		s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, teamList+"\n⏳ Analyzing team...")
 
 		// Analyze team members with timeout
-		results, err := b.researcher.AnalyzeTeamMembers(ctx, members)
+		results, err := b.teamsAnalyzer.AnalyzeTeamMembers(ctx, members)
 		if err != nil {
 			if err == context.DeadlineExceeded {
 				s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, teamList+"\n⏱️ Analysis timeout - exceeded 5 minute limit")
@@ -278,7 +296,7 @@ func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}()
 }
 
-func (b *Bot) sendTeamResults(s *discordgo.Session, channelID string, results []research.TeamAnalysisResult) {
+func (b *Bot) sendTeamResults(s *discordgo.Session, channelID string, results []teams.TeamAnalysisResult) {
 	embed := &discordgo.MessageEmbed{
 		Title:  "👥 Team Analysis Results",
 		Color:  0x9b59b6,
@@ -355,6 +373,21 @@ func (b *Bot) sendTeamResults(s *discordgo.Session, channelID string, results []
 		teamCapability, realCount, len(results), skilledCount, len(results), teamCapability)
 
 	s.ChannelMessageSendEmbed(channelID, embed)
+}
+
+func (b *Bot) getProposalContent(network string, refID uint32) (string, error) {
+	cacheFile := b.getCacheFilePath(network, refID)
+	content, err := os.ReadFile(cacheFile)
+	if err != nil {
+		return "", fmt.Errorf("proposal content not found")
+	}
+	return string(content), nil
+}
+
+func (b *Bot) getCacheFilePath(network string, refID uint32) string {
+	hash := md5.Sum([]byte(fmt.Sprintf("%s-%d", network, refID)))
+	filename := fmt.Sprintf("%s-%d-%s.txt", network, refID, hex.EncodeToString(hash[:8]))
+	return filepath.Join(b.config.TempDir, filename)
 }
 
 func (b *Bot) hasRole(s *discordgo.Session, guildID, userID, roleID string) bool {
