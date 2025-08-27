@@ -192,7 +192,7 @@ func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]Verifica
 	// Process claims one at a time
 	for i := 0; i < len(claims); i++ {
 		// Create a new context with timeout for this claim
-		claimCtx, claimCancel := context.WithTimeout(ctx, 2*time.Minute)
+		claimCtx, claimCancel := context.WithTimeout(ctx, 5*time.Minute)
 
 		var wg sync.WaitGroup
 
