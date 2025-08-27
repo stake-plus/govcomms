@@ -85,6 +85,19 @@ func (b *Bot) initHandlers() {
 	})
 }
 
+// formatURLsNoEmbed wraps URLs in angle brackets to prevent Discord embeds
+func formatURLsNoEmbed(urls []string) string {
+	if len(urls) == 0 {
+		return ""
+	}
+
+	var formatted []string
+	for _, url := range urls {
+		formatted = append(formatted, fmt.Sprintf("<%s>", url))
+	}
+	return strings.Join(formatted, " ")
+}
+
 func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if b.config.ResearchRoleID != "" && !b.hasRole(s, b.config.GuildID, m.Author.ID, b.config.ResearchRoleID) {
 		s.ChannelMessageSend(m.ChannelID, "You don't have permission to use this command.")
@@ -183,9 +196,9 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 					result.Status,
 					result.Evidence)
 
-				// Add source URLs if available
+				// Add source URLs if available (wrapped to prevent embeds)
 				if len(result.SourceURLs) > 0 {
-					updatedContent += fmt.Sprintf("\n📌 Sources: %s", strings.Join(result.SourceURLs, ", "))
+					updatedContent += fmt.Sprintf("\n📌 Sources: %s", formatURLsNoEmbed(result.SourceURLs))
 				}
 
 				s.ChannelMessageEdit(m.ChannelID, msg.ID, updatedContent)
@@ -302,9 +315,9 @@ func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
 				}
 				updatedContent += fmt.Sprintf("\n%s\n💼 %s", statusIcons, result.Capability)
 
-				// Add verified URLs if available
+				// Add verified URLs if available (wrapped to prevent embeds)
 				if len(result.VerifiedURLs) > 0 {
-					updatedContent += fmt.Sprintf("\n📌 Verified profiles: %s", strings.Join(result.VerifiedURLs, ", "))
+					updatedContent += fmt.Sprintf("\n📌 Verified profiles: %s", formatURLsNoEmbed(result.VerifiedURLs))
 				}
 
 				s.ChannelMessageEdit(m.ChannelID, msg.ID, updatedContent)
