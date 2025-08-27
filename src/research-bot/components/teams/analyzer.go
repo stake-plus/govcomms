@@ -89,58 +89,47 @@ Proposal:
 
 func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember) ([]TeamAnalysisResult, error) {
 	results := make([]TeamAnalysisResult, len(members))
-	semaphore := make(chan struct{}, 3) // Limit to 3 concurrent operations
+	semaphore := make(chan struct{}, 1) // Reduced to 1 concurrent operation
 
-	// Process members in batches
-	batchSize := 3
-	for i := 0; i < len(members); i += batchSize {
-		// Create a new context with timeout for this batch
-		batchCtx, batchCancel := context.WithTimeout(ctx, 2*time.Minute)
+	// Process members one at a time
+	for i := 0; i < len(members); i++ {
+		// Create a new context with timeout for this member
+		memberCtx, memberCancel := context.WithTimeout(ctx, 1*time.Minute)
 
-		end := i + batchSize
-		if end > len(members) {
-			end = len(members)
-		}
-
-		batch := members[i:end]
 		var wg sync.WaitGroup
 
-		log.Printf("Analyzing team batch %d-%d of %d members", i+1, end, len(members))
-
-		for j, member := range batch {
-			select {
-			case <-ctx.Done(): // Check parent context
-				batchCancel()
-				return results, ctx.Err()
-			default:
-			}
-
-			wg.Add(1)
-			go func(index int, m TeamMember) {
-				defer wg.Done()
-
-				select {
-				case semaphore <- struct{}{}:
-					defer func() { <-semaphore }()
-				case <-batchCtx.Done():
-					results[index] = TeamAnalysisResult{
-						Name:            m.Name,
-						Role:            m.Role,
-						IsReal:          false,
-						HasStatedSkills: false,
-						Capability:      "Analysis timeout",
-						VerifiedURLs:    []string{},
-					}
-					return
-				}
-
-				log.Printf("Analyzing team member %d: %s", index+1, m.Name)
-				result := a.analyzeSingleMember(batchCtx, m)
-				results[index] = result
-			}(i+j, member)
+		select {
+		case <-ctx.Done(): // Check parent context
+			memberCancel()
+			return results, ctx.Err()
+		default:
 		}
 
-		// Wait for batch to complete
+		wg.Add(1)
+		go func(index int, m TeamMember) {
+			defer wg.Done()
+
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-memberCtx.Done():
+				results[index] = TeamAnalysisResult{
+					Name:            m.Name,
+					Role:            m.Role,
+					IsReal:          false,
+					HasStatedSkills: false,
+					Capability:      "Analysis timeout",
+					VerifiedURLs:    []string{},
+				}
+				return
+			}
+
+			log.Printf("Analyzing team member %d of %d: %s", index+1, len(members), m.Name)
+			result := a.analyzeSingleMember(memberCtx, m)
+			results[index] = result
+		}(i, members[i])
+
+		// Wait for this member to complete
 		done := make(chan struct{})
 		go func() {
 			wg.Wait()
@@ -149,20 +138,20 @@ func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember)
 
 		select {
 		case <-done:
-			// Batch completed successfully
-		case <-batchCtx.Done():
-			// Batch timeout
-			log.Printf("Team batch %d-%d timed out", i+1, end)
+			// Member completed successfully
+		case <-memberCtx.Done():
+			// Member timeout
+			log.Printf("Team member %d analysis timed out", i+1)
 		}
 
-		batchCancel()
+		memberCancel()
 
-		// Small delay between batches to avoid rate limiting
-		if end < len(members) {
+		// Wait 3 seconds between each member to avoid rate limiting
+		if i < len(members)-1 {
 			select {
 			case <-ctx.Done():
 				return results, ctx.Err()
-			case <-time.After(2 * time.Second):
+			case <-time.After(3 * time.Second):
 			}
 		}
 	}

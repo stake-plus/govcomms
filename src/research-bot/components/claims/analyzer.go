@@ -179,57 +179,46 @@ SOURCES: [Comma-separated list of primary URLs where you found evidence, or "No 
 
 func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]VerificationResult, error) {
 	results := make([]VerificationResult, len(claims))
-	semaphore := make(chan struct{}, 3) // Limit to 3 concurrent operations
+	semaphore := make(chan struct{}, 1) // Reduced to 1 concurrent operation
 
-	// Process claims in batches
-	batchSize := 3
-	for i := 0; i < len(claims); i += batchSize {
-		// Create a new context with timeout for this batch
-		batchCtx, batchCancel := context.WithTimeout(ctx, 2*time.Minute)
+	// Process claims one at a time
+	for i := 0; i < len(claims); i++ {
+		// Create a new context with timeout for this claim
+		claimCtx, claimCancel := context.WithTimeout(ctx, 1*time.Minute)
 
-		end := i + batchSize
-		if end > len(claims) {
-			end = len(claims)
-		}
-
-		batch := claims[i:end]
 		var wg sync.WaitGroup
 
-		log.Printf("Processing batch %d-%d of %d claims", i+1, end, len(claims))
-
-		for j, claim := range batch {
-			select {
-			case <-ctx.Done(): // Check parent context
-				batchCancel()
-				return results, ctx.Err()
-			default:
-			}
-
-			wg.Add(1)
-			go func(index int, c Claim) {
-				defer wg.Done()
-
-				select {
-				case semaphore <- struct{}{}:
-					defer func() { <-semaphore }()
-				case <-batchCtx.Done():
-					results[index] = VerificationResult{
-						Claim:      c.Claim,
-						Status:     StatusUnknown,
-						Evidence:   "Verification timeout",
-						SourceURLs: []string{},
-					}
-					return
-				}
-
-				log.Printf("Verifying claim %d: %s", index+1, c.Claim)
-				result := a.VerifySingleClaim(batchCtx, c)
-				results[index] = result
-				log.Printf("Claim %d verification result: %s", index+1, result.Status)
-			}(i+j, claim)
+		select {
+		case <-ctx.Done(): // Check parent context
+			claimCancel()
+			return results, ctx.Err()
+		default:
 		}
 
-		// Wait for batch to complete
+		wg.Add(1)
+		go func(index int, c Claim) {
+			defer wg.Done()
+
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-claimCtx.Done():
+				results[index] = VerificationResult{
+					Claim:      c.Claim,
+					Status:     StatusUnknown,
+					Evidence:   "Verification timeout",
+					SourceURLs: []string{},
+				}
+				return
+			}
+
+			log.Printf("Verifying claim %d of %d: %s", index+1, len(claims), c.Claim)
+			result := a.VerifySingleClaim(claimCtx, c)
+			results[index] = result
+			log.Printf("Claim %d verification result: %s", index+1, result.Status)
+		}(i, claims[i])
+
+		// Wait for this claim to complete
 		done := make(chan struct{})
 		go func() {
 			wg.Wait()
@@ -238,20 +227,20 @@ func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]Verifica
 
 		select {
 		case <-done:
-			// Batch completed successfully
-		case <-batchCtx.Done():
-			// Batch timeout
-			log.Printf("Batch %d-%d timed out", i+1, end)
+			// Claim completed successfully
+		case <-claimCtx.Done():
+			// Claim timeout
+			log.Printf("Claim %d timed out", i+1)
 		}
 
-		batchCancel()
+		claimCancel()
 
-		// Small delay between batches to avoid rate limiting
-		if end < len(claims) {
+		// Wait 3 seconds between each claim to avoid rate limiting
+		if i < len(claims)-1 {
 			select {
 			case <-ctx.Done():
 				return results, ctx.Err()
-			case <-time.After(2 * time.Second):
+			case <-time.After(3 * time.Second):
 			}
 		}
 	}
