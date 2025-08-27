@@ -89,12 +89,20 @@ Proposal:
 
 func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember) ([]TeamAnalysisResult, error) {
 	results := make([]TeamAnalysisResult, len(members))
-	semaphore := make(chan struct{}, 1) // Reduced to 1 concurrent operation
+	semaphore := make(chan struct{}, 1) // 1 concurrent operation
+
+	// Initial delay to let rate limits reset
+	log.Printf("Waiting 5 seconds before starting team analysis...")
+	select {
+	case <-ctx.Done():
+		return results, ctx.Err()
+	case <-time.After(5 * time.Second):
+	}
 
 	// Process members one at a time
 	for i := 0; i < len(members); i++ {
 		// Create a new context with timeout for this member
-		memberCtx, memberCancel := context.WithTimeout(ctx, 5*time.Minute)
+		memberCtx, memberCancel := context.WithTimeout(ctx, 2*time.Minute)
 
 		var wg sync.WaitGroup
 
@@ -146,12 +154,13 @@ func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember)
 
 		memberCancel()
 
-		// Wait 3 seconds between each member to avoid rate limiting
+		// Wait 10 seconds between each member to avoid rate limiting
 		if i < len(members)-1 {
+			log.Printf("Waiting 10 seconds before next team member...")
 			select {
 			case <-ctx.Done():
 				return results, ctx.Err()
-			case <-time.After(3 * time.Second):
+			case <-time.After(10 * time.Second):
 			}
 		}
 	}
@@ -207,7 +216,7 @@ HAS_SKILLS: [true/false]
 CAPABILITY: [One detailed sentence about their verified experience and suitability]
 VERIFIED_URLS: [Comma-separated list of URLs that were successfully verified, or "None"]`
 
-	response, err := a.client.CreateResponseWithWebSearch(ctx, prompt)
+	response, err := a.client.CreateResponseWithWebSearchRetry(ctx, prompt)
 	if err != nil {
 		return TeamAnalysisResult{
 			Name:            member.Name,

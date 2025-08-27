@@ -149,7 +149,7 @@ STATUS: [Valid/Rejected/Unknown]
 EVIDENCE: [One sentence with specific details found]
 SOURCES: [Comma-separated list of primary URLs where you found evidence, or "No sources found"]`
 
-	response, err := a.client.CreateResponseWithWebSearch(ctx, prompt)
+	response, err := a.client.CreateResponseWithWebSearchRetry(ctx, prompt)
 	if err != nil {
 		return VerificationResult{
 			Claim:      claim.Claim,
@@ -179,12 +179,20 @@ SOURCES: [Comma-separated list of primary URLs where you found evidence, or "No 
 
 func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]VerificationResult, error) {
 	results := make([]VerificationResult, len(claims))
-	semaphore := make(chan struct{}, 1) // Reduced to 1 concurrent operation
+	semaphore := make(chan struct{}, 1) // 1 concurrent operation
+
+	// Initial delay to let rate limits reset
+	log.Printf("Waiting 5 seconds before starting verification...")
+	select {
+	case <-ctx.Done():
+		return results, ctx.Err()
+	case <-time.After(5 * time.Second):
+	}
 
 	// Process claims one at a time
 	for i := 0; i < len(claims); i++ {
 		// Create a new context with timeout for this claim
-		claimCtx, claimCancel := context.WithTimeout(ctx, 1*time.Minute)
+		claimCtx, claimCancel := context.WithTimeout(ctx, 2*time.Minute)
 
 		var wg sync.WaitGroup
 
@@ -235,12 +243,13 @@ func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]Verifica
 
 		claimCancel()
 
-		// Wait 3 seconds between each claim to avoid rate limiting
+		// Wait 10 seconds between each claim to avoid rate limiting
 		if i < len(claims)-1 {
+			log.Printf("Waiting 10 seconds before next claim...")
 			select {
 			case <-ctx.Done():
 				return results, ctx.Err()
-			case <-time.After(3 * time.Second):
+			case <-time.After(10 * time.Second):
 			}
 		}
 	}

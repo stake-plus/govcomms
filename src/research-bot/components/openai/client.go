@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -97,7 +98,6 @@ func (c *Client) CreateResponse(ctx context.Context, request ResponseRequest) (*
 
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("OpenAI API error - Status: %d, Body: %s", resp.StatusCode, string(body))
-
 		var errorResp struct {
 			Error struct {
 				Message string `json:"message"`
@@ -105,12 +105,10 @@ func (c *Client) CreateResponse(ctx context.Context, request ResponseRequest) (*
 				Code    string `json:"code"`
 			} `json:"error"`
 		}
-
 		if err := json.Unmarshal(body, &errorResp); err == nil && errorResp.Error.Message != "" {
 			return nil, fmt.Errorf("OpenAI API error: %s (type: %s, code: %s)",
 				errorResp.Error.Message, errorResp.Error.Type, errorResp.Error.Code)
 		}
-
 		return nil, fmt.Errorf("API error: status %d", resp.StatusCode)
 	}
 
@@ -144,6 +142,39 @@ func (c *Client) CreateResponseWithWebSearch(ctx context.Context, input string) 
 	}
 
 	return c.CreateResponse(ctx, request)
+}
+
+func (c *Client) CreateResponseWithWebSearchRetry(ctx context.Context, input string) (*ResponseOutput, error) {
+	maxRetries := 3
+	baseDelay := 5 * time.Second
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		response, err := c.CreateResponseWithWebSearch(ctx, input)
+		if err == nil {
+			return response, nil
+		}
+
+		// Check if it's a rate limit error
+		if strings.Contains(err.Error(), "rate_limit_exceeded") || strings.Contains(err.Error(), "429") {
+			if attempt < maxRetries-1 {
+				// Calculate exponential backoff delay
+				delay := baseDelay * time.Duration(1<<uint(attempt))
+				log.Printf("Rate limit hit, retrying in %v (attempt %d/%d)", delay, attempt+1, maxRetries)
+
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(delay):
+					continue
+				}
+			}
+		}
+
+		// For non-rate-limit errors, return immediately
+		return nil, err
+	}
+
+	return nil, fmt.Errorf("max retries exceeded")
 }
 
 func (c *Client) CreateResponseNoSearch(ctx context.Context, input string) (*ResponseOutput, error) {
@@ -203,5 +234,6 @@ func (r *ResponseOutput) GetCitations() []string {
 			}
 		}
 	}
+
 	return citations
 }
