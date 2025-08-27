@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stake-plus/govcomms/src/research-bot/components/openai"
 )
@@ -28,52 +29,52 @@ func (a *Analyzer) ExtractTopClaims(ctx context.Context, proposalContent string)
 		proposalContent = proposalContent[:maxContentLength] + "\n\n[Content truncated for analysis]"
 	}
 
-	prompt := fmt.Sprintf(`Analyze this blockchain governance proposal and extract verifiable claims that can be checked online.
+	prompt := fmt.Sprintf(`Analyze this blockchain governance proposal and extract HISTORICAL/BACKGROUND claims that can be verified online.
 
-Focus ONLY on claims that can be verified through:
-- GitHub repositories and activity
-- LinkedIn profiles
-- Official project websites
-- Twitter/X accounts with metrics
-- YouTube channels with view counts
-- Published documentation or reports
-- Previous blockchain transactions or proposals
+IMPORTANT: DO NOT extract obvious current facts about this proposal such as:
+- The amount of funding being requested
+- The proposer's on-chain address
+- The submission date of this proposal
+- The proposal ID or referendum number
+- Current voting status
 
-SKIP claims about:
-- Private Telegram groups or Discord servers
-- Unverifiable meetup attendance
-- General statements without specific metrics
-- Internal team activities without public proof
+INSTEAD, focus on PAST ACTIVITIES and ACHIEVEMENTS that the team claims to have done:
+- Previous deliverables completed (videos published, code written, events organized)
+- Team member backgrounds and experience
+- Past project metrics (user counts, engagement, views)
+- Previous funding received and how it was used
+- Historical partnerships or collaborations
+- Prior work in the ecosystem
 
-For each claim, extract any URLs mentioned in the proposal that could help verify it.
+For each claim, extract ALL URLs mentioned in the proposal that could help verify it (can be multiple).
 
-Count total verifiable claims, then select the 10 MOST IMPORTANT based on:
-1. Financial amounts requested or spent
-2. Deliverables with public proof (videos, code, documents)
-3. Team member credentials that can be verified online
-4. Metrics that can be independently checked
+Count total verifiable HISTORICAL claims, then select the 10 MOST IMPORTANT based on:
+1. Past deliverables with public proof (videos, code, documents)
+2. Team member credentials and past experience
+3. Historical metrics that can be independently checked
+4. Previous achievements in the ecosystem
 
 Respond with JSON:
 {
   "total_claims": 25,
   "top_claims": [
     {
-      "claim": "Requested 1,625 DOT total funding",
-      "category": "financial",
-      "url": "",
-      "context": "Main funding request"
-    },
-    {
-      "claim": "César Escobedo founder of Polkadot México with GitHub profile",
-      "category": "team",
-      "url": "https://github.com/cesarescobedo",
-      "context": "Team lead credentials"
-    },
-    {
-      "claim": "Published 41 videos on YouTube channel",
+      "claim": "Published 41 educational videos on YouTube channel",
       "category": "deliverables",
-      "url": "https://youtube.com/@polkadotamericas",
-      "context": "Content creation metrics"
+      "urls": ["https://youtube.com/@polkadotamericas", "https://youtube.com/playlist?list=xyz"],
+      "context": "Past content creation work"
+    },
+    {
+      "claim": "César Escobedo has 5 years experience in blockchain development",
+      "category": "team",
+      "urls": ["https://github.com/cesarescobedo", "https://linkedin.com/in/cesarescobedo"],
+      "context": "Team lead background"
+    },
+    {
+      "claim": "Previously organized 12 community meetups with 500+ total attendees",
+      "category": "deliverables",
+      "urls": ["https://meetup.com/polkadot-mexico"],
+      "context": "Past community building activities"
     }
   ]
 }
@@ -92,7 +93,6 @@ Proposal:
 	}
 
 	var claimsResponse ClaimsResponse
-
 	if err := json.Unmarshal([]byte(responseText), &claimsResponse); err != nil {
 		// Try to extract JSON if embedded
 		startIdx := strings.Index(responseText, "{")
@@ -115,14 +115,15 @@ Proposal:
 }
 
 func (a *Analyzer) VerifySingleClaim(ctx context.Context, claim Claim) VerificationResult {
-	prompt := fmt.Sprintf(`You are a blockchain governance proposal detective. Verify this specific claim using web search.
+	prompt := fmt.Sprintf(`You are a blockchain governance proposal detective. Verify this specific HISTORICAL claim using web search.
 
 Claim: "%s"
 Category: %s`, claim.Claim, claim.Category)
 
-	if claim.URL != "" {
-		prompt += fmt.Sprintf("\nProposal provided URL: %s", claim.URL)
+	if len(claim.URLs) > 0 {
+		prompt += fmt.Sprintf("\nProposal provided URLs to check: %s", strings.Join(claim.URLs, ", "))
 	}
+
 	if claim.Context != "" {
 		prompt += fmt.Sprintf("\nContext: %s", claim.Context)
 	}
@@ -130,12 +131,13 @@ Category: %s`, claim.Claim, claim.Category)
 	prompt += `
 
 Instructions:
-1. If a URL was provided, search for and verify information at that specific location
+1. If URLs were provided, search for and verify information at those specific locations
 2. For GitHub claims: Check repositories, commit history, contributor activity
 3. For LinkedIn/Twitter: Verify the person exists and their stated credentials
-4. For metrics (views, followers): Get current numbers if possible
-5. For financial claims: Look for on-chain data or official announcements
-6. Be skeptical - look for evidence that confirms OR refutes the claim
+4. For metrics (views, followers): Get current numbers and verify claims
+5. For YouTube claims: Check all videos/playlists mentioned, sum up total views if needed
+6. For financial claims: Look for on-chain data or official announcements
+7. Be skeptical - look for evidence that confirms OR refutes the claim
 
 Provide your verdict as:
 - VALID: Clear evidence supports the claim
@@ -145,91 +147,123 @@ Provide your verdict as:
 Format your response EXACTLY as:
 STATUS: [Valid/Rejected/Unknown]
 EVIDENCE: [One sentence with specific details found]
-SOURCE: [Primary URL where you found the evidence, or "No source found"]`
+SOURCES: [Comma-separated list of primary URLs where you found evidence, or "No sources found"]`
 
 	response, err := a.client.CreateResponseWithWebSearch(ctx, prompt)
 	if err != nil {
 		return VerificationResult{
-			Claim:    claim.Claim,
-			Status:   StatusUnknown,
-			Evidence: "Failed to verify",
+			Claim:      claim.Claim,
+			Status:     StatusUnknown,
+			Evidence:   "Failed to verify",
+			SourceURLs: []string{},
 		}
 	}
 
 	responseText := response.GetText()
 	citations := response.GetCitations()
 
-	status, evidence, sourceURL := a.parseVerificationResponse(responseText)
+	status, evidence, sourceURLs := a.parseVerificationResponse(responseText)
 
-	// Use first citation if no source URL was parsed
-	if sourceURL == "" && len(citations) > 0 {
-		sourceURL = citations[0]
+	// Add citations if no source URLs were parsed
+	if len(sourceURLs) == 0 && len(citations) > 0 {
+		sourceURLs = citations
 	}
 
 	return VerificationResult{
-		Claim:     claim.Claim,
-		Status:    status,
-		Evidence:  evidence,
-		SourceURL: sourceURL,
+		Claim:      claim.Claim,
+		Status:     status,
+		Evidence:   evidence,
+		SourceURLs: sourceURLs,
 	}
 }
 
 func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]VerificationResult, error) {
-	var wg sync.WaitGroup
 	results := make([]VerificationResult, len(claims))
-	semaphore := make(chan struct{}, 3)
+	semaphore := make(chan struct{}, 3) // Limit to 3 concurrent operations
 
-	log.Printf("Starting verification of %d claims", len(claims))
+	// Process claims in batches
+	batchSize := 3
+	for i := 0; i < len(claims); i += batchSize {
+		// Create a new context with timeout for this batch
+		batchCtx, batchCancel := context.WithTimeout(ctx, 2*time.Minute)
 
-	for i, claim := range claims {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
+		end := i + batchSize
+		if end > len(claims) {
+			end = len(claims)
 		}
 
-		wg.Add(1)
-		go func(index int, c Claim) {
-			defer wg.Done()
+		batch := claims[i:end]
+		var wg sync.WaitGroup
 
+		log.Printf("Processing batch %d-%d of %d claims", i+1, end, len(claims))
+
+		for j, claim := range batch {
 			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-ctx.Done():
-				results[index] = VerificationResult{
-					Claim:    c.Claim,
-					Status:   StatusUnknown,
-					Evidence: "Verification cancelled due to timeout",
-				}
-				return
+			case <-ctx.Done(): // Check parent context
+				batchCancel()
+				return results, ctx.Err()
+			default:
 			}
 
-			log.Printf("Verifying claim %d: %s", index+1, c.Claim)
-			result := a.VerifySingleClaim(ctx, c)
-			results[index] = result
-			log.Printf("Claim %d verification result: %s", index+1, result.Status)
-		}(i, claim)
+			wg.Add(1)
+			go func(index int, c Claim) {
+				defer wg.Done()
+
+				select {
+				case semaphore <- struct{}{}:
+					defer func() { <-semaphore }()
+				case <-batchCtx.Done():
+					results[index] = VerificationResult{
+						Claim:      c.Claim,
+						Status:     StatusUnknown,
+						Evidence:   "Verification timeout",
+						SourceURLs: []string{},
+					}
+					return
+				}
+
+				log.Printf("Verifying claim %d: %s", index+1, c.Claim)
+				result := a.VerifySingleClaim(batchCtx, c)
+				results[index] = result
+				log.Printf("Claim %d verification result: %s", index+1, result.Status)
+			}(i+j, claim)
+		}
+
+		// Wait for batch to complete
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// Batch completed successfully
+		case <-batchCtx.Done():
+			// Batch timeout
+			log.Printf("Batch %d-%d timed out", i+1, end)
+		}
+
+		batchCancel()
+
+		// Small delay between batches to avoid rate limiting
+		if end < len(claims) {
+			select {
+			case <-ctx.Done():
+				return results, ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
+		}
 	}
 
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		return results, nil
-	case <-ctx.Done():
-		return results, ctx.Err()
-	}
+	return results, nil
 }
 
-func (a *Analyzer) parseVerificationResponse(response string) (VerificationStatus, string, string) {
+func (a *Analyzer) parseVerificationResponse(response string) (VerificationStatus, string, []string) {
 	lines := strings.Split(response, "\n")
 	var status VerificationStatus = StatusUnknown
 	var evidence string
-	var sourceURL string
+	var sourceURLs []string
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -250,10 +284,20 @@ func (a *Analyzer) parseVerificationResponse(response string) (VerificationStatu
 			if evidence == "" {
 				evidence = strings.TrimSpace(strings.TrimPrefix(upper, "EVIDENCE:"))
 			}
-		} else if strings.HasPrefix(upper, "SOURCE:") {
-			sourceURL = strings.TrimSpace(strings.TrimPrefix(line, "SOURCE:"))
-			if sourceURL == "" || sourceURL == "NO SOURCE FOUND" {
-				sourceURL = ""
+		} else if strings.HasPrefix(upper, "SOURCES:") || strings.HasPrefix(upper, "SOURCE:") {
+			sourcesStr := strings.TrimSpace(strings.TrimPrefix(line, "SOURCES:"))
+			if sourcesStr == "" {
+				sourcesStr = strings.TrimSpace(strings.TrimPrefix(line, "SOURCE:"))
+			}
+			if sourcesStr != "" && !strings.EqualFold(sourcesStr, "No sources found") {
+				// Split by comma and clean up
+				parts := strings.Split(sourcesStr, ",")
+				for _, url := range parts {
+					url = strings.TrimSpace(url)
+					if url != "" && strings.HasPrefix(url, "http") {
+						sourceURLs = append(sourceURLs, url)
+					}
+				}
 			}
 		}
 	}
@@ -262,5 +306,5 @@ func (a *Analyzer) parseVerificationResponse(response string) (VerificationStatu
 		evidence = "Unable to determine"
 	}
 
-	return status, evidence, sourceURL
+	return status, evidence, sourceURLs
 }

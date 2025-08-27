@@ -62,6 +62,7 @@ func New(cfg *config.Config, db *gorm.DB) (*Bot, error) {
 	}
 
 	bot.initHandlers()
+
 	return bot, nil
 }
 
@@ -105,8 +106,8 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 	s.ChannelTyping(m.ChannelID)
 
 	go func() {
-		// Create context with 5 minute timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		// Create context with 10 minute timeout for entire operation
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 
 		// Get proposal content
@@ -120,7 +121,7 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 		topClaims, totalClaims, err := b.claimsAnalyzer.ExtractTopClaims(ctx, proposalContent)
 		if err != nil {
 			if err == context.DeadlineExceeded {
-				s.ChannelMessageSend(m.ChannelID, "⏱️ Verification timeout - process took longer than 5 minutes")
+				s.ChannelMessageSend(m.ChannelID, "⏱️ Verification timeout - process took longer than 10 minutes")
 			} else {
 				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error extracting claims: %v", err))
 			}
@@ -128,13 +129,13 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 		}
 
 		if len(topClaims) == 0 {
-			s.ChannelMessageSend(m.ChannelID, "No verifiable claims found in the proposal.")
+			s.ChannelMessageSend(m.ChannelID, "No verifiable historical claims found in the proposal.")
 			return
 		}
 
 		// Send header message
-		headerMsg := fmt.Sprintf("🔍 **Verifying Top Claims for %s Referendum #%d**\n", network.Name, threadInfo.RefID)
-		headerMsg += fmt.Sprintf("Found %d total claims, verifying top %d most important:\n", totalClaims, len(topClaims))
+		headerMsg := fmt.Sprintf("🔍 **Verifying Historical Claims for %s Referendum #%d**\n", network.Name, threadInfo.RefID)
+		headerMsg += fmt.Sprintf("Found %d total historical claims, verifying top %d most important:\n", totalClaims, len(topClaims))
 		s.ChannelMessageSend(m.ChannelID, headerMsg)
 
 		// Create a message for each claim
@@ -145,69 +146,49 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 			if err == nil {
 				claimMessages[i] = msg
 			}
-			time.Sleep(100 * time.Millisecond) // Small delay to avoid rate limiting
+			time.Sleep(100 * time.Millisecond)
 		}
 
-		// Verify claims and update messages as they complete
-		resultsChan := make(chan struct {
-			index  int
-			result claims.VerificationResult
-		}, len(topClaims))
-
-		for i, claim := range topClaims {
-			go func(idx int, c claims.Claim) {
-				result := b.claimsAnalyzer.VerifySingleClaim(ctx, c)
-				select {
-				case resultsChan <- struct {
-					index  int
-					result claims.VerificationResult
-				}{index: idx, result: result}:
-				case <-ctx.Done():
-				}
-			}(i, claim)
+		// Verify claims with proper batching and timeout handling
+		results, err := b.claimsAnalyzer.VerifyClaims(ctx, topClaims)
+		if err != nil && err != context.DeadlineExceeded {
+			log.Printf("Error during verification: %v", err)
 		}
 
-		// Collect results and update messages
+		// Update messages with results
 		validCount := 0
 		rejectedCount := 0
 		unknownCount := 0
 
-		for i := 0; i < len(topClaims); i++ {
-			select {
-			case res := <-resultsChan:
-				statusEmoji := "❓"
-				switch res.result.Status {
-				case claims.StatusValid:
-					statusEmoji = "✅"
-					validCount++
-				case claims.StatusRejected:
-					statusEmoji = "❌"
-					rejectedCount++
-				case claims.StatusUnknown:
-					statusEmoji = "❓"
-					unknownCount++
+		for i, result := range results {
+			statusEmoji := "❓"
+			switch result.Status {
+			case claims.StatusValid:
+				statusEmoji = "✅"
+				validCount++
+			case claims.StatusRejected:
+				statusEmoji = "❌"
+				rejectedCount++
+			case claims.StatusUnknown:
+				statusEmoji = "❓"
+				unknownCount++
+			}
+
+			// Update the message
+			if msg, exists := claimMessages[i]; exists {
+				updatedContent := fmt.Sprintf("**Claim %d:** %s\n%s **%s** - %s",
+					i+1,
+					topClaims[i].Claim,
+					statusEmoji,
+					result.Status,
+					result.Evidence)
+
+				// Add source URLs if available
+				if len(result.SourceURLs) > 0 {
+					updatedContent += fmt.Sprintf("\n📌 Sources: %s", strings.Join(result.SourceURLs, ", "))
 				}
 
-				// Update the message
-				if msg, exists := claimMessages[res.index]; exists {
-					updatedContent := fmt.Sprintf("**Claim %d:** %s\n%s **%s** - %s",
-						res.index+1,
-						topClaims[res.index].Claim,
-						statusEmoji,
-						res.result.Status,
-						res.result.Evidence)
-
-					s.ChannelMessageEdit(m.ChannelID, msg.ID, updatedContent)
-				}
-
-			case <-ctx.Done():
-				// Update remaining messages as timeout
-				for idx, msg := range claimMessages {
-					s.ChannelMessageEdit(m.ChannelID, msg.ID,
-						fmt.Sprintf("**Claim %d:** %s\n⏱️ **Timeout** - Verification exceeded time limit",
-							idx+1, topClaims[idx].Claim))
-				}
-				return
+				s.ChannelMessageEdit(m.ChannelID, msg.ID, updatedContent)
 			}
 		}
 
@@ -242,8 +223,8 @@ func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
 	initialMsg, _ := s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("👥 Starting team analysis for %s referendum #%d...", network.Name, threadInfo.RefID))
 
 	go func() {
-		// Create context with 5 minute timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		// Create context with 10 minute timeout for entire operation
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 
 		// Get proposal content
@@ -257,7 +238,7 @@ func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
 		members, err := b.teamsAnalyzer.ExtractTeamMembers(ctx, proposalContent)
 		if err != nil {
 			if err == context.DeadlineExceeded {
-				s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, "⏱️ Analysis timeout - process took longer than 5 minutes")
+				s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, "⏱️ Analysis timeout - process took longer than 10 minutes")
 			} else {
 				s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, fmt.Sprintf("Error extracting team members: %v", err))
 			}
@@ -280,15 +261,10 @@ func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
 		}
 		s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, teamList+"\n⏳ Analyzing team...")
 
-		// Analyze team members with timeout
+		// Analyze team members with proper batching and timeout handling
 		results, err := b.teamsAnalyzer.AnalyzeTeamMembers(ctx, members)
-		if err != nil {
-			if err == context.DeadlineExceeded {
-				s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, teamList+"\n⏱️ Analysis timeout - exceeded 5 minute limit")
-			} else {
-				s.ChannelMessageEdit(m.ChannelID, initialMsg.ID, teamList+fmt.Sprintf("\n❌ Analysis failed: %v", err))
-			}
-			return
+		if err != nil && err != context.DeadlineExceeded {
+			log.Printf("Error during team analysis: %v", err)
 		}
 
 		// Send team analysis results
@@ -332,6 +308,12 @@ func (b *Bot) sendTeamResults(s *discordgo.Session, channelID string, results []
 		}
 
 		fieldValue := fmt.Sprintf("%s\n%s", statusIcons, result.Capability)
+
+		// Add verified URLs if available
+		if len(result.VerifiedURLs) > 0 {
+			fieldValue += fmt.Sprintf("\n📌 Verified: %s", strings.Join(result.VerifiedURLs, ", "))
+		}
+
 		if len(fieldValue) > 1024 {
 			fieldValue = fieldValue[:1021] + "..."
 		}
@@ -415,6 +397,7 @@ func (b *Bot) Start() error {
 
 	_, cancel := context.WithCancel(context.Background())
 	b.cancelFunc = cancel
+
 	return nil
 }
 
@@ -422,6 +405,7 @@ func (b *Bot) Stop() {
 	if b.cancelFunc != nil {
 		b.cancelFunc()
 	}
+
 	if b.session != nil {
 		b.session.Close()
 	}

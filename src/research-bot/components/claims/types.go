@@ -1,10 +1,10 @@
 package claims
 
 type Claim struct {
-	Claim    string `json:"claim"`
-	Category string `json:"category"`
-	URL      string `json:"url,omitempty"`     // URL from proposal to verify claim
-	Context  string `json:"context,omitempty"` // Additional context about the claim
+	Claim    string   `json:"claim"`
+	Category string   `json:"category"`
+	URLs     []string `json:"urls,omitempty"`
+	Context  string   `json:"context,omitempty"`
 }
 
 type VerificationStatus string
@@ -16,10 +16,10 @@ const (
 )
 
 type VerificationResult struct {
-	Claim     string
-	Status    VerificationStatus
-	Evidence  string
-	SourceURL string // URL where evidence was found
+	Claim      string
+	Status     VerificationStatus
+	Evidence   string
+	SourceURLs []string
 }
 
 type ClaimsResponse struct {

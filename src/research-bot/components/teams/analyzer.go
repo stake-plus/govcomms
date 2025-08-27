@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stake-plus/govcomms/src/research-bot/components/openai"
 )
@@ -27,30 +28,32 @@ func (a *Analyzer) ExtractTeamMembers(ctx context.Context, proposalContent strin
 		proposalContent = proposalContent[:maxContentLength] + "\n\n[Content truncated]"
 	}
 
-	prompt := fmt.Sprintf(`Extract team members from this proposal. Focus on finding their verifiable online profiles.
+	prompt := fmt.Sprintf(`Extract team members from this proposal. Focus on finding ALL their verifiable online profiles.
 
 Look for:
 - Full names of team members
 - Their roles in the project
-- GitHub usernames or profile URLs (look for github.com links or @mentions)
-- LinkedIn profile URLs
-- Twitter/X handles or profile URLs
-- Any other professional links mentioned
+- ALL GitHub usernames or profile URLs (can be multiple per person)
+- ALL LinkedIn profile URLs
+- ALL Twitter/X handles or profile URLs
+- Any other professional links mentioned (personal sites, etc)
 
-Extract URLs exactly as they appear in the proposal. If only a username is mentioned, construct the likely URL.
+Extract URLs exactly as they appear. If only usernames are mentioned, construct likely URLs.
+A person might have multiple profiles (e.g., personal and org GitHub accounts).
 
 Respond with JSON array:
 [
   {
     "name": "César Escobedo",
     "role": "Founder/Lead",
-    "github": "https://github.com/cesarescobedo",
-    "twitter": "https://twitter.com/cesarescobedo",
-    "linkedin": ""
+    "github": ["https://github.com/cesarescobedo", "https://github.com/cesare-dev"],
+    "twitter": ["https://twitter.com/cesarescobedo"],
+    "linkedin": ["https://linkedin.com/in/cesarescobedo"],
+    "other": ["https://cesarescobedo.com"]
   }
 ]
 
-Only include team members where you find at least a name and role. Include empty strings for missing profile URLs.
+Include empty arrays for missing profile types. Only include team members with at least a name and role.
 
 Proposal:
 %s`, proposalContent)
@@ -66,7 +69,6 @@ Proposal:
 	}
 
 	var members []TeamMember
-
 	if err := json.Unmarshal([]byte(responseText), &members); err != nil {
 		// Try to extract JSON array if embedded
 		startIdx := strings.Index(responseText, "[")
@@ -86,55 +88,86 @@ Proposal:
 }
 
 func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember) ([]TeamAnalysisResult, error) {
-	var wg sync.WaitGroup
 	results := make([]TeamAnalysisResult, len(members))
-	semaphore := make(chan struct{}, 3)
+	semaphore := make(chan struct{}, 3) // Limit to 3 concurrent operations
 
-	log.Printf("Starting analysis of %d team members", len(members))
+	// Process members in batches
+	batchSize := 3
+	for i := 0; i < len(members); i += batchSize {
+		// Create a new context with timeout for this batch
+		batchCtx, batchCancel := context.WithTimeout(ctx, 2*time.Minute)
 
-	for i, member := range members {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
+		end := i + batchSize
+		if end > len(members) {
+			end = len(members)
 		}
 
-		wg.Add(1)
-		go func(index int, m TeamMember) {
-			defer wg.Done()
+		batch := members[i:end]
+		var wg sync.WaitGroup
 
+		log.Printf("Analyzing team batch %d-%d of %d members", i+1, end, len(members))
+
+		for j, member := range batch {
 			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-ctx.Done():
-				results[index] = TeamAnalysisResult{
-					Name:            m.Name,
-					Role:            m.Role,
-					IsReal:          false,
-					HasStatedSkills: false,
-					Capability:      "Analysis cancelled due to timeout",
-				}
-				return
+			case <-ctx.Done(): // Check parent context
+				batchCancel()
+				return results, ctx.Err()
+			default:
 			}
 
-			log.Printf("Analyzing team member %d: %s", index+1, m.Name)
-			result := a.analyzeSingleMember(ctx, m)
-			results[index] = result
-		}(i, member)
+			wg.Add(1)
+			go func(index int, m TeamMember) {
+				defer wg.Done()
+
+				select {
+				case semaphore <- struct{}{}:
+					defer func() { <-semaphore }()
+				case <-batchCtx.Done():
+					results[index] = TeamAnalysisResult{
+						Name:            m.Name,
+						Role:            m.Role,
+						IsReal:          false,
+						HasStatedSkills: false,
+						Capability:      "Analysis timeout",
+						VerifiedURLs:    []string{},
+					}
+					return
+				}
+
+				log.Printf("Analyzing team member %d: %s", index+1, m.Name)
+				result := a.analyzeSingleMember(batchCtx, m)
+				results[index] = result
+			}(i+j, member)
+		}
+
+		// Wait for batch to complete
+		done := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// Batch completed successfully
+		case <-batchCtx.Done():
+			// Batch timeout
+			log.Printf("Team batch %d-%d timed out", i+1, end)
+		}
+
+		batchCancel()
+
+		// Small delay between batches to avoid rate limiting
+		if end < len(members) {
+			select {
+			case <-ctx.Done():
+				return results, ctx.Err()
+			case <-time.After(2 * time.Second):
+			}
+		}
 	}
 
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		return results, nil
-	case <-ctx.Done():
-		return results, ctx.Err()
-	}
+	return results, nil
 }
 
 func (a *Analyzer) analyzeSingleMember(ctx context.Context, member TeamMember) TeamAnalysisResult {
@@ -143,50 +176,47 @@ func (a *Analyzer) analyzeSingleMember(ctx context.Context, member TeamMember) T
 Name: %s
 Role: %s`, member.Name, member.Role)
 
-	// Add profile URLs if provided
-	hasProfiles := false
-	if member.GitHub != "" {
-		prompt += fmt.Sprintf("\nGitHub: %s", member.GitHub)
-		hasProfiles = true
+	// Add all profile URLs
+	var allURLs []string
+
+	if len(member.GitHub) > 0 {
+		prompt += fmt.Sprintf("\nGitHub profiles: %s", strings.Join(member.GitHub, ", "))
+		allURLs = append(allURLs, member.GitHub...)
 	}
-	if member.Twitter != "" {
-		prompt += fmt.Sprintf("\nTwitter: %s", member.Twitter)
-		hasProfiles = true
+	if len(member.Twitter) > 0 {
+		prompt += fmt.Sprintf("\nTwitter profiles: %s", strings.Join(member.Twitter, ", "))
+		allURLs = append(allURLs, member.Twitter...)
 	}
-	if member.LinkedIn != "" {
-		prompt += fmt.Sprintf("\nLinkedIn: %s", member.LinkedIn)
-		hasProfiles = true
+	if len(member.LinkedIn) > 0 {
+		prompt += fmt.Sprintf("\nLinkedIn profiles: %s", strings.Join(member.LinkedIn, ", "))
+		allURLs = append(allURLs, member.LinkedIn...)
+	}
+	if len(member.Other) > 0 {
+		prompt += fmt.Sprintf("\nOther links: %s", strings.Join(member.Other, ", "))
+		allURLs = append(allURLs, member.Other...)
 	}
 
 	prompt += `
 
 Tasks:
-1. Verify if this is a real person:`
-
-	if hasProfiles {
-		prompt += `
-   - Check if the provided profile URLs are valid and active
+1. Verify if this is a real person:
+   - Check ALL provided profile URLs are valid and active
    - Verify the profiles belong to the named person
-   - Check for consistent identity across profiles`
-	} else {
-		prompt += `
-   - Search for this person online
-   - Look for any professional profiles or mentions`
-	}
+   - Check for consistent identity across profiles
 
-	prompt += `
 2. Verify their skills for the stated role:
-   - For developers: Check GitHub contributions, repositories, commit history
+   - For developers: Check ALL GitHub accounts for contributions, repositories, commit history
    - For designers: Look for portfolio or design work
    - For community managers: Check social media activity and engagement
    - Look for blockchain/Web3/Polkadot experience specifically
 
-3. Assess capability for this project based on evidence found
+3. List which URLs you successfully verified
 
 Respond with EXACTLY this format:
 IS_REAL: [true/false]
 HAS_SKILLS: [true/false]
-CAPABILITY: [One detailed sentence about their verified experience and suitability]`
+CAPABILITY: [One detailed sentence about their verified experience and suitability]
+VERIFIED_URLS: [Comma-separated list of URLs that were successfully verified, or "None"]`
 
 	response, err := a.client.CreateResponseWithWebSearch(ctx, prompt)
 	if err != nil {
@@ -196,6 +226,7 @@ CAPABILITY: [One detailed sentence about their verified experience and suitabili
 			IsReal:          false,
 			HasStatedSkills: false,
 			Capability:      "Failed to analyze",
+			VerifiedURLs:    []string{},
 		}
 	}
 
@@ -207,6 +238,7 @@ CAPABILITY: [One detailed sentence about their verified experience and suitabili
 			IsReal:          false,
 			HasStatedSkills: false,
 			Capability:      "No response",
+			VerifiedURLs:    []string{},
 		}
 	}
 
@@ -216,8 +248,9 @@ CAPABILITY: [One detailed sentence about their verified experience and suitabili
 func (a *Analyzer) parseTeamAnalysisResponse(member TeamMember, response string) TeamAnalysisResult {
 	lines := strings.Split(response, "\n")
 	result := TeamAnalysisResult{
-		Name: member.Name,
-		Role: member.Role,
+		Name:         member.Name,
+		Role:         member.Role,
+		VerifiedURLs: []string{},
 	}
 
 	for _, line := range lines {
@@ -234,6 +267,18 @@ func (a *Analyzer) parseTeamAnalysisResponse(member TeamMember, response string)
 			result.Capability = strings.TrimSpace(strings.TrimPrefix(line, "CAPABILITY:"))
 			if result.Capability == "" {
 				result.Capability = strings.TrimSpace(strings.TrimPrefix(upper, "CAPABILITY:"))
+			}
+		} else if strings.HasPrefix(upper, "VERIFIED_URLS:") {
+			urlsStr := strings.TrimSpace(strings.TrimPrefix(line, "VERIFIED_URLS:"))
+			if urlsStr != "" && !strings.EqualFold(urlsStr, "None") {
+				// Split by comma and clean up
+				parts := strings.Split(urlsStr, ",")
+				for _, url := range parts {
+					url = strings.TrimSpace(url)
+					if url != "" && strings.HasPrefix(url, "http") {
+						result.VerifiedURLs = append(result.VerifiedURLs, url)
+					}
+				}
 			}
 		}
 	}
