@@ -129,7 +129,7 @@ func (c *Client) CreateResponse(ctx context.Context, request ResponseRequest) (*
 
 func (c *Client) CreateResponseWithWebSearch(ctx context.Context, input string) (*ResponseOutput, error) {
 	request := ResponseRequest{
-		Model: "gpt-5-mini",
+		Model: "gpt-5",
 		Input: input,
 		Tools: []map[string]interface{}{
 			{
@@ -179,7 +179,7 @@ func (c *Client) CreateResponseWithWebSearchRetry(ctx context.Context, input str
 
 func (c *Client) CreateResponseNoSearch(ctx context.Context, input string) (*ResponseOutput, error) {
 	request := ResponseRequest{
-		Model:               "gpt-5-mini",
+		Model:               "gpt-5",
 		Input:               input,
 		Temperature:         1,
 		MaxCompletionTokens: 50000,
@@ -191,7 +191,7 @@ func (c *Client) CreateResponseNoSearch(ctx context.Context, input string) (*Res
 // CreateResponseWithOptions allows custom parameters
 func (c *Client) CreateResponseWithOptions(ctx context.Context, input string, maxTokens int, useWebSearch bool) (*ResponseOutput, error) {
 	request := ResponseRequest{
-		Model:               "gpt-5-mini",
+		Model:               "gpt-5",
 		Input:               input,
 		Temperature:         1,
 		MaxCompletionTokens: maxTokens,
