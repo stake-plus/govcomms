@@ -94,7 +94,7 @@ func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember)
 	// Process members one at a time
 	for i := 0; i < len(members); i++ {
 		// Create a new context with timeout for this member
-		memberCtx, memberCancel := context.WithTimeout(ctx, 1*time.Minute)
+		memberCtx, memberCancel := context.WithTimeout(ctx, 5*time.Minute)
 
 		var wg sync.WaitGroup
 
