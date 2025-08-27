@@ -92,11 +92,11 @@ func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember)
 	semaphore := make(chan struct{}, 1) // 1 concurrent operation
 
 	// Initial delay to let rate limits reset
-	log.Printf("Waiting 30 seconds before starting team analysis...")
+	log.Printf("Waiting 10 seconds before starting team analysis...")
 	select {
 	case <-ctx.Done():
 		return results, ctx.Err()
-	case <-time.After(30 * time.Second):
+	case <-time.After(10 * time.Second):
 	}
 
 	// Process members one at a time
