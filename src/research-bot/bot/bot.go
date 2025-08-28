@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -85,6 +86,22 @@ func (b *Bot) initHandlers() {
 	})
 }
 
+// wrapURLsNoEmbed wraps all URLs in the text with angle brackets to prevent Discord embeds
+func wrapURLsNoEmbed(text string) string {
+	// Regular expression to find URLs
+	urlRegex := regexp.MustCompile(`https?://[^\s\[\]()<>]+`)
+
+	return urlRegex.ReplaceAllStringFunc(text, func(url string) string {
+		// Clean up trailing punctuation
+		url = strings.TrimRight(url, ".,;:!?)")
+		// If URL is already wrapped in angle brackets, don't double wrap
+		if strings.HasPrefix(url, "<") && strings.HasSuffix(url, ">") {
+			return url
+		}
+		return fmt.Sprintf("<%s>", url)
+	})
+}
+
 // formatURLsNoEmbed wraps URLs in angle brackets to prevent Discord embeds
 func formatURLsNoEmbed(urls []string) string {
 	if len(urls) == 0 {
@@ -119,8 +136,8 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 	s.ChannelTyping(m.ChannelID)
 
 	go func() {
-		// Create context with 10 minute timeout for entire operation
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		// Create context without timeout
+		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		// Get proposal content
@@ -133,11 +150,7 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 		// Extract claims
 		topClaims, totalClaims, err := b.claimsAnalyzer.ExtractTopClaims(ctx, proposalContent)
 		if err != nil {
-			if err == context.DeadlineExceeded {
-				s.ChannelMessageSend(m.ChannelID, "⏱️ Verification timeout - process took longer than 10 minutes")
-			} else {
-				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error extracting claims: %v", err))
-			}
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error extracting claims: %v", err))
 			return
 		}
 
@@ -201,6 +214,9 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 					updatedContent += fmt.Sprintf("\n📌 Sources: %s", formatURLsNoEmbed(result.SourceURLs))
 				}
 
+				// Wrap any URLs in the evidence text
+				updatedContent = wrapURLsNoEmbed(updatedContent)
+
 				s.ChannelMessageEdit(m.ChannelID, msg.ID, updatedContent)
 			}
 		}
@@ -233,8 +249,8 @@ func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
 	s.ChannelTyping(m.ChannelID)
 
 	go func() {
-		// Create context with 10 minute timeout for entire operation
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		// Create context without timeout
+		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
 		// Get proposal content
@@ -247,11 +263,7 @@ func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
 		// Extract team members
 		members, err := b.teamsAnalyzer.ExtractTeamMembers(ctx, proposalContent)
 		if err != nil {
-			if err == context.DeadlineExceeded {
-				s.ChannelMessageSend(m.ChannelID, "⏱️ Analysis timeout - process took longer than 10 minutes")
-			} else {
-				s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error extracting team members: %v", err))
-			}
+			s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("Error extracting team members: %v", err))
 			return
 		}
 
@@ -320,10 +332,14 @@ func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
 					updatedContent += fmt.Sprintf("\n📌 Verified profiles: %s", formatURLsNoEmbed(result.VerifiedURLs))
 				}
 
+				// Wrap any URLs in the entire message
+				updatedContent = wrapURLsNoEmbed(updatedContent)
+
 				s.ChannelMessageEdit(m.ChannelID, msg.ID, updatedContent)
 			}
 		}
 
+		// Determine team capability
 		teamAssessment := "❌ Team unlikely to complete the proposed task"
 
 		if len(results) > 0 && realCount == len(results) && skilledCount >= len(results)*3/4 {

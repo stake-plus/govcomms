@@ -92,16 +92,17 @@ func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember)
 	semaphore := make(chan struct{}, 1) // 1 concurrent operation
 
 	// Initial delay to let rate limits reset
-	log.Printf("Waiting 120 seconds before starting team analysis...")
+	log.Printf("Waiting 60 seconds before starting team analysis...")
 	select {
 	case <-ctx.Done():
 		return results, ctx.Err()
-	case <-time.After(120 * time.Second):
+	case <-time.After(60 * time.Second):
 	}
 
 	// Process members one at a time
 	for i := 0; i < len(members); i++ {
-		memberCtx, memberCancel := context.WithCancel(context.Background())
+		// Create a new context with timeout for this member
+		memberCtx, memberCancel := context.WithTimeout(ctx, 3*time.Minute)
 
 		var wg sync.WaitGroup
 
@@ -153,13 +154,13 @@ func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember)
 
 		memberCancel()
 
-		// Wait 120 seconds between each member to avoid rate limiting
+		// Wait 60 seconds between each member to avoid rate limiting
 		if i < len(members)-1 {
-			log.Printf("Waiting 120 seconds before next team member...")
+			log.Printf("Waiting 5 seconds before next team member...")
 			select {
 			case <-ctx.Done():
 				return results, ctx.Err()
-			case <-time.After(120 * time.Second):
+			case <-time.After(60 * time.Second):
 			}
 		}
 	}
