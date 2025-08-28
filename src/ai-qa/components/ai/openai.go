@@ -20,7 +20,7 @@ func NewOpenAIClient(apiKey, systemPrompt string) *OpenAIClient {
 		apiKey:       apiKey,
 		systemPrompt: systemPrompt,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: 120 * time.Second,
 		},
 	}
 }
