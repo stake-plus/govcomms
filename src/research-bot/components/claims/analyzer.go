@@ -182,11 +182,11 @@ func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]Verifica
 	semaphore := make(chan struct{}, 1) // 1 concurrent operation
 
 	// Initial delay to let rate limits reset
-	log.Printf("Waiting 60 seconds before starting verification...")
+	log.Printf("Waiting 5 seconds before starting verification...")
 	select {
 	case <-ctx.Done():
 		return results, ctx.Err()
-	case <-time.After(60 * time.Second):
+	case <-time.After(5 * time.Second):
 	}
 
 	// Process claims one at a time
@@ -243,13 +243,13 @@ func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]Verifica
 
 		claimCancel()
 
-		// Wait 60 seconds between each claim to avoid rate limiting
+		// Wait 5 seconds between each claim to avoid rate limiting
 		if i < len(claims)-1 {
-			log.Printf("Waiting 60 seconds before next claim...")
+			log.Printf("Waiting 5 seconds before next claim...")
 			select {
 			case <-ctx.Done():
 				return results, ctx.Err()
-			case <-time.After(60 * time.Second):
+			case <-time.After(5 * time.Second):
 			}
 		}
 	}
