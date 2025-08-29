@@ -38,10 +38,10 @@ func (c *OpenAIClient) Ask(content string, question string) (string, error) {
 	}
 
 	reqBody := map[string]interface{}{
-		"model":               "gpt-5",
-		"messages":            messages,
-		"temperature":         1,
-		"max_response_tokens": 50000,
+		"model":             "gpt-5",
+		"messages":          messages,
+		"temperature":       1,
+		"max_output_tokens": 50000,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
