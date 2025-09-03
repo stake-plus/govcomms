@@ -214,7 +214,6 @@ func (c *Client) GetReferendumInfoAt(refID uint32, blockHash string) (*Referendu
 	// Query storage at specific block
 	var raw types.StorageDataRaw
 	var hash types.Hash
-
 	err := codec.DecodeFromHex(blockHash, &hash)
 	if err != nil {
 		return nil, fmt.Errorf("decode block hash: %w", err)
