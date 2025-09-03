@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -100,6 +100,7 @@ func runSync(session *discordgo.Session, db *gorm.DB, guildID string) {
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
 			}
+
 			if err := db.Create(&refThread).Error; err != nil {
 				log.Printf("Failed to create thread mapping: %v", err)
 			} else {
@@ -125,14 +126,28 @@ func runSync(session *discordgo.Session, db *gorm.DB, guildID string) {
 }
 
 func parseRefIDFromTitle(title string) (uint32, error) {
-	// Extract referendum number from title
-	// Title format: "1711: [PULLED - Watch out for MEDIUM PRESSURE proposal]"
-	parts := strings.SplitN(title, ":", 2)
-	if len(parts) == 0 {
-		return 0, fmt.Errorf("no referendum number found")
+	// Extract referendum number from title using regex to handle special characters
+	// Look for a number at the beginning, possibly with quotes or other characters
+	re := regexp.MustCompile(`^\s*["']?(\d+)\s*["']?\s*:`)
+	matches := re.FindStringSubmatch(title)
+
+	if len(matches) < 2 {
+		// Fallback: try to find any number followed by colon
+		re = regexp.MustCompile(`(\d+)\s*:`)
+		matches = re.FindStringSubmatch(title)
+
+		if len(matches) < 2 {
+			// Last resort: find first number in the title
+			re = regexp.MustCompile(`(\d+)`)
+			matches = re.FindStringSubmatch(title)
+
+			if len(matches) < 2 {
+				return 0, fmt.Errorf("no referendum number found")
+			}
+		}
 	}
 
-	refNumStr := strings.TrimSpace(parts[0])
+	refNumStr := matches[1]
 	refNum, err := strconv.ParseUint(refNumStr, 10, 32)
 	if err != nil {
 		return 0, fmt.Errorf("invalid referendum number: %s", refNumStr)

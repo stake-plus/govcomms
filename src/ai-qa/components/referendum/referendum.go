@@ -2,8 +2,8 @@ package referendum
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
-	"strings"
 
 	"github.com/stake-plus/govcomms/src/ai-qa/types"
 	"gorm.io/gorm"
@@ -55,12 +55,28 @@ func (m *Manager) GetThreadInfo(networkID uint8, refID uint32) (*ThreadInfo, err
 }
 
 func ParseRefIDFromTitle(title string) (uint32, error) {
-	parts := strings.SplitN(title, ":", 2)
-	if len(parts) == 0 {
-		return 0, fmt.Errorf("no referendum number found")
+	// Extract referendum number from title using regex to handle special characters
+	// Look for a number at the beginning, possibly with quotes or other characters
+	re := regexp.MustCompile(`^\s*["']?(\d+)\s*["']?\s*:`)
+	matches := re.FindStringSubmatch(title)
+
+	if len(matches) < 2 {
+		// Fallback: try to find any number followed by colon
+		re = regexp.MustCompile(`(\d+)\s*:`)
+		matches = re.FindStringSubmatch(title)
+
+		if len(matches) < 2 {
+			// Last resort: find first number in the title
+			re = regexp.MustCompile(`(\d+)`)
+			matches = re.FindStringSubmatch(title)
+
+			if len(matches) < 2 {
+				return 0, fmt.Errorf("no referendum number found")
+			}
+		}
 	}
 
-	refNumStr := strings.TrimSpace(parts[0])
+	refNumStr := matches[1]
 	refNum, err := strconv.ParseUint(refNumStr, 10, 32)
 	if err != nil {
 		return 0, fmt.Errorf("invalid referendum number: %s", refNumStr)

@@ -3,8 +3,8 @@ package referendum
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -66,6 +66,7 @@ func (h *Handler) processThread(s *discordgo.Session, thread *discordgo.Channel)
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
+
 		if err := h.db.Create(&refThread).Error; err != nil {
 			log.Printf("Failed to create thread mapping: %v", err)
 		} else {
@@ -89,16 +90,28 @@ func (h *Handler) parseThreadTitle(title string, parentChannelID string) (networ
 	}
 	networkID = network.ID
 
-	// Extract referendum number from title
-	// Title format: "1711: [PULLED - Watch out for MEDIUM PRESSURE proposal]"
-	// Extract the number at the beginning
-	parts := strings.SplitN(title, ":", 2)
-	if len(parts) == 0 {
-		return 0, 0, fmt.Errorf("no referendum number found in title: %s", title)
+	// Extract referendum number from title using regex to handle special characters
+	// Look for a number at the beginning, possibly with quotes or other characters
+	re := regexp.MustCompile(`^\s*["']?(\d+)\s*["']?\s*:`)
+	matches := re.FindStringSubmatch(title)
+
+	if len(matches) < 2 {
+		// Fallback: try to find any number followed by colon
+		re = regexp.MustCompile(`(\d+)\s*:`)
+		matches = re.FindStringSubmatch(title)
+
+		if len(matches) < 2 {
+			// Last resort: find first number in the title
+			re = regexp.MustCompile(`(\d+)`)
+			matches = re.FindStringSubmatch(title)
+
+			if len(matches) < 2 {
+				return 0, 0, fmt.Errorf("no referendum number found in title: %s", title)
+			}
+		}
 	}
 
-	// Try to parse the first part as a number
-	refNumStr := strings.TrimSpace(parts[0])
+	refNumStr := matches[1]
 	refNum, err := strconv.ParseUint(refNumStr, 10, 32)
 	if err != nil {
 		return 0, 0, fmt.Errorf("invalid referendum number in title: %s", title)
