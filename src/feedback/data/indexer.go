@@ -73,6 +73,7 @@ func (mni *MultiNetworkIndexer) StartAll(ctx context.Context, interval time.Dura
 			log.Printf("Failed to create indexer for %s: %v", network.Name, err)
 			continue
 		}
+
 		mni.indexers[network.ID] = indexer
 
 		go func(idx *NetworkIndexer, netName string) {
@@ -134,6 +135,7 @@ func (ni *NetworkIndexer) indexOnce(ctx context.Context) {
 		log.Printf("%s indexer: Failed to parse block number: %v", ni.networkName, err)
 		return
 	}
+
 	ni.currentBlock = currentBlock
 	log.Printf("%s indexer: Current block height: %d", ni.networkName, currentBlock)
 
@@ -179,31 +181,57 @@ func (ni *NetworkIndexer) indexOnce(ctx context.Context) {
 
 func (ni *NetworkIndexer) processReferendum(refID uint64) {
 	refInfo, err := ni.client.GetReferendumInfo(uint32(refID))
+
+	// Check if referendum exists in database
+	var ref types.Ref
+	dbErr := ni.db.Where("network_id = ? AND ref_id = ?", ni.networkID, refID).First(&ref).Error
+
 	if err != nil {
 		if strings.Contains(err.Error(), "does not exist") || strings.Contains(err.Error(), "not found") {
-			var existingRef types.Ref
-			if err := ni.db.Where("network_id = ? AND ref_id = ?", ni.networkID, refID).First(&existingRef).Error; err == nil {
-				if !existingRef.Finalized {
-					log.Printf("%s ref #%d no longer exists on chain, marking as cleared", ni.networkName, refID)
-					clearedStatus := "Cleared"
-					updates := map[string]interface{}{
-						"status":     &clearedStatus,
-						"finalized":  true,
-						"updated_at": time.Now(),
-					}
-					ni.db.Model(&existingRef).Updates(updates)
+			// Referendum doesn't exist on chain
+			if dbErr == nil && !ref.Finalized {
+				log.Printf("%s ref #%d no longer exists on chain, marking as cleared", ni.networkName, refID)
+				clearedStatus := "Cleared"
+				updates := map[string]interface{}{
+					"status":     &clearedStatus,
+					"finalized":  true,
+					"updated_at": time.Now(),
 				}
+				ni.db.Model(&ref).Updates(updates)
 			}
 			return
 		}
-		log.Printf("Failed to get %s ref #%d info: %v", ni.networkName, refID, err)
+
+		// Decoding error - try to create minimal record
+		log.Printf("Failed to fully decode %s ref #%d: %v", ni.networkName, refID, err)
+
+		// If we don't have it in DB, create a minimal record
+		if dbErr == gorm.ErrRecordNotFound {
+			unknownStatus := "Unknown"
+			ref = types.Ref{
+				NetworkID: ni.networkID,
+				RefID:     refID,
+				Submitter: "Unknown",
+				Status:    &unknownStatus,
+				Submitted: 0,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			}
+
+			if err := ni.db.Create(&ref).Error; err != nil {
+				if !strings.Contains(err.Error(), "Duplicate entry") && !strings.Contains(err.Error(), "duplicate key") {
+					log.Printf("Failed to create minimal %s ref #%d: %v", ni.networkName, refID, err)
+				}
+			} else {
+				log.Printf("Created minimal record for %s ref #%d (decode error: %v)", ni.networkName, refID, err)
+			}
+		}
 		return
 	}
 
-	var ref types.Ref
-	err = ni.db.Where("network_id = ? AND ref_id = ?", ni.networkID, refID).First(&ref).Error
-
-	if err == gorm.ErrRecordNotFound {
+	// Successfully decoded referendum
+	if dbErr == gorm.ErrRecordNotFound {
+		// Create new referendum
 		ref = types.Ref{
 			NetworkID: ni.networkID,
 			RefID:     refID,
@@ -305,7 +333,8 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 			log.Printf("Created %s ref #%d - Status: %s, Track: %d, Submitter: %s",
 				ni.networkName, refID, refInfo.Status, refInfo.Track, refInfo.Submission.Who)
 		}
-	} else if err == nil {
+	} else if dbErr == nil {
+		// Update existing referendum
 		updates := map[string]interface{}{
 			"updated_at": time.Now(),
 		}
@@ -359,6 +388,7 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 				}
 			}
 			updates["confirm_end"] = now
+
 			log.Printf("%s ref #%d finalized with status: %s", ni.networkName, refID, refInfo.Status)
 		}
 
@@ -366,7 +396,7 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 			log.Printf("Failed to update %s ref #%d: %v", ni.networkName, refID, err)
 		}
 	} else {
-		log.Printf("Database error for %s ref #%d: %v", ni.networkName, refID, err)
+		log.Printf("Database error for %s ref #%d: %v", ni.networkName, refID, dbErr)
 	}
 }
 

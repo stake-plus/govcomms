@@ -755,22 +755,49 @@ func decodeDeciding(decoder *scale.Decoder, decision **DecisionStatus) error {
 
 // decodeTally decodes the tally information
 func decodeTally(decoder *scale.Decoder, tally *Tally) error {
-	var ayes, nays, support types.U128
-
+	// Try to decode ayes
+	var ayes types.U128
 	if err := decoder.Decode(&ayes); err != nil {
-		return fmt.Errorf("decode ayes: %w", err)
+		// If we can't decode, set defaults and return
+		log.Printf("Warning: Failed to decode tally ayes: %v", err)
+		tally.Ayes = "0"
+		tally.Nays = "0"
+		tally.Support = "0"
+		tally.Approval = "0%"
+		return nil
 	}
-
-	if err := decoder.Decode(&nays); err != nil {
-		return fmt.Errorf("decode nays: %w", err)
-	}
-
-	if err := decoder.Decode(&support); err != nil {
-		return fmt.Errorf("decode support: %w", err)
-	}
-
 	tally.Ayes = ayes.String()
+
+	// Try to decode nays
+	var nays types.U128
+	if err := decoder.Decode(&nays); err != nil {
+		// Partial decode - set remaining to defaults
+		log.Printf("Warning: Failed to decode tally nays: %v", err)
+		tally.Nays = "0"
+		tally.Support = "0"
+		tally.Approval = "0%"
+		return nil
+	}
 	tally.Nays = nays.String()
+
+	// Try to decode support - this might be missing in some referenda
+	var support types.U128
+	if err := decoder.Decode(&support); err != nil {
+		// Support field might not exist in older referenda
+		log.Printf("Warning: Failed to decode tally support (might be older format): %v", err)
+		tally.Support = "0"
+
+		// Still calculate approval if we have ayes and nays
+		totalVotes := new(big.Int).Add(ayes.Int, nays.Int)
+		if totalVotes.Cmp(big.NewInt(0)) > 0 {
+			approval := new(big.Int).Mul(ayes.Int, big.NewInt(10000))
+			approval.Div(approval, totalVotes)
+			tally.Approval = fmt.Sprintf("%d.%02d%%", approval.Int64()/100, approval.Int64()%100)
+		} else {
+			tally.Approval = "0%"
+		}
+		return nil
+	}
 	tally.Support = support.String()
 
 	// Calculate approval percentage
@@ -779,6 +806,8 @@ func decodeTally(decoder *scale.Decoder, tally *Tally) error {
 		approval := new(big.Int).Mul(ayes.Int, big.NewInt(10000))
 		approval.Div(approval, totalVotes)
 		tally.Approval = fmt.Sprintf("%d.%02d%%", approval.Int64()/100, approval.Int64()%100)
+	} else {
+		tally.Approval = "0%"
 	}
 
 	return nil
