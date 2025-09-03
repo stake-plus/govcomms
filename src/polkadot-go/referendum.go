@@ -783,8 +783,6 @@ func decodeTally(decoder *scale.Decoder, tally *Tally) error {
 	// Try to decode support - this might be missing in some referenda
 	var support types.U128
 	if err := decoder.Decode(&support); err != nil {
-		// Support field might not exist in older referenda
-		log.Printf("Warning: Failed to decode tally support (might be older format): %v", err)
 		tally.Support = "0"
 
 		// Still calculate approval if we have ayes and nays
