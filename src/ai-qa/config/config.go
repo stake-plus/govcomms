@@ -16,6 +16,9 @@ type Config struct {
 	ClaudeKey      string
 	AIProvider     string
 	AISystemPrompt string
+    AIModel        string
+    AIEnableWeb    bool
+    AIEnableDeep   bool
 	QARoleID       string
 	TempDir        string
 }
@@ -68,6 +71,13 @@ If information is not available in the provided content, clearly state that.`
 		tempDir = "/tmp/govcomms-qa"
 	}
 
+    aiModel := data.GetSetting("ai_model")
+    if aiModel == "" {
+        if aiProvider == "claude" { aiModel = "claude-3-haiku-20240307" } else { aiModel = "gpt-5" }
+    }
+    aiEnableWeb := data.GetSetting("ai_enable_web_search") == "1"
+    aiEnableDeep := data.GetSetting("ai_enable_deep_search") == "1"
+
 	return Config{
 		Token:          discordToken,
 		GuildID:        guildID,
@@ -76,6 +86,9 @@ If information is not available in the provided content, clearly state that.`
 		ClaudeKey:      claudeKey,
 		AIProvider:     aiProvider,
 		AISystemPrompt: aiSystemPrompt,
+        AIModel:        aiModel,
+        AIEnableWeb:    aiEnableWeb,
+        AIEnableDeep:   aiEnableDeep,
 		QARoleID:       qaRoleID,
 		TempDir:        tempDir,
 	}

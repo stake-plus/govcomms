@@ -7,11 +7,12 @@ import (
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/stake-plus/govcomms/src/ai-qa/components/ai"
+    aiold "github.com/stake-plus/govcomms/src/ai-qa/components/ai"
 	"github.com/stake-plus/govcomms/src/ai-qa/components/network"
 	"github.com/stake-plus/govcomms/src/ai-qa/components/processor"
 	"github.com/stake-plus/govcomms/src/ai-qa/components/referendum"
 	"github.com/stake-plus/govcomms/src/ai-qa/config"
+    sharedai "github.com/stake-plus/govcomms/src/shared/ai"
 	"gorm.io/gorm"
 )
 
@@ -20,7 +21,7 @@ type Bot struct {
 	db             *gorm.DB
 	session        *discordgo.Session
 	processor      *processor.Processor
-	aiClient       ai.Client
+    aiClient       interface{ AnswerQuestion(context.Context, string, string, sharedai.Options) (string, error) }
 	networkManager *network.Manager
 	refManager     *referendum.Manager
 	contextManager *processor.ContextManager
@@ -45,14 +46,29 @@ func New(cfg *config.Config, db *gorm.DB) (*Bot, error) {
 
 	refManager := referendum.NewManager(db)
 
-	var aiClient ai.Client
-	if cfg.AIProvider == "claude" && cfg.ClaudeKey != "" {
-		aiClient = ai.NewClaudeClient(cfg.ClaudeKey, cfg.AISystemPrompt)
-	} else if cfg.OpenAIKey != "" {
-		aiClient = ai.NewOpenAIClient(cfg.OpenAIKey, cfg.AISystemPrompt)
-	} else {
-		return nil, fmt.Errorf("no AI provider configured")
-	}
+    // Prefer new shared AI client; fall back to old for safety
+    var aiClient interface{ AnswerQuestion(context.Context, string, string, sharedai.Options) (string, error) }
+    if cfg.OpenAIKey != "" || cfg.ClaudeKey != "" {
+        aiClient = sharedai.NewClient(sharedai.FactoryConfig{
+            Provider:     cfg.AIProvider,
+            OpenAIKey:    cfg.OpenAIKey,
+            ClaudeKey:    cfg.ClaudeKey,
+            SystemPrompt: cfg.AISystemPrompt,
+            Model:        cfg.AIModel,
+            Temperature:  0, // use defaults
+        })
+    } else {
+        // Backward fallback if keys are only in legacy paths
+        if cfg.AIProvider == "claude" && cfg.ClaudeKey != "" {
+            legacy := aiold.NewClaudeClient(cfg.ClaudeKey, cfg.AISystemPrompt)
+            aiClient = legacyAdapter{legacy}
+        } else if cfg.OpenAIKey != "" {
+            legacy := aiold.NewOpenAIClient(cfg.OpenAIKey, cfg.AISystemPrompt)
+            aiClient = legacyAdapter{legacy}
+        } else {
+            return nil, fmt.Errorf("no AI provider configured")
+        }
+    }
 
 	proc := processor.NewProcessor(cfg.TempDir, db)
 	contextMgr := processor.NewContextManager(db)
@@ -136,7 +152,27 @@ func (b *Bot) handleQuestion(s *discordgo.Session, m *discordgo.MessageCreate) {
 	// Combine proposal content with Q&A history
 	fullContent := content + qaContext
 
-	answer, err := b.aiClient.Ask(fullContent, question)
+    var answer string
+    var err error
+    if b.config.AIEnableWeb {
+        // Use web search tools via shared client when enabled
+        client, ok := b.aiClient.(interface{ Respond(context.Context, string, []sharedai.Tool, sharedai.Options) (string, error) })
+        if ok {
+            input := "Context:\n" + fullContent + "\n\nQuestion:\n" + question
+            answer, err = client.Respond(context.Background(), input, []sharedai.Tool{{Type: "web_search"}}, sharedai.Options{
+                Model:               b.config.AIModel,
+                SystemPrompt:        b.config.AISystemPrompt,
+                MaxCompletionTokens: 0,
+            })
+        } else {
+            answer, err = b.aiClient.AnswerQuestion(context.Background(), fullContent, question, sharedai.Options{ Model: b.config.AIModel, SystemPrompt: b.config.AISystemPrompt })
+        }
+    } else {
+        answer, err = b.aiClient.AnswerQuestion(context.Background(), fullContent, question, sharedai.Options{
+            Model:        b.config.AIModel,
+            SystemPrompt: b.config.AISystemPrompt,
+        })
+    }
 	if err != nil {
 		log.Printf("Error getting AI response: %v", err)
 		s.ChannelMessageSend(m.ChannelID, "Failed to generate answer. Please try again.")
