@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/stake-plus/govcomms/src/ai-qa/data"
+    shareddata "github.com/stake-plus/govcomms/src/shared/data"
 	"gorm.io/gorm"
 )
 
@@ -78,10 +79,10 @@ If information is not available in the provided content, clearly state that.`
     aiEnableWeb := data.GetSetting("ai_enable_web_search") == "1"
     aiEnableDeep := data.GetSetting("ai_enable_deep_search") == "1"
 
-	return Config{
+    return Config{
 		Token:          discordToken,
 		GuildID:        guildID,
-		MySQLDSN:       GetMySQLDSN(),
+        MySQLDSN:       shareddata.GetMySQLDSN(),
 		OpenAIKey:      openAIKey,
 		ClaudeKey:      claudeKey,
 		AIProvider:     aiProvider,
@@ -94,10 +95,3 @@ If information is not available in the provided content, clearly state that.`
 	}
 }
 
-func GetMySQLDSN() string {
-	dsn := os.Getenv("MYSQL_DSN")
-	if dsn == "" {
-		dsn = "govcomms:DK3mfv93jf4m@tcp(127.0.0.1:3306)/govcomms"
-	}
-	return dsn
-}

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/stake-plus/govcomms/src/research-bot/data"
+	shareddata "github.com/stake-plus/govcomms/src/shared/data"
 	"gorm.io/gorm"
 )
 
@@ -12,9 +13,9 @@ type Config struct {
 	Token          string
 	GuildID        string
 	MySQLDSN       string
-    OpenAIKey      string
-    AIModel        string
-    AIEnableWeb    bool
+	OpenAIKey      string
+	AIModel        string
+	AIEnableWeb    bool
 	ResearchRoleID string
 	TempDir        string
 }
@@ -39,14 +40,16 @@ func Load(db *gorm.DB) Config {
 		researchRoleID = os.Getenv("RESEARCH_ROLE_ID")
 	}
 
-    openAIKey := data.GetSetting("openai_api_key")
+	openAIKey := data.GetSetting("openai_api_key")
 	if openAIKey == "" {
 		openAIKey = os.Getenv("OPENAI_API_KEY")
 	}
 
-    aiModel := data.GetSetting("ai_model")
-    if aiModel == "" { aiModel = "gpt-5" }
-    aiEnableWeb := data.GetSetting("ai_enable_web_search") == "1"
+	aiModel := data.GetSetting("ai_model")
+	if aiModel == "" {
+		aiModel = "gpt-5"
+	}
+	aiEnableWeb := data.GetSetting("ai_enable_web_search") == "1"
 
 	tempDir := data.GetSetting("qa_temp_dir")
 	if tempDir == "" {
@@ -56,19 +59,11 @@ func Load(db *gorm.DB) Config {
 	return Config{
 		Token:          discordToken,
 		GuildID:        guildID,
-		MySQLDSN:       GetMySQLDSN(),
+		MySQLDSN:       shareddata.GetMySQLDSN(),
 		OpenAIKey:      openAIKey,
-        AIModel:        aiModel,
-        AIEnableWeb:    aiEnableWeb,
+		AIModel:        aiModel,
+		AIEnableWeb:    aiEnableWeb,
 		ResearchRoleID: researchRoleID,
 		TempDir:        tempDir,
 	}
-}
-
-func GetMySQLDSN() string {
-	dsn := os.Getenv("MYSQL_DSN")
-	if dsn == "" {
-		dsn = "govcomms:DK3mfv93jf4m@tcp(127.0.0.1:3306)/govcomms"
-	}
-	return dsn
 }

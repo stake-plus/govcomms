@@ -2,12 +2,9 @@ package bot
 
 import (
 	"context"
-	"crypto/md5"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -18,6 +15,8 @@ import (
 	"github.com/stake-plus/govcomms/src/research-bot/components/referendum"
 	"github.com/stake-plus/govcomms/src/research-bot/components/teams"
 	"github.com/stake-plus/govcomms/src/research-bot/config"
+	shareddiscord "github.com/stake-plus/govcomms/src/shared/discord"
+	sharedfsx "github.com/stake-plus/govcomms/src/shared/fsx"
 	"gorm.io/gorm"
 )
 
@@ -78,9 +77,9 @@ func (b *Bot) initHandlers() {
 		}
 
 		content := strings.TrimSpace(m.Content)
-		if strings.HasPrefix(content, "!research") {
+		if strings.HasPrefix(content, shareddiscord.CmdResearch) {
 			b.handleResearch(s, m)
-		} else if strings.HasPrefix(content, "!team") {
+		} else if strings.HasPrefix(content, shareddiscord.CmdTeam) {
 			b.handleTeam(s, m)
 		}
 	})
@@ -116,7 +115,7 @@ func formatURLsNoEmbed(urls []string) string {
 }
 
 func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if b.config.ResearchRoleID != "" && !b.hasRole(s, b.config.GuildID, m.Author.ID, b.config.ResearchRoleID) {
+	if b.config.ResearchRoleID != "" && !shareddiscord.HasRole(s, b.config.GuildID, m.Author.ID, b.config.ResearchRoleID) {
 		s.ChannelMessageSend(m.ChannelID, "You don't have permission to use this command.")
 		return
 	}
@@ -229,7 +228,7 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if b.config.ResearchRoleID != "" && !b.hasRole(s, b.config.GuildID, m.Author.ID, b.config.ResearchRoleID) {
+	if b.config.ResearchRoleID != "" && !shareddiscord.HasRole(s, b.config.GuildID, m.Author.ID, b.config.ResearchRoleID) {
 		s.ChannelMessageSend(m.ChannelID, "You don't have permission to use this command.")
 		return
 	}
@@ -368,28 +367,10 @@ func (b *Bot) getProposalContent(network string, refID uint32) (string, error) {
 }
 
 func (b *Bot) getCacheFilePath(network string, refID uint32) string {
-	hash := md5.Sum([]byte(fmt.Sprintf("%s-%d", network, refID)))
-	filename := fmt.Sprintf("%s-%d-%s.txt", network, refID, hex.EncodeToString(hash[:8]))
-	return filepath.Join(b.config.TempDir, filename)
+	return sharedfsx.ProposalCachePath(b.config.TempDir, network, refID)
 }
 
-func (b *Bot) hasRole(s *discordgo.Session, guildID, userID, roleID string) bool {
-	if roleID == "" {
-		return true
-	}
-
-	member, err := s.GuildMember(guildID, userID)
-	if err != nil {
-		return false
-	}
-
-	for _, role := range member.Roles {
-		if role == roleID {
-			return true
-		}
-	}
-	return false
-}
+// role check centralized in shared/discord
 
 func (b *Bot) Start() error {
 	if err := b.session.Open(); err != nil {

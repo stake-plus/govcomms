@@ -105,22 +105,22 @@ func (b *Bot) initHandlers() {
 
 		content := strings.TrimSpace(m.Content)
 
-		if strings.HasPrefix(content, "!question ") {
+		if strings.HasPrefix(content, shareddiscord.CmdQuestion) {
 			b.handleQuestion(s, m)
-		} else if content == "!refresh" {
+		} else if content == shareddiscord.CmdRefresh {
 			b.handleRefresh(s, m)
-		} else if content == "!context" {
+		} else if content == shareddiscord.CmdContext {
 			b.handleShowContext(s, m)
 		}
 	})
 }
 
 func (b *Bot) handleQuestion(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if b.config.QARoleID != "" && !b.hasRole(s, b.config.GuildID, m.Author.ID, b.config.QARoleID) {
+	if b.config.QARoleID != "" && !shareddiscord.HasRole(s, b.config.GuildID, m.Author.ID, b.config.QARoleID) {
 		return
 	}
 
-	question := strings.TrimPrefix(m.Content, "!question ")
+	question := strings.TrimPrefix(m.Content, shareddiscord.CmdQuestion)
 	if len(question) < 5 {
 		s.ChannelMessageSend(m.ChannelID, "Please provide a valid question.")
 		return
@@ -196,7 +196,7 @@ func (b *Bot) handleQuestion(s *discordgo.Session, m *discordgo.MessageCreate) {
 }
 
 func (b *Bot) handleShowContext(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if b.config.QARoleID != "" && !b.hasRole(s, b.config.GuildID, m.Author.ID, b.config.QARoleID) {
+	if b.config.QARoleID != "" && !shareddiscord.HasRole(s, b.config.GuildID, m.Author.ID, b.config.QARoleID) {
 		return
 	}
 
@@ -249,7 +249,7 @@ func (b *Bot) sendLongMessage(s *discordgo.Session, channelID string, userID str
 }
 
 func (b *Bot) handleRefresh(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if b.config.QARoleID != "" && !b.hasRole(s, b.config.GuildID, m.Author.ID, b.config.QARoleID) {
+	if b.config.QARoleID != "" && !shareddiscord.HasRole(s, b.config.GuildID, m.Author.ID, b.config.QARoleID) {
 		return
 	}
 
@@ -277,23 +277,7 @@ func (b *Bot) handleRefresh(s *discordgo.Session, m *discordgo.MessageCreate) {
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("✅ Refreshed content for %s referendum #%d", network.Name, threadInfo.RefID))
 }
 
-func (b *Bot) hasRole(s *discordgo.Session, guildID, userID, roleID string) bool {
-	if roleID == "" {
-		return true
-	}
-
-	member, err := s.GuildMember(guildID, userID)
-	if err != nil {
-		return false
-	}
-
-	for _, role := range member.Roles {
-		if role == roleID {
-			return true
-		}
-	}
-	return false
-}
+// role check centralized in shared/discord
 
 func (b *Bot) Start() error {
 	if err := b.session.Open(); err != nil {
