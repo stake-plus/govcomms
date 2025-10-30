@@ -10,12 +10,11 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/research-bot/components/claims"
-	"github.com/stake-plus/govcomms/src/research-bot/components/network"
-	"github.com/stake-plus/govcomms/src/research-bot/components/referendum"
 	"github.com/stake-plus/govcomms/src/research-bot/components/teams"
 	"github.com/stake-plus/govcomms/src/research-bot/config"
 	shareddiscord "github.com/stake-plus/govcomms/src/shared/discord"
 	sharedfsx "github.com/stake-plus/govcomms/src/shared/fsx"
+	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
 	"gorm.io/gorm"
 )
 
@@ -23,8 +22,8 @@ type Bot struct {
 	config         *config.Config
 	db             *gorm.DB
 	session        *discordgo.Session
-	networkManager *network.Manager
-	refManager     *referendum.Manager
+	networkManager *sharedgov.NetworkManager
+	refManager     *sharedgov.ReferendumManager
 	claimsAnalyzer *claims.Analyzer
 	teamsAnalyzer  *teams.Analyzer
 	cancelFunc     context.CancelFunc
@@ -40,13 +39,13 @@ func New(cfg *config.Config, db *gorm.DB) (*Bot, error) {
 		discordgo.IntentsGuildMessages |
 		discordgo.IntentsMessageContent
 
-	networkManager, err := network.NewManager(db)
+	networkManager, err := sharedgov.NewNetworkManager(db)
 	if err != nil {
 		log.Printf("Failed to create network manager: %v", err)
 		networkManager = nil
 	}
 
-	refManager := referendum.NewManager(db)
+	refManager := sharedgov.NewReferendumManager(db)
 	claimsAnalyzer := claims.NewAnalyzer(cfg.OpenAIKey)
 	teamsAnalyzer := teams.NewAnalyzer(cfg.OpenAIKey)
 
@@ -320,7 +319,7 @@ func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
 		}
 
 		// Send summary message
-		summaryMsg := fmt.Sprintf("\n📊 **Team Analysis Complete**\n")
+		summaryMsg := "\n📊 **Team Analysis Complete**\n"
 		summaryMsg += fmt.Sprintf("👤 Real People: %d/%d | 🎯 Verified Skills: %d/%d\n",
 			realCount, len(results), skilledCount, len(results))
 		summaryMsg += fmt.Sprintf("**Assessment:** %s", teamAssessment)

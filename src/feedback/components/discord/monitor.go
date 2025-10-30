@@ -8,16 +8,15 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/stake-plus/govcomms/src/feedback/components/network"
-	"github.com/stake-plus/govcomms/src/feedback/components/referendum"
 	"github.com/stake-plus/govcomms/src/feedback/types"
+	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
 	"gorm.io/gorm"
 )
 
 type MonitorConfig struct {
 	DB             *gorm.DB
-	NetworkManager *network.Manager
-	RefManager     *referendum.Manager
+	NetworkManager *sharedgov.NetworkManager
+	RefManager     *sharedgov.ReferendumManager
 	Session        *discordgo.Session
 	GuildID        string
 }
@@ -100,7 +99,7 @@ func (m *MessageMonitor) postMessage(msg types.RefMessage) error {
 	return err
 }
 
-func (m *MessageMonitor) buildMessageEmbed(msg types.RefMessage, ref types.Ref, net *types.Network) *discordgo.MessageEmbed {
+func (m *MessageMonitor) buildMessageEmbed(msg types.RefMessage, ref types.Ref, net *sharedgov.Network) *discordgo.MessageEmbed {
 	author := msg.Author
 	if msg.PolkassemblyUsername != "" {
 		author = msg.PolkassemblyUsername

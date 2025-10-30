@@ -10,6 +10,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/feedback/config"
 	"github.com/stake-plus/govcomms/src/feedback/types"
+	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
 	"gorm.io/gorm"
 )
 
@@ -43,7 +44,7 @@ func (h *Handler) processThread(s *discordgo.Session, thread *discordgo.Channel)
 		return
 	}
 
-	var network types.Network
+	var network sharedgov.Network
 	if err := h.db.First(&network, networkID).Error; err != nil {
 		log.Printf("Network %d not found: %v", networkID, err)
 		return
@@ -55,10 +56,10 @@ func (h *Handler) processThread(s *discordgo.Session, thread *discordgo.Channel)
 		return
 	}
 
-	var refThread types.RefThread
+	var refThread sharedgov.RefThread
 	err = h.db.Where("thread_id = ?", thread.ID).First(&refThread).Error
 	if err == gorm.ErrRecordNotFound {
-		refThread = types.RefThread{
+		refThread = sharedgov.RefThread{
 			ThreadID:  thread.ID,
 			RefDBID:   ref.ID,
 			NetworkID: networkID,
@@ -83,7 +84,7 @@ func (h *Handler) processThread(s *discordgo.Session, thread *discordgo.Channel)
 
 func (h *Handler) parseThreadTitle(title string, parentChannelID string) (networkID uint8, refID uint32, err error) {
 	// First determine network from parent channel
-	var network types.Network
+	var network sharedgov.Network
 	err = h.db.Where("discord_channel_id = ?", parentChannelID).First(&network).Error
 	if err != nil {
 		return 0, 0, fmt.Errorf("no network found for channel %s", parentChannelID)
@@ -120,47 +121,4 @@ func (h *Handler) parseThreadTitle(title string, parentChannelID string) (networ
 	return networkID, uint32(refNum), nil
 }
 
-type ThreadInfo struct {
-	ThreadID  string
-	RefID     uint64
-	RefDBID   uint64
-	NetworkID uint8
-}
-
-type Manager struct {
-	db *gorm.DB
-}
-
-func NewManager(db *gorm.DB) *Manager {
-	return &Manager{db: db}
-}
-
-func (m *Manager) FindThread(threadID string) (*ThreadInfo, error) {
-	var refThread types.RefThread
-	err := m.db.Where("thread_id = ?", threadID).First(&refThread).Error
-	if err != nil {
-		return nil, err
-	}
-
-	return &ThreadInfo{
-		ThreadID:  refThread.ThreadID,
-		RefID:     refThread.RefID,
-		RefDBID:   refThread.RefDBID,
-		NetworkID: refThread.NetworkID,
-	}, nil
-}
-
-func (m *Manager) GetThreadInfo(networkID uint8, refID uint32) (*ThreadInfo, error) {
-	var refThread types.RefThread
-	err := m.db.Where("network_id = ? AND ref_id = ?", networkID, refID).First(&refThread).Error
-	if err != nil {
-		return nil, err
-	}
-
-	return &ThreadInfo{
-		ThreadID:  refThread.ThreadID,
-		RefID:     refThread.RefID,
-		RefDBID:   refThread.RefDBID,
-		NetworkID: refThread.NetworkID,
-	}, nil
-}
+// Manager and ThreadInfo are now in shared/gov - use sharedgov.ReferendumManager and sharedgov.ThreadInfo

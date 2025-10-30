@@ -24,9 +24,8 @@ func main() {
     flag.Parse()
 
     // Use a single DB connection for all modules
-    // Prefer ai-qa config DSN since both use the same DB
-    qaCfg := aiqaconfig.Load(nil)
-    db, err := shareddata.ConnectMySQL(qaCfg.MySQLDSN)
+    dsn := shareddata.GetMySQLDSN()
+    db, err := shareddata.ConnectMySQL(dsn)
     if err != nil { log.Fatalf("db: %v", err) }
 
     // Start modules as requested

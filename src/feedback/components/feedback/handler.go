@@ -7,17 +7,16 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/stake-plus/govcomms/src/feedback/components/network"
 	"github.com/stake-plus/govcomms/src/feedback/components/polkassembly"
-	"github.com/stake-plus/govcomms/src/feedback/components/referendum"
 	"github.com/stake-plus/govcomms/src/feedback/types"
+	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
 	"gorm.io/gorm"
 )
 
 type Config struct {
 	DB                  *gorm.DB
-	NetworkManager      *network.Manager
-	RefManager          *referendum.Manager
+	NetworkManager      *sharedgov.NetworkManager
+	RefManager          *sharedgov.ReferendumManager
 	FeedbackRoleID      string
 	GuildID             string
 	PolkassemblyService *polkassembly.Service
@@ -98,7 +97,7 @@ func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate
 }
 
 func (h *Handler) processFeedbackFromThread(s *discordgo.Session, m *discordgo.MessageCreate,
-	threadInfo *referendum.ThreadInfo, network *types.Network, feedbackMsg string) error {
+	threadInfo *sharedgov.ThreadInfo, network *sharedgov.Network, feedbackMsg string) error {
 
 	log.Printf("Processing feedback for %s ref #%d", network.Name, threadInfo.RefID)
 

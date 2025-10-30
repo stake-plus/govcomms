@@ -41,13 +41,13 @@ func (c *claudeClient) AnswerQuestion(ctx context.Context, content string, quest
         "max_tokens":  500,
         "temperature": merged.Temperature,
     }
-    b, _ := json.Marshal(reqBody)
-    req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(b))
-    if err != nil { return "", err }
-    req.Header.Set("Content-Type", "application/json")
-    req.Header.Set("x-api-key", c.apiKey)
-    req.Header.Set("anthropic-version", "2023-06-01")
+    bodyBytes, _ := json.Marshal(reqBody)
     _, body, err := httpx.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+        req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(bodyBytes))
+        if err != nil { return 0, nil, err }
+        req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("x-api-key", c.apiKey)
+        req.Header.Set("anthropic-version", "2023-06-01")
         resp, err := c.httpClient.Do(req)
         if err != nil { return 0, nil, err }
         defer resp.Body.Close()
@@ -75,13 +75,13 @@ func (c *claudeClient) Respond(ctx context.Context, input string, tools []Tool, 
         "max_tokens":  1000,
         "temperature": merged.Temperature,
     }
-    b, _ := json.Marshal(reqBody)
-    req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(b))
-    if err != nil { return "", err }
-    req.Header.Set("Content-Type", "application/json")
-    req.Header.Set("x-api-key", c.apiKey)
-    req.Header.Set("anthropic-version", "2023-06-01")
+    bodyBytes, _ := json.Marshal(reqBody)
     _, body, err := httpx.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+        req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(bodyBytes))
+        if err != nil { return 0, nil, err }
+        req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("x-api-key", c.apiKey)
+        req.Header.Set("anthropic-version", "2023-06-01")
         resp, err := c.httpClient.Do(req)
         if err != nil { return 0, nil, err }
         defer resp.Body.Close()

@@ -11,29 +11,14 @@ else
     SEP = /
 endif
 
-# Binary names
-FEEDBACK_BIN = bin$(SEP)feedback-bot$(BINARY_EXT)
-AIQA_BIN = bin$(SEP)ai-qa-bot$(BINARY_EXT)
-RESEARCH_BIN = bin$(SEP)research-bot$(BINARY_EXT)
+# Binary name
 GOVCOMMS_BIN = bin$(SEP)govcomms$(BINARY_EXT)
 
-.PHONY: all build clean feedback ai-qa research govcomms run-feedback run-ai-qa run-research run-govcomms install test
+.PHONY: all build clean govcomms run install test build-all build-linux build-windows
 
 all: build
 
-build: feedback ai-qa research govcomms
-
-feedback:
-	$(MKDIR) bin
-	go build -o $(FEEDBACK_BIN) ./src/feedback
-
-ai-qa:
-	$(MKDIR) bin
-	go build -o $(AIQA_BIN) ./src/ai-qa
-
-research:
-	$(MKDIR) bin
-	go build -o $(RESEARCH_BIN) ./src/research-bot
+build: govcomms
 
 govcomms:
 	$(MKDIR) bin
@@ -46,16 +31,7 @@ else
 	$(RM) bin/
 endif
 
-run-feedback:
-	$(FEEDBACK_BIN)
-
-run-ai-qa:
-	$(AIQA_BIN)
-
-run-research:
-	$(RESEARCH_BIN)
-
-run-govcomms:
+run:
 	$(GOVCOMMS_BIN)
 
 install:
@@ -68,13 +44,7 @@ test:
 build-all: build-linux build-windows
 
 build-linux:
-	GOOS=linux GOARCH=amd64 go build -o bin/feedback-bot-linux ./src/feedback
-	GOOS=linux GOARCH=amd64 go build -o bin/ai-qa-bot-linux ./src/ai-qa
-	GOOS=linux GOARCH=amd64 go build -o bin/research-bot-linux ./src/research-bot
 	GOOS=linux GOARCH=amd64 go build -o bin/govcomms-linux ./cmd/govcomms
 
 build-windows:
-	GOOS=windows GOARCH=amd64 go build -o bin/feedback-bot.exe ./src/feedback
-	GOOS=windows GOARCH=amd64 go build -o bin/ai-qa-bot.exe ./src/ai-qa
-	GOOS=windows GOARCH=amd64 go build -o bin/research-bot.exe ./src/research-bot
 	GOOS=windows GOARCH=amd64 go build -o bin/govcomms.exe ./cmd/govcomms

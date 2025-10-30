@@ -43,12 +43,12 @@ func (c *openAIClient) AnswerQuestion(ctx context.Context, content string, quest
         "messages":    messages,
         "temperature": merged.Temperature,
     }
-    b, _ := json.Marshal(reqBody)
-    req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(b))
-    if err != nil { return "", err }
-    req.Header.Set("Content-Type", "application/json")
-    req.Header.Set("Authorization", "Bearer "+c.apiKey)
+    bodyBytes, _ := json.Marshal(reqBody)
     _, body, err := httpx.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+        req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(bodyBytes))
+        if err != nil { return 0, nil, err }
+        req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("Authorization", "Bearer "+c.apiKey)
         resp, err := c.httpClient.Do(req)
         if err != nil { return 0, nil, err }
         defer resp.Body.Close()
@@ -81,12 +81,12 @@ func (c *openAIClient) Respond(ctx context.Context, input string, tools []Tool, 
         payload["tools"] = toolPayload
         payload["tool_choice"] = "auto"
     }
-    b, _ := json.Marshal(payload)
-    req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/responses", bytes.NewBuffer(b))
-    if err != nil { return "", err }
-    req.Header.Set("Content-Type", "application/json")
-    req.Header.Set("Authorization", "Bearer "+c.apiKey)
+    bodyBytes, _ := json.Marshal(payload)
     _, body, err := httpx.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+        req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/responses", bytes.NewBuffer(bodyBytes))
+        if err != nil { return 0, nil, err }
+        req.Header.Set("Content-Type", "application/json")
+        req.Header.Set("Authorization", "Bearer "+c.apiKey)
         resp, err := c.httpClient.Do(req)
         if err != nil { return 0, nil, err }
         defer resp.Body.Close()

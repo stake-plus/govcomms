@@ -8,12 +8,11 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	aiold "github.com/stake-plus/govcomms/src/ai-qa/components/ai"
-	"github.com/stake-plus/govcomms/src/ai-qa/components/network"
 	"github.com/stake-plus/govcomms/src/ai-qa/components/processor"
-	"github.com/stake-plus/govcomms/src/ai-qa/components/referendum"
 	"github.com/stake-plus/govcomms/src/ai-qa/config"
 	sharedai "github.com/stake-plus/govcomms/src/shared/ai"
 	shareddiscord "github.com/stake-plus/govcomms/src/shared/discord"
+	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
 	"gorm.io/gorm"
 )
 
@@ -25,8 +24,8 @@ type Bot struct {
 	aiClient  interface {
 		AnswerQuestion(context.Context, string, string, sharedai.Options) (string, error)
 	}
-	networkManager *network.Manager
-	refManager     *referendum.Manager
+	networkManager *sharedgov.NetworkManager
+	refManager     *sharedgov.ReferendumManager
 	contextManager *processor.ContextManager
 	cancelFunc     context.CancelFunc
 }
@@ -41,13 +40,13 @@ func New(cfg *config.Config, db *gorm.DB) (*Bot, error) {
 		discordgo.IntentsGuildMessages |
 		discordgo.IntentsMessageContent
 
-	networkManager, err := network.NewManager(db)
+	networkManager, err := sharedgov.NewNetworkManager(db)
 	if err != nil {
 		log.Printf("Failed to create network manager: %v", err)
 		networkManager = nil
 	}
 
-	refManager := referendum.NewManager(db)
+	refManager := sharedgov.NewReferendumManager(db)
 
 	// Prefer new shared AI client; fall back to old for safety
 	var aiClient interface {
