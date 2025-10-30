@@ -4,14 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/redis/go-redis/v9"
-	"github.com/stake-plus/govcomms/src/feedback/components/feedback"
-	"github.com/stake-plus/govcomms/src/feedback/components/polkassembly"
-	"github.com/stake-plus/govcomms/src/feedback/components/referendum"
 	"github.com/stake-plus/govcomms/src/feedback/data"
 	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
 	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
@@ -19,13 +15,13 @@ import (
 )
 
 type Bot struct {
-	config       *sharedconfig.FeedbackConfig
-	db           *gorm.DB
-	redis        *redis.Client
-	session      *discordgo.Session
-	handlers     []interface{}
-	cancelFunc   context.CancelFunc
-	polkassembly *polkassembly.Service
+	config         *sharedconfig.FeedbackConfig
+	db             *gorm.DB
+	redis          *redis.Client
+	session        *discordgo.Session
+	networkManager *sharedgov.NetworkManager
+	refManager     *sharedgov.ReferendumManager
+	cancelFunc     context.CancelFunc
 }
 
 func New(cfg *sharedconfig.FeedbackConfig, db *gorm.DB, rdb *redis.Client) (*Bot, error) {
@@ -42,19 +38,23 @@ func New(cfg *sharedconfig.FeedbackConfig, db *gorm.DB, rdb *redis.Client) (*Bot
 		discordgo.IntentsMessageContent |
 		discordgo.IntentsDirectMessages
 
-	// Initialize Polkassembly service
-	polkassemblyLogger := log.New(os.Stdout, "[Polkassembly] ", log.LstdFlags)
-	polkassemblyService, err := polkassembly.NewService(polkassemblyLogger, db)
+	// Create network manager
+	networkManager, err := sharedgov.NewNetworkManager(db)
 	if err != nil {
-		log.Printf("Failed to create Polkassembly service: %v", err)
+		log.Printf("Failed to create network manager: %v", err)
+		networkManager = nil
 	}
 
+	// Create referendum manager
+	refManager := sharedgov.NewReferendumManager(db)
+
 	bot := &Bot{
-		config:       cfg,
-		db:           db,
-		redis:        rdb,
-		session:      session,
-		polkassembly: polkassemblyService,
+		config:         cfg,
+		db:             db,
+		redis:          rdb,
+		session:        session,
+		networkManager: networkManager,
+		refManager:     refManager,
 	}
 
 	// Initialize handlers
@@ -64,36 +64,6 @@ func New(cfg *sharedconfig.FeedbackConfig, db *gorm.DB, rdb *redis.Client) (*Bot
 }
 
 func (b *Bot) initHandlers() {
-	// Create network manager
-	networkManager, err := sharedgov.NewNetworkManager(b.db)
-	if err != nil {
-		log.Printf("Failed to create network manager: %v", err)
-		networkManager = nil
-	}
-
-	// Create referendum manager
-	refManager := sharedgov.NewReferendumManager(b.db)
-
-	// Create feedback handler config
-	feedbackConfig := feedback.Config{
-		DB:                  b.db,
-		NetworkManager:      networkManager,
-		RefManager:          refManager,
-		FeedbackRoleID:      b.config.FeedbackRoleID,
-		GuildID:             b.config.Base.GuildID,
-		PolkassemblyService: b.polkassembly,
-	}
-	feedbackHandler := feedback.NewHandler(feedbackConfig)
-
-	// Create referendum handler
-	referendumHandler := referendum.NewHandler(b.db, b.config)
-
-	// Store handlers
-	b.handlers = []interface{}{
-		feedbackHandler,
-		referendumHandler,
-	}
-
 	// Register Discord event handlers
 	b.session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		log.Printf("Logged in as: %v#%v", s.State.User.Username, s.State.User.Discriminator)
@@ -101,29 +71,19 @@ func (b *Bot) initHandlers() {
 
 	// Message create handler
 	b.session.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
-		// Ignore bot messages
 		if m.Author.ID == s.State.User.ID {
 			return
 		}
-
-		// Handle feedback command
-		if feedbackHandler != nil {
-			feedbackHandler.HandleMessage(s, m)
-		}
+		// TODO: Implement feedback command handling inline
 	})
 
-	// Thread create handler
+	// Thread create/update handlers
 	b.session.AddHandler(func(s *discordgo.Session, t *discordgo.ThreadCreate) {
-		if referendumHandler != nil {
-			referendumHandler.HandleThreadCreate(s, t)
-		}
+		// TODO: Implement thread mapping inline
 	})
 
-	// Thread update handler
 	b.session.AddHandler(func(s *discordgo.Session, t *discordgo.ThreadUpdate) {
-		if referendumHandler != nil {
-			referendumHandler.HandleThreadUpdate(s, t)
-		}
+		// TODO: Implement thread mapping inline
 	})
 }
 
@@ -143,21 +103,7 @@ func (b *Bot) Start() error {
 		data.IndexerService(ctx, b.db, 5*time.Minute, 4)
 	}()
 
-	// Start referendum sync service
-	go func() {
-		log.Println("Starting referendum sync service")
-		referendum.StartPeriodicSync(ctx, b.session, b.db, b.config, 10*time.Minute)
-	}()
-
-	// Start Polkassembly reply monitor if service is available
-	if b.polkassembly != nil {
-		go func() {
-			log.Println("Starting Polkassembly reply monitor")
-			polkassemblyLogger := log.New(os.Stdout, "[ReplyMonitor] ", log.LstdFlags)
-			replyMonitor := polkassembly.NewReplyMonitor(b.db, b.polkassembly, b.session, polkassemblyLogger)
-			replyMonitor.Start(ctx, 2*time.Minute)
-		}()
-	}
+	// TODO: Implement referendum sync and polkassembly monitoring inline if needed
 
 	return nil
 }
