@@ -1,6 +1,7 @@
 package gov
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -100,7 +101,17 @@ func (m *ReferendumManager) UpsertThreadMapping(networkID uint8, refID uint32, t
 
 	var ref Ref
 	if err := m.db.Where("network_id = ? AND ref_id = ?", networkID, refID).First(&ref).Error; err != nil {
-		return err
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			ref = Ref{
+				NetworkID: networkID,
+				RefID:     uint64(refID),
+			}
+			if createErr := m.db.Create(&ref).Error; createErr != nil {
+				return createErr
+			}
+		} else {
+			return err
+		}
 	}
 
 	thread := RefThread{

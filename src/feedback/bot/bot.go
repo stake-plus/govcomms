@@ -29,6 +29,8 @@ type Bot struct {
 	cancelFunc     context.CancelFunc
 }
 
+const feedbackEmbedColor = 0x5865F2
+
 func (b *Bot) ensureNetworkManager() error {
 	if b.networkManager != nil {
 		return nil
@@ -262,9 +264,52 @@ func (b *Bot) handleFeedbackSlash(s *discordgo.Session, i *discordgo.Interaction
 		}
 	}
 
-	response := fmt.Sprintf("✅ Thank you %s! Your feedback for %s referendum #%d has been recorded.",
+	b.postFeedbackMessage(s, i.ChannelID, network, &ref, authorTag, message)
+
+	response := fmt.Sprintf("✅ Thank you %s! Your feedback for %s referendum #%d has been posted.",
 		authorTag, network.Name, ref.RefID)
 	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &response})
+}
+
+func (b *Bot) postFeedbackMessage(s *discordgo.Session, threadID string, network *sharedgov.Network, ref *sharedgov.Ref, authorTag, message string) {
+	if network == nil || ref == nil {
+		return
+	}
+
+	const maxEmbedDescriptionLen = 4000
+	desc := message
+	if utf8.RuneCountInString(desc) > maxEmbedDescriptionLen {
+		runes := []rune(desc)
+		desc = string(runes[:maxEmbedDescriptionLen-1]) + "…"
+	}
+
+	embed := &discordgo.MessageEmbed{
+		Title:       fmt.Sprintf("Feedback for %s Referendum #%d", network.Name, ref.RefID),
+		Description: desc,
+		Color:       feedbackEmbedColor,
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: fmt.Sprintf("Submitted by %s", authorTag),
+		},
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	messageSend := &discordgo.MessageSend{Embeds: []*discordgo.MessageEmbed{embed}}
+
+	if utf8.RuneCountInString(message) > maxEmbedDescriptionLen {
+		messageSend.Files = []*discordgo.File{
+			{
+				Name:   fmt.Sprintf("feedback-%d.txt", ref.RefID),
+				Reader: strings.NewReader(message),
+			},
+		}
+		if embed.Footer != nil {
+			embed.Footer.Text += " • Full text attached"
+		}
+	}
+
+	if _, err := s.ChannelMessageSendComplex(threadID, messageSend); err != nil {
+		log.Printf("feedback: failed to post feedback message: %v", err)
+	}
 }
 
 func (b *Bot) ensureThreadMapping(channelID string) (*sharedgov.ThreadInfo, error) {
