@@ -47,12 +47,16 @@ func (c *claudeClient) AnswerQuestion(ctx context.Context, content string, quest
     req.Header.Set("Content-Type", "application/json")
     req.Header.Set("x-api-key", c.apiKey)
     req.Header.Set("anthropic-version", "2023-06-01")
-    resp, err := c.httpClient.Do(req)
-    if err != nil { return "", err }
-    defer resp.Body.Close()
-    body, err := io.ReadAll(resp.Body)
-    if err != nil { return "", err }
-    if resp.StatusCode != http.StatusOK { return "", fmt.Errorf("claude API error: %s", string(body)) }
+    _, body, err := httpx.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+        resp, err := c.httpClient.Do(req)
+        if err != nil { return 0, nil, err }
+        defer resp.Body.Close()
+        b, err := io.ReadAll(resp.Body)
+        if err != nil { return resp.StatusCode, nil, err }
+        if resp.StatusCode != http.StatusOK { return resp.StatusCode, b, fmt.Errorf("status %d", resp.StatusCode) }
+        return resp.StatusCode, b, nil
+    })
+    if err != nil { return "", fmt.Errorf("claude API error: %w", err) }
     var result struct { Content []struct { Text string `json:"text"` } `json:"content"` }
     if err := json.Unmarshal(body, &result); err != nil { return "", err }
     if len(result.Content) == 0 { return "", fmt.Errorf("no response from Claude") }
@@ -77,12 +81,16 @@ func (c *claudeClient) Respond(ctx context.Context, input string, tools []Tool, 
     req.Header.Set("Content-Type", "application/json")
     req.Header.Set("x-api-key", c.apiKey)
     req.Header.Set("anthropic-version", "2023-06-01")
-    resp, err := c.httpClient.Do(req)
-    if err != nil { return "", err }
-    defer resp.Body.Close()
-    body, err := io.ReadAll(resp.Body)
-    if err != nil { return "", err }
-    if resp.StatusCode != http.StatusOK { return "", fmt.Errorf("claude API error: %s", string(body)) }
+    _, body, err := httpx.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+        resp, err := c.httpClient.Do(req)
+        if err != nil { return 0, nil, err }
+        defer resp.Body.Close()
+        b, err := io.ReadAll(resp.Body)
+        if err != nil { return resp.StatusCode, nil, err }
+        if resp.StatusCode != http.StatusOK { return resp.StatusCode, b, fmt.Errorf("status %d", resp.StatusCode) }
+        return resp.StatusCode, b, nil
+    })
+    if err != nil { return "", fmt.Errorf("claude API error: %w", err) }
     var result struct { Content []struct { Text string `json:"text"` } `json:"content"` }
     if err := json.Unmarshal(body, &result); err != nil { return "", err }
     if len(result.Content) == 0 { return "", fmt.Errorf("no response from Claude") }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
@@ -85,34 +84,7 @@ func (b *Bot) initHandlers() {
 	})
 }
 
-// wrapURLsNoEmbed wraps all URLs in the text with angle brackets to prevent Discord embeds
-func wrapURLsNoEmbed(text string) string {
-	// Regular expression to find URLs
-	urlRegex := regexp.MustCompile(`https?://[^\s\[\]()<>]+`)
-
-	return urlRegex.ReplaceAllStringFunc(text, func(url string) string {
-		// Clean up trailing punctuation
-		url = strings.TrimRight(url, ".,;:!?)")
-		// If URL is already wrapped in angle brackets, don't double wrap
-		if strings.HasPrefix(url, "<") && strings.HasSuffix(url, ">") {
-			return url
-		}
-		return fmt.Sprintf("<%s>", url)
-	})
-}
-
-// formatURLsNoEmbed wraps URLs in angle brackets to prevent Discord embeds
-func formatURLsNoEmbed(urls []string) string {
-	if len(urls) == 0 {
-		return ""
-	}
-
-	var formatted []string
-	for _, url := range urls {
-		formatted = append(formatted, fmt.Sprintf("<%s>", url))
-	}
-	return strings.Join(formatted, " ")
-}
+// URL helpers centralized in shared/discord
 
 func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if b.config.ResearchRoleID != "" && !shareddiscord.HasRole(s, b.config.GuildID, m.Author.ID, b.config.ResearchRoleID) {
@@ -210,11 +182,11 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 				// Add source URLs if available (wrapped to prevent embeds)
 				if len(result.SourceURLs) > 0 {
-					updatedContent += fmt.Sprintf("\n📌 Sources: %s", formatURLsNoEmbed(result.SourceURLs))
+					updatedContent += fmt.Sprintf("\n📌 Sources: %s", shareddiscord.FormatURLsNoEmbed(result.SourceURLs))
 				}
 
 				// Wrap any URLs in the evidence text
-				updatedContent = wrapURLsNoEmbed(updatedContent)
+				updatedContent = shareddiscord.WrapURLsNoEmbed(updatedContent)
 
 				s.ChannelMessageEdit(m.ChannelID, msg.ID, updatedContent)
 			}
@@ -328,11 +300,11 @@ func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 				// Add verified URLs if available (wrapped to prevent embeds)
 				if len(result.VerifiedURLs) > 0 {
-					updatedContent += fmt.Sprintf("\n📌 Verified profiles: %s", formatURLsNoEmbed(result.VerifiedURLs))
+					updatedContent += fmt.Sprintf("\n📌 Verified profiles: %s", shareddiscord.FormatURLsNoEmbed(result.VerifiedURLs))
 				}
 
 				// Wrap any URLs in the entire message
-				updatedContent = wrapURLsNoEmbed(updatedContent)
+				updatedContent = shareddiscord.WrapURLsNoEmbed(updatedContent)
 
 				s.ChannelMessageEdit(m.ChannelID, msg.ID, updatedContent)
 			}

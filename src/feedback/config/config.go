@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/stake-plus/govcomms/src/feedback/data"
+    shareddata "github.com/stake-plus/govcomms/src/shared/data"
 	"gorm.io/gorm"
 )
 
@@ -55,23 +56,15 @@ func Load(db *gorm.DB) Config {
 		}
 	}
 
-	return Config{
+    return Config{
 		Token:                  discordToken,
 		FeedbackRoleID:         feedbackRoleID,
 		GuildID:                guildID,
-		MySQLDSN:               GetMySQLDSN(),
+        MySQLDSN:               shareddata.GetMySQLDSN(),
 		RedisURL:               getenv("REDIS_URL", "redis://127.0.0.1:6379/0"),
 		IndexerWorkers:         workers,
 		IndexerIntervalMinutes: intervalMinutes,
 	}
-}
-
-func GetMySQLDSN() string {
-	dsn := os.Getenv("MYSQL_DSN")
-	if dsn == "" {
-		dsn = "govcomms:DK3mfv93jf4m@tcp(127.0.0.1:3306)/govcomms"
-	}
-	return dsn
 }
 
 func getenv(key, def string) string {

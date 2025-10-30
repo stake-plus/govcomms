@@ -48,14 +48,16 @@ func (c *openAIClient) AnswerQuestion(ctx context.Context, content string, quest
     if err != nil { return "", err }
     req.Header.Set("Content-Type", "application/json")
     req.Header.Set("Authorization", "Bearer "+c.apiKey)
-    resp, err := c.httpClient.Do(req)
-    if err != nil { return "", err }
-    defer resp.Body.Close()
-    body, err := io.ReadAll(resp.Body)
-    if err != nil { return "", err }
-    if resp.StatusCode != http.StatusOK {
-        return "", fmt.Errorf("openAI API error: %s", string(body))
-    }
+    _, body, err := httpx.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+        resp, err := c.httpClient.Do(req)
+        if err != nil { return 0, nil, err }
+        defer resp.Body.Close()
+        b, err := io.ReadAll(resp.Body)
+        if err != nil { return resp.StatusCode, nil, err }
+        if resp.StatusCode != http.StatusOK { return resp.StatusCode, b, fmt.Errorf("status %d", resp.StatusCode) }
+        return resp.StatusCode, b, nil
+    })
+    if err != nil { return "", fmt.Errorf("openAI API error: %w", err) }
     var result struct {
         Choices []struct { Message struct{ Content string `json:"content"` } `json:"message"` } `json:"choices"`
     }
@@ -84,14 +86,16 @@ func (c *openAIClient) Respond(ctx context.Context, input string, tools []Tool, 
     if err != nil { return "", err }
     req.Header.Set("Content-Type", "application/json")
     req.Header.Set("Authorization", "Bearer "+c.apiKey)
-    resp, err := c.httpClient.Do(req)
-    if err != nil { return "", err }
-    defer resp.Body.Close()
-    body, err := io.ReadAll(resp.Body)
-    if err != nil { return "", err }
-    if resp.StatusCode != http.StatusOK {
-        return "", fmt.Errorf("openAI API error: %s", string(body))
-    }
+    _, body, err := httpx.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+        resp, err := c.httpClient.Do(req)
+        if err != nil { return 0, nil, err }
+        defer resp.Body.Close()
+        b, err := io.ReadAll(resp.Body)
+        if err != nil { return resp.StatusCode, nil, err }
+        if resp.StatusCode != http.StatusOK { return resp.StatusCode, b, fmt.Errorf("status %d", resp.StatusCode) }
+        return resp.StatusCode, b, nil
+    })
+    if err != nil { return "", fmt.Errorf("openAI API error: %w", err) }
     // Tolerate multiple shapes by extracting text fields
     var result struct { Output []struct { Content []struct { Text string `json:"text"` } `json:"content"` } `json:"output"` }
     if err := json.Unmarshal(body, &result); err == nil {
