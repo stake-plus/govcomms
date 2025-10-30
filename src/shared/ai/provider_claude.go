@@ -8,6 +8,8 @@ import (
     "io"
     "net/http"
     "time"
+
+    "github.com/stake-plus/govcomms/src/shared/httpx"
 )
 
 type claudeClient struct {
@@ -19,7 +21,7 @@ type claudeClient struct {
 func newClaudeClient(cfg FactoryConfig) *claudeClient {
     return &claudeClient{
         apiKey: cfg.ClaudeKey,
-        httpClient: &http.Client{Timeout: 60 * time.Second},
+        httpClient: httpx.NewDefault(60 * time.Second),
         defaults: Options{
             Model:        valueOrDefault(cfg.Model, "claude-3-haiku-20240307"),
             Temperature:  orFloat(cfg.Temperature, 0.2),

@@ -23,6 +23,6 @@ type VerificationResult struct {
 }
 
 type ClaimsResponse struct {
-	TotalClaims int     `json:"total_claims"`
-	TopClaims   []Claim `json:"top_claims"`
+    TotalClaims int     `json:"total_claims"`
+    TopClaims   []Claim `json:"top_claims"`
 }

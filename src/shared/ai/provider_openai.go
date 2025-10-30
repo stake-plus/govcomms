@@ -8,6 +8,8 @@ import (
     "io"
     "net/http"
     "time"
+
+    "github.com/stake-plus/govcomms/src/shared/httpx"
 )
 
 type openAIClient struct {
@@ -19,7 +21,7 @@ type openAIClient struct {
 func newOpenAIClient(cfg FactoryConfig) *openAIClient {
     return &openAIClient{
         apiKey: cfg.OpenAIKey,
-        httpClient: &http.Client{Timeout: 300 * time.Second},
+        httpClient: httpx.NewDefault(300 * time.Second),
         defaults: Options{
             Model:               valueOrDefault(cfg.Model, "gpt-5"),
             Temperature:         orFloat(cfg.Temperature, 1),

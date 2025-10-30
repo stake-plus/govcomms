@@ -9,17 +9,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stake-plus/govcomms/src/research-bot/components/openai"
+    sharedai "github.com/stake-plus/govcomms/src/shared/ai"
 )
 
-type Analyzer struct {
-	client *openai.Client
-}
+type Analyzer struct { client sharedai.Client }
 
 func NewAnalyzer(apiKey string) *Analyzer {
-	return &Analyzer{
-		client: openai.NewClient(apiKey),
-	}
+    return &Analyzer{ client: sharedai.NewClient(sharedai.FactoryConfig{ Provider: "openai", OpenAIKey: apiKey, Model: "gpt-5" }) }
 }
 
 func (a *Analyzer) ExtractTopClaims(ctx context.Context, proposalContent string) ([]Claim, int, error) {
@@ -82,12 +78,8 @@ Respond with JSON:
 Proposal:
 %s`, proposalContent)
 
-	response, err := a.client.CreateResponseNoSearch(ctx, prompt)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	responseText := response.GetText()
+    responseText, err := a.client.Respond(ctx, prompt, nil, sharedai.Options{ Model: "gpt-5" })
+    if err != nil { return nil, 0, err }
 	if responseText == "" {
 		return []Claim{}, 0, nil
 	}
@@ -149,8 +141,8 @@ STATUS: [Valid/Rejected/Unknown]
 EVIDENCE: [One sentence with specific details found]
 SOURCES: [Comma-separated list of primary URLs where you found evidence, or "No sources found"]`
 
-	response, err := a.client.CreateResponseWithWebSearchRetry(ctx, prompt)
-	if err != nil {
+    responseText, err := a.client.Respond(ctx, prompt, []sharedai.Tool{{Type: "web_search"}}, sharedai.Options{ Model: "gpt-5" })
+    if err != nil {
 		return VerificationResult{
 			Claim:      claim.Claim,
 			Status:     StatusUnknown,
@@ -159,15 +151,7 @@ SOURCES: [Comma-separated list of primary URLs where you found evidence, or "No 
 		}
 	}
 
-	responseText := response.GetText()
-	citations := response.GetCitations()
-
 	status, evidence, sourceURLs := a.parseVerificationResponse(responseText)
-
-	// Add citations if no source URLs were parsed
-	if len(sourceURLs) == 0 && len(citations) > 0 {
-		sourceURLs = citations
-	}
 
 	return VerificationResult{
 		Claim:      claim.Claim,

@@ -12,7 +12,9 @@ type Config struct {
 	Token          string
 	GuildID        string
 	MySQLDSN       string
-	OpenAIKey      string
+    OpenAIKey      string
+    AIModel        string
+    AIEnableWeb    bool
 	ResearchRoleID string
 	TempDir        string
 }
@@ -37,10 +39,14 @@ func Load(db *gorm.DB) Config {
 		researchRoleID = os.Getenv("RESEARCH_ROLE_ID")
 	}
 
-	openAIKey := data.GetSetting("openai_api_key")
+    openAIKey := data.GetSetting("openai_api_key")
 	if openAIKey == "" {
 		openAIKey = os.Getenv("OPENAI_API_KEY")
 	}
+
+    aiModel := data.GetSetting("ai_model")
+    if aiModel == "" { aiModel = "gpt-5" }
+    aiEnableWeb := data.GetSetting("ai_enable_web_search") == "1"
 
 	tempDir := data.GetSetting("qa_temp_dir")
 	if tempDir == "" {
@@ -52,6 +58,8 @@ func Load(db *gorm.DB) Config {
 		GuildID:        guildID,
 		MySQLDSN:       GetMySQLDSN(),
 		OpenAIKey:      openAIKey,
+        AIModel:        aiModel,
+        AIEnableWeb:    aiEnableWeb,
 		ResearchRoleID: researchRoleID,
 		TempDir:        tempDir,
 	}

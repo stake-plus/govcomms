@@ -9,18 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stake-plus/govcomms/src/research-bot/components/openai"
+    sharedai "github.com/stake-plus/govcomms/src/shared/ai"
 )
 
-type Analyzer struct {
-	client *openai.Client
-}
+type Analyzer struct { client sharedai.Client }
 
-func NewAnalyzer(apiKey string) *Analyzer {
-	return &Analyzer{
-		client: openai.NewClient(apiKey),
-	}
-}
+func NewAnalyzer(apiKey string) *Analyzer { return &Analyzer{ client: sharedai.NewClient(sharedai.FactoryConfig{ Provider: "openai", OpenAIKey: apiKey, Model: "gpt-5" }) } }
 
 func (a *Analyzer) ExtractTeamMembers(ctx context.Context, proposalContent string) ([]TeamMember, error) {
 	maxContentLength := 10000
@@ -58,12 +52,8 @@ Include empty arrays for missing profile types. Only include team members with a
 Proposal:
 %s`, proposalContent)
 
-	response, err := a.client.CreateResponseNoSearch(ctx, prompt)
-	if err != nil {
-		return nil, err
-	}
-
-	responseText := response.GetText()
+    responseText, err := a.client.Respond(ctx, prompt, nil, sharedai.Options{ Model: "gpt-5" })
+    if err != nil { return nil, err }
 	if responseText == "" {
 		return []TeamMember{}, nil
 	}
@@ -216,8 +206,8 @@ HAS_SKILLS: [true/false]
 CAPABILITY: [One detailed sentence about their verified experience and suitability]
 VERIFIED_URLS: [Comma-separated list of URLs that were successfully verified, or "None"]`
 
-	response, err := a.client.CreateResponseWithWebSearchRetry(ctx, prompt)
-	if err != nil {
+    responseText, err := a.client.Respond(ctx, prompt, []sharedai.Tool{{Type: "web_search"}}, sharedai.Options{ Model: "gpt-5" })
+    if err != nil {
 		return TeamAnalysisResult{
 			Name:            member.Name,
 			Role:            member.Role,
@@ -227,8 +217,6 @@ VERIFIED_URLS: [Comma-separated list of URLs that were successfully verified, or
 			VerifiedURLs:    []string{},
 		}
 	}
-
-	responseText := response.GetText()
 	if responseText == "" {
 		return TeamAnalysisResult{
 			Name:            member.Name,
