@@ -12,14 +12,14 @@ import (
 	"github.com/stake-plus/govcomms/src/feedback/components/feedback"
 	"github.com/stake-plus/govcomms/src/feedback/components/polkassembly"
 	"github.com/stake-plus/govcomms/src/feedback/components/referendum"
-	"github.com/stake-plus/govcomms/src/feedback/config"
 	"github.com/stake-plus/govcomms/src/feedback/data"
+	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
 	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
 	"gorm.io/gorm"
 )
 
 type Bot struct {
-	config       *config.Config
+	config       *sharedconfig.FeedbackConfig
 	db           *gorm.DB
 	redis        *redis.Client
 	session      *discordgo.Session
@@ -28,9 +28,9 @@ type Bot struct {
 	polkassembly *polkassembly.Service
 }
 
-func New(cfg *config.Config, db *gorm.DB, rdb *redis.Client) (*Bot, error) {
+func New(cfg *sharedconfig.FeedbackConfig, db *gorm.DB, rdb *redis.Client) (*Bot, error) {
 	// Create Discord session
-	session, err := discordgo.New("Bot " + cfg.Token)
+	session, err := discordgo.New("Bot " + cfg.Base.Token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Discord session: %w", err)
 	}
@@ -80,7 +80,7 @@ func (b *Bot) initHandlers() {
 		NetworkManager:      networkManager,
 		RefManager:          refManager,
 		FeedbackRoleID:      b.config.FeedbackRoleID,
-		GuildID:             b.config.GuildID,
+		GuildID:             b.config.Base.GuildID,
 		PolkassemblyService: b.polkassembly,
 	}
 	feedbackHandler := feedback.NewHandler(feedbackConfig)

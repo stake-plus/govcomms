@@ -22,7 +22,7 @@ build: govcomms
 
 govcomms:
 	$(MKDIR) bin
-	go build -o $(GOVCOMMS_BIN) ./cmd/govcomms
+	go build -o $(GOVCOMMS_BIN) ./src/cmd/govcomms
 
 clean:
 ifeq ($(OS),Windows_NT)
@@ -44,7 +44,7 @@ test:
 build-all: build-linux build-windows
 
 build-linux:
-	GOOS=linux GOARCH=amd64 go build -o bin/govcomms-linux ./cmd/govcomms
+	GOOS=linux GOARCH=amd64 go build -o bin/govcomms-linux ./src/cmd/govcomms
 
 build-windows:
-	GOOS=windows GOARCH=amd64 go build -o bin/govcomms.exe ./cmd/govcomms
+	GOOS=windows GOARCH=amd64 go build -o bin/govcomms.exe ./src/cmd/govcomms

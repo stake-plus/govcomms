@@ -1,40 +1,23 @@
-package types
+package gov
 
 import "time"
 
-// Networks
-type Network struct {
-	ID               uint8  `gorm:"primaryKey"`
-	Name             string `gorm:"size:32;unique;not null"`
-	Symbol           string `gorm:"size:8;not null"`
-	URL              string `gorm:"size:256;not null"`
-	DiscordChannelID string `gorm:"size:64"`
-}
-
-// Network RPC endpoints
+// NetworkRPC represents RPC endpoints for networks
 type NetworkRPC struct {
 	ID        uint32 `gorm:"primaryKey"`
 	NetworkID uint8
-	URL       string  `gorm:"size:256;not null"`
-	Active    bool    `gorm:"default:true"`
-	Network   Network `gorm:"foreignKey:NetworkID;references:ID"`
+	URL       string `gorm:"size:256;not null"`
+	Active    bool   `gorm:"default:true"`
 }
 
-// Settings
-type Setting struct {
-	ID     uint8  `gorm:"primaryKey"`
-	Name   string `gorm:"size:32;not null"`
-	Value  string `gorm:"size:256;not null"`
-	Active uint8  `gorm:"not null"`
-}
-
-// DAO members
+// DaoMember represents a DAO member
 type DaoMember struct {
 	Address string `gorm:"primaryKey;size:128"`
 	Discord string `gorm:"size:64"`
 	IsAdmin bool   `gorm:"default:false"`
 }
 
+// Ref represents a referendum/proposal
 type Ref struct {
 	ID                      uint64 `gorm:"primaryKey;autoIncrement"`
 	NetworkID               uint8  `gorm:"index:idx_proposal_network_ref,unique"`
@@ -62,7 +45,7 @@ type Ref struct {
 	PreimageLen             *uint32
 	DecisionDepositWho      *string
 	DecisionDepositAmount   *string
-	SubmissionDepositWho    *string
+	SubmissionDepositWho     *string
 	SubmissionDepositAmount *string
 	LastReplyCheck          *time.Time
 	Finalized               bool
@@ -70,29 +53,20 @@ type Ref struct {
 	UpdatedAt               time.Time
 }
 
-type RefThread struct {
-	ID        uint64 `gorm:"primaryKey;autoIncrement"`
-	ThreadID  string `gorm:"uniqueIndex"`
-	RefDBID   uint64 `gorm:"index"`
-	NetworkID uint8  `gorm:"index"`
-	RefID     uint64 `gorm:"index"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
+// RefMessage represents a message in a referendum thread
 type RefMessage struct {
-	ID                    uint64 `gorm:"primaryKey;autoIncrement"`
-	RefID                 uint64 `gorm:"index"`
-	Author                string
-	Body                  string `gorm:"type:text"`
-	CreatedAt             time.Time
-	Internal              bool `gorm:"default:false"`
+	ID                   uint64  `gorm:"primaryKey;autoIncrement"`
+	RefID                uint64  `gorm:"index"`
+	Author               string
+	Body                 string  `gorm:"type:text"`
+	CreatedAt            time.Time
+	Internal             bool    `gorm:"default:false"`
 	PolkassemblyUserID    *uint32
-	PolkassemblyUsername  string
-	PolkassemblyCommentID *string `gorm:"type:varchar(64)"` // Add this field
+	PolkassemblyUsername string
+	PolkassemblyCommentID *string `gorm:"type:varchar(64)"`
 }
 
-// Proposal participants
+// RefProponent represents a proposal participant
 type RefProponent struct {
 	RefID   uint64 `gorm:"primaryKey"`
 	Address string `gorm:"primaryKey;size:128"`
@@ -100,7 +74,7 @@ type RefProponent struct {
 	Active  int8   `gorm:"default:1"`
 }
 
-// DAO votes
+// DaoVote represents a DAO vote on a referendum
 type DaoVote struct {
 	ID          uint64 `gorm:"primaryKey"`
 	RefID       uint64 `gorm:"index;not null"`
@@ -108,3 +82,4 @@ type DaoVote struct {
 	Choice      int16  `gorm:"not null"`
 	CreatedAt   time.Time
 }
+

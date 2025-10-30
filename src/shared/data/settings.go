@@ -3,7 +3,7 @@ package data
 import (
 	"sync"
 
-	"github.com/stake-plus/govcomms/src/ai-qa/types"
+	"github.com/stake-plus/govcomms/src/shared/gov"
 	"gorm.io/gorm"
 )
 
@@ -12,8 +12,9 @@ var (
 	settingsMu    sync.RWMutex
 )
 
+// LoadSettings loads all settings from the database into cache
 func LoadSettings(db *gorm.DB) error {
-	var settings []types.Setting
+	var settings []gov.Setting
 	if err := db.Find(&settings).Error; err != nil {
 		return err
 	}
@@ -29,8 +30,10 @@ func LoadSettings(db *gorm.DB) error {
 	return nil
 }
 
+// GetSetting retrieves a setting value from cache (call LoadSettings first)
 func GetSetting(name string) string {
 	settingsMu.RLock()
 	defer settingsMu.RUnlock()
 	return settingsCache[name]
 }
+

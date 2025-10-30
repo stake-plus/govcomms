@@ -7,31 +7,28 @@ import (
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
-	aiold "github.com/stake-plus/govcomms/src/ai-qa/components/ai"
 	"github.com/stake-plus/govcomms/src/ai-qa/components/processor"
-	"github.com/stake-plus/govcomms/src/ai-qa/config"
 	sharedai "github.com/stake-plus/govcomms/src/shared/ai"
+	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
 	shareddiscord "github.com/stake-plus/govcomms/src/shared/discord"
 	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
 	"gorm.io/gorm"
 )
 
 type Bot struct {
-	config    *config.Config
-	db        *gorm.DB
-	session   *discordgo.Session
-	processor *processor.Processor
-	aiClient  interface {
-		AnswerQuestion(context.Context, string, string, sharedai.Options) (string, error)
-	}
+	config         *sharedconfig.QAConfig
+	db             *gorm.DB
+	session        *discordgo.Session
+	processor      *processor.Processor
+	aiClient       sharedai.Client
 	networkManager *sharedgov.NetworkManager
 	refManager     *sharedgov.ReferendumManager
 	contextManager *processor.ContextManager
 	cancelFunc     context.CancelFunc
 }
 
-func New(cfg *config.Config, db *gorm.DB) (*Bot, error) {
-	session, err := discordgo.New("Bot " + cfg.Token)
+func New(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Bot, error) {
+	session, err := discordgo.New("Bot " + cfg.Base.Token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Discord session: %w", err)
 	}
@@ -48,31 +45,18 @@ func New(cfg *config.Config, db *gorm.DB) (*Bot, error) {
 
 	refManager := sharedgov.NewReferendumManager(db)
 
-	// Prefer new shared AI client; fall back to old for safety
-	var aiClient interface {
-		AnswerQuestion(context.Context, string, string, sharedai.Options) (string, error)
+	// Create shared AI client
+	if cfg.AIConfig.OpenAIKey == "" && cfg.AIConfig.ClaudeKey == "" {
+		return nil, fmt.Errorf("no AI provider configured: set OPENAI_API_KEY or CLAUDE_API_KEY")
 	}
-	if cfg.OpenAIKey != "" || cfg.ClaudeKey != "" {
-		aiClient = sharedai.NewClient(sharedai.FactoryConfig{
-			Provider:     cfg.AIProvider,
-			OpenAIKey:    cfg.OpenAIKey,
-			ClaudeKey:    cfg.ClaudeKey,
-			SystemPrompt: cfg.AISystemPrompt,
-			Model:        cfg.AIModel,
-			Temperature:  0, // use defaults
-		})
-	} else {
-		// Backward fallback if keys are only in legacy paths
-		if cfg.AIProvider == "claude" && cfg.ClaudeKey != "" {
-			legacy := aiold.NewClaudeClient(cfg.ClaudeKey, cfg.AISystemPrompt)
-			aiClient = legacyAdapter{legacy}
-		} else if cfg.OpenAIKey != "" {
-			legacy := aiold.NewOpenAIClient(cfg.OpenAIKey, cfg.AISystemPrompt)
-			aiClient = legacyAdapter{legacy}
-		} else {
-			return nil, fmt.Errorf("no AI provider configured")
-		}
-	}
+	aiClient := sharedai.NewClient(sharedai.FactoryConfig{
+		Provider:     cfg.AIConfig.AIProvider,
+		OpenAIKey:    cfg.AIConfig.OpenAIKey,
+		ClaudeKey:    cfg.AIConfig.ClaudeKey,
+		SystemPrompt: cfg.AIConfig.AISystemPrompt,
+		Model:        cfg.AIConfig.AIModel,
+		Temperature:  0, // use defaults
+	})
 
 	proc := processor.NewProcessor(cfg.TempDir, db)
 	contextMgr := processor.NewContextManager(db)
@@ -158,7 +142,7 @@ func (b *Bot) handleQuestion(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	var answer string
 
-	if b.config.AIEnableWeb {
+	if b.config.AIConfig.AIEnableWeb {
 		// Use web search tools via shared client when enabled
 		client, ok := b.aiClient.(interface {
 			Respond(context.Context, string, []sharedai.Tool, sharedai.Options) (string, error)

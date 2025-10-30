@@ -22,3 +22,10 @@ type RefThread struct {
 	UpdatedAt time.Time
 }
 
+// Setting represents a configuration setting stored in the database
+type Setting struct {
+	ID     uint8  `gorm:"primaryKey"`
+	Name   string `gorm:"size:32;not null"`
+	Value  string `gorm:"type:text;not null"`
+	Active uint8  `gorm:"not null"`
+}

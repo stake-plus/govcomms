@@ -11,7 +11,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/research-bot/components/claims"
 	"github.com/stake-plus/govcomms/src/research-bot/components/teams"
-	"github.com/stake-plus/govcomms/src/research-bot/config"
+	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
 	shareddiscord "github.com/stake-plus/govcomms/src/shared/discord"
 	sharedfsx "github.com/stake-plus/govcomms/src/shared/fsx"
 	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
@@ -19,7 +19,7 @@ import (
 )
 
 type Bot struct {
-	config         *config.Config
+	config         *sharedconfig.ResearchConfig
 	db             *gorm.DB
 	session        *discordgo.Session
 	networkManager *sharedgov.NetworkManager
@@ -29,8 +29,8 @@ type Bot struct {
 	cancelFunc     context.CancelFunc
 }
 
-func New(cfg *config.Config, db *gorm.DB) (*Bot, error) {
-	session, err := discordgo.New("Bot " + cfg.Token)
+func New(cfg *sharedconfig.ResearchConfig, db *gorm.DB) (*Bot, error) {
+	session, err := discordgo.New("Bot " + cfg.Base.Token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Discord session: %w", err)
 	}

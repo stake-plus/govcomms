@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/stake-plus/govcomms/src/feedback/types"
 	polkadot "github.com/stake-plus/govcomms/src/polkadot-go"
+	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
 	"gorm.io/gorm"
 )
 
@@ -32,7 +32,7 @@ type MultiNetworkIndexer struct {
 }
 
 func NewNetworkIndexer(networkID uint8, networkName string, db *gorm.DB, workers int) (*NetworkIndexer, error) {
-	var rpc types.NetworkRPC
+	var rpc sharedgov.NetworkRPC
 	err := db.Where("network_id = ? AND active = ?", networkID, true).First(&rpc).Error
 	if err != nil {
 		return nil, fmt.Errorf("no active RPC for network %d: %w", networkID, err)
@@ -62,7 +62,7 @@ func NewMultiNetworkIndexer(db *gorm.DB, workers int) *MultiNetworkIndexer {
 }
 
 func (mni *MultiNetworkIndexer) StartAll(ctx context.Context, interval time.Duration, workers int) error {
-	var networks []types.Network
+	var networks []sharedgov.Network
 	if err := mni.db.Find(&networks).Error; err != nil {
 		return fmt.Errorf("failed to load networks: %w", err)
 	}
@@ -147,7 +147,7 @@ func (ni *NetworkIndexer) indexOnce(ctx context.Context) {
 
 	log.Printf("%s indexer: Chain has %d total referenda", ni.networkName, refCount)
 
-	var ongoingRefs []types.Ref
+	var ongoingRefs []sharedgov.Ref
 	ni.db.Where("network_id = ? AND finalized = ?", ni.networkID, false).Find(&ongoingRefs)
 	log.Printf("%s indexer: Found %d ongoing referenda in database", ni.networkName, len(ongoingRefs))
 
@@ -183,7 +183,7 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 	refInfo, err := ni.client.GetReferendumInfo(uint32(refID))
 
 	// Check if referendum exists in database
-	var ref types.Ref
+	var ref sharedgov.Ref
 	dbErr := ni.db.Where("network_id = ? AND ref_id = ?", ni.networkID, refID).First(&ref).Error
 
 	if err != nil {
@@ -208,7 +208,7 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 		// If we don't have it in DB, create a minimal record
 		if dbErr == gorm.ErrRecordNotFound {
 			unknownStatus := "Unknown"
-			ref = types.Ref{
+			ref = sharedgov.Ref{
 				NetworkID: ni.networkID,
 				RefID:     refID,
 				Submitter: "Unknown",
@@ -232,7 +232,7 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 	// Successfully decoded referendum
 	if dbErr == gorm.ErrRecordNotFound {
 		// Create new referendum
-		ref = types.Ref{
+		ref = sharedgov.Ref{
 			NetworkID: ni.networkID,
 			RefID:     refID,
 			Submitter: refInfo.Submission.Who,
