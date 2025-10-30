@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // ThreadInfo contains referendum thread information
@@ -90,3 +92,27 @@ func ParseRefIDFromTitle(title string) (uint32, error) {
 	return uint32(refNum), nil
 }
 
+// UpsertThreadMapping links a Discord thread to a referendum record.
+func (m *ReferendumManager) UpsertThreadMapping(networkID uint8, refID uint32, threadID string) error {
+	if threadID == "" {
+		return fmt.Errorf("threadID cannot be empty")
+	}
+
+	var ref Ref
+	if err := m.db.Where("network_id = ? AND ref_id = ?", networkID, refID).First(&ref).Error; err != nil {
+		return err
+	}
+
+	thread := RefThread{
+		ThreadID:  threadID,
+		RefDBID:   ref.ID,
+		NetworkID: networkID,
+		RefID:     ref.RefID,
+		UpdatedAt: time.Now(),
+	}
+
+	return m.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "thread_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"ref_db_id", "network_id", "ref_id", "updated_at"}),
+	}).Create(&thread).Error
+}

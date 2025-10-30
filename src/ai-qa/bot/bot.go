@@ -79,54 +79,97 @@ func New(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Bot, error) {
 func (b *Bot) initHandlers() {
 	b.session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		log.Printf("AI Q&A Bot logged in as: %v#%v", s.State.User.Username, s.State.User.Discriminator)
+		// Register slash commands scoped to the Q&A bot
+		if err := shareddiscord.RegisterSlashCommands(s, b.config.Base.GuildID,
+			shareddiscord.CommandQuestion,
+			shareddiscord.CommandRefresh,
+			shareddiscord.CommandContext,
+		); err != nil {
+			log.Printf("Failed to register slash commands: %v", err)
+		} else {
+			log.Println("Slash commands registered")
+		}
 	})
 
-	b.session.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
-		if m.Author.ID == s.State.User.ID {
-			return
-		}
-
-		content := strings.TrimSpace(m.Content)
-
-		if strings.HasPrefix(content, shareddiscord.CmdQuestion) {
-			b.handleQuestion(s, m)
-		} else if content == shareddiscord.CmdRefresh {
-			b.handleRefresh(s, m)
-		} else if content == shareddiscord.CmdContext {
-			b.handleShowContext(s, m)
+	// Handle slash command interactions
+	b.session.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		if i.ApplicationCommandData().Name == "question" {
+			b.handleQuestionSlash(s, i)
+		} else if i.ApplicationCommandData().Name == "refresh" {
+			b.handleRefreshSlash(s, i)
+		} else if i.ApplicationCommandData().Name == "context" {
+			b.handleContextSlash(s, i)
 		}
 	})
 }
 
-func (b *Bot) handleQuestion(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if b.config.QARoleID != "" && !shareddiscord.HasRole(s, b.config.GuildID, m.Author.ID, b.config.QARoleID) {
+func (b *Bot) handleQuestionSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	// Check role permissions first
+	if b.config.QARoleID != "" && !shareddiscord.HasRole(s, b.config.Base.GuildID, i.Member.User.ID, b.config.QARoleID) {
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "You don't have permission to use this command.",
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
 		return
 	}
 
-	question := strings.TrimPrefix(m.Content, shareddiscord.CmdQuestion)
+	// Respond immediately to acknowledge the interaction
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+	})
+	if err != nil {
+		log.Printf("Failed to acknowledge interaction: %v", err)
+		return
+	}
+
+	// Extract question from options
+	data := i.ApplicationCommandData()
+	var question string
+	for _, opt := range data.Options {
+		if opt.Name == "question" {
+			question = opt.StringValue()
+			break
+		}
+	}
+
 	if len(question) < 5 {
-		s.ChannelMessageSend(m.ChannelID, "Please provide a valid question.")
+		msg := "Please provide a valid question (at least 5 characters)."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
 		return
 	}
 
-	s.ChannelTyping(m.ChannelID)
+	channelID := i.ChannelID
 
-	threadInfo, err := b.refManager.FindThread(m.ChannelID)
+	threadInfo, err := b.refManager.FindThread(channelID)
 	if err != nil || threadInfo == nil {
-		s.ChannelMessageSend(m.ChannelID, "This command must be used in a referendum thread.")
+		msg := "This command must be used in a referendum thread."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
 		return
 	}
 
 	network := b.networkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
-		s.ChannelMessageSend(m.ChannelID, "Failed to identify network.")
+		msg := "Failed to identify network."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
 		return
 	}
 
 	content, err := b.processor.GetProposalContent(network.Name, uint32(threadInfo.RefID))
 	if err != nil {
 		log.Printf("Error getting proposal content: %v", err)
-		s.ChannelMessageSend(m.ChannelID, "Failed to retrieve proposal content. Please try !refresh first.")
+		msg := "Failed to retrieve proposal content. Please try /refresh first."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
 		return
 	}
 
@@ -165,38 +208,76 @@ func (b *Bot) handleQuestion(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}
 	if err != nil {
 		log.Printf("Error getting AI response: %v", err)
-		s.ChannelMessageSend(m.ChannelID, "Failed to generate answer. Please try again.")
+		msg := "Failed to generate answer. Please try again."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
 		return
 	}
 
 	// Save Q&A to history
-	err = b.contextManager.SaveQA(threadInfo.NetworkID, uint32(threadInfo.RefID), m.ChannelID, m.Author.ID, question, answer)
+	err = b.contextManager.SaveQA(threadInfo.NetworkID, uint32(threadInfo.RefID), channelID, i.Member.User.ID, question, answer)
 	if err != nil {
 		log.Printf("Error saving Q&A history: %v", err)
 	}
 
-	b.sendLongMessage(s, m.ChannelID, m.Author.ID, answer)
+	b.sendLongMessageSlash(s, i.Interaction, answer)
 }
 
-func (b *Bot) handleShowContext(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if b.config.QARoleID != "" && !shareddiscord.HasRole(s, b.config.GuildID, m.Author.ID, b.config.QARoleID) {
+func (b *Bot) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.Interaction, message string) {
+	msgs := shareddiscord.BuildLongMessages(message, "")
+	if len(msgs) > 0 {
+		// Edit the deferred response with the first chunk
+		s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{
+			Content: &msgs[0],
+		})
+		// Send additional chunks as regular messages
+		for idx := 1; idx < len(msgs); idx++ {
+			s.ChannelMessageSend(interaction.ChannelID, msgs[idx])
+		}
+	}
+}
+
+func (b *Bot) handleContextSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+	})
+	if err != nil {
+		log.Printf("Failed to acknowledge interaction: %v", err)
 		return
 	}
 
-	threadInfo, err := b.refManager.FindThread(m.ChannelID)
+	if b.config.QARoleID != "" && !shareddiscord.HasRole(s, b.config.Base.GuildID, i.Member.User.ID, b.config.QARoleID) {
+		msg := "You don't have permission to use this command."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
+		return
+	}
+
+	threadInfo, err := b.refManager.FindThread(i.ChannelID)
 	if err != nil || threadInfo == nil {
-		s.ChannelMessageSend(m.ChannelID, "This command must be used in a referendum thread.")
+		msg := "This command must be used in a referendum thread."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
 		return
 	}
 
 	qas, err := b.contextManager.GetRecentQAs(threadInfo.NetworkID, uint32(threadInfo.RefID), 10)
 	if err != nil {
-		s.ChannelMessageSend(m.ChannelID, "Failed to retrieve context.")
+		msg := "Failed to retrieve context."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
 		return
 	}
 
 	if len(qas) == 0 {
-		s.ChannelMessageSend(m.ChannelID, "No previous Q&A found for this referendum.")
+		msg := "No previous Q&A found for this referendum."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
 		return
 	}
 
@@ -218,7 +299,65 @@ func (b *Bot) handleShowContext(s *discordgo.Session, m *discordgo.MessageCreate
 		}
 	}
 
-	s.ChannelMessageSend(m.ChannelID, response.String())
+	content := response.String()
+	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		Content: &content,
+	})
+}
+
+func (b *Bot) handleRefreshSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	// Check role permissions first
+	if b.config.QARoleID != "" && !shareddiscord.HasRole(s, b.config.Base.GuildID, i.Member.User.ID, b.config.QARoleID) {
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "You don't have permission to use this command.",
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
+
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+	})
+	if err != nil {
+		log.Printf("Failed to acknowledge interaction: %v", err)
+		return
+	}
+
+	threadInfo, err := b.refManager.FindThread(i.ChannelID)
+	if err != nil || threadInfo == nil {
+		msg := "This command must be used in a referendum thread."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
+		return
+	}
+
+	network := b.networkManager.GetByID(threadInfo.NetworkID)
+	if network == nil {
+		msg := "Failed to identify network."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
+		return
+	}
+
+	err = b.processor.RefreshProposal(network.Name, uint32(threadInfo.RefID))
+	if err != nil {
+		log.Printf("Error refreshing proposal: %v", err)
+		msg := "Failed to refresh proposal content."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
+		return
+	}
+
+	msg := fmt.Sprintf("✅ Refreshed content for %s referendum #%d", network.Name, threadInfo.RefID)
+	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		Content: &msg,
+	})
 }
 
 func (b *Bot) sendLongMessage(s *discordgo.Session, channelID string, userID string, message string) {
@@ -229,35 +368,6 @@ func (b *Bot) sendLongMessage(s *discordgo.Session, channelID string, userID str
 		}
 		s.ChannelMessageSend(channelID, msg)
 	}
-}
-
-func (b *Bot) handleRefresh(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if b.config.QARoleID != "" && !shareddiscord.HasRole(s, b.config.GuildID, m.Author.ID, b.config.QARoleID) {
-		return
-	}
-
-	s.ChannelTyping(m.ChannelID)
-
-	threadInfo, err := b.refManager.FindThread(m.ChannelID)
-	if err != nil || threadInfo == nil {
-		s.ChannelMessageSend(m.ChannelID, "This command must be used in a referendum thread.")
-		return
-	}
-
-	network := b.networkManager.GetByID(threadInfo.NetworkID)
-	if network == nil {
-		s.ChannelMessageSend(m.ChannelID, "Failed to identify network.")
-		return
-	}
-
-	err = b.processor.RefreshProposal(network.Name, uint32(threadInfo.RefID))
-	if err != nil {
-		log.Printf("Error refreshing proposal: %v", err)
-		s.ChannelMessageSend(m.ChannelID, "Failed to refresh proposal content.")
-		return
-	}
-
-	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("✅ Refreshed content for %s referendum #%d", network.Name, threadInfo.RefID))
 }
 
 // role check centralized in shared/discord

@@ -67,18 +67,21 @@ func New(cfg *sharedconfig.ResearchConfig, db *gorm.DB) (*Bot, error) {
 func (b *Bot) initHandlers() {
 	b.session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		log.Printf("Research Bot logged in as: %v#%v", s.State.User.Username, s.State.User.Discriminator)
+		// Register only the research-specific slash commands
+		if err := shareddiscord.RegisterSlashCommands(s, b.config.Base.GuildID,
+			shareddiscord.CommandResearch,
+			shareddiscord.CommandTeam,
+		); err != nil {
+			log.Printf("Failed to register slash commands: %v", err)
+		}
 	})
 
-	b.session.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
-		if m.Author.ID == s.State.User.ID {
-			return
-		}
-
-		content := strings.TrimSpace(m.Content)
-		if strings.HasPrefix(content, shareddiscord.CmdResearch) {
-			b.handleResearch(s, m)
-		} else if strings.HasPrefix(content, shareddiscord.CmdTeam) {
-			b.handleTeam(s, m)
+	// Handle slash command interactions
+	b.session.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		if i.ApplicationCommandData().Name == "research" {
+			b.handleResearchSlash(s, i)
+		} else if i.ApplicationCommandData().Name == "team" {
+			b.handleTeamSlash(s, i)
 		}
 	})
 }
@@ -198,8 +201,262 @@ func (b *Bot) handleResearch(s *discordgo.Session, m *discordgo.MessageCreate) {
 	}()
 }
 
+func (b *Bot) handleResearchSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	// Check role permissions first
+	if b.config.ResearchRoleID != "" && !shareddiscord.HasRole(s, b.config.Base.GuildID, i.Member.User.ID, b.config.ResearchRoleID) {
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "You don't have permission to use this command.",
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
+
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+	})
+	if err != nil {
+		log.Printf("Failed to acknowledge interaction: %v", err)
+		return
+	}
+
+	threadInfo, err := b.refManager.FindThread(i.ChannelID)
+	if err != nil || threadInfo == nil {
+		msg := "This command must be used in a referendum thread."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
+		return
+	}
+
+	network := b.networkManager.GetByID(threadInfo.NetworkID)
+	if network == nil {
+		msg := "Failed to identify network."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		proposalContent, err := b.getProposalContent(network.Name, uint32(threadInfo.RefID))
+		if err != nil {
+			msg := "Proposal content not found. Please run /refresh first."
+			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: &msg,
+			})
+			return
+		}
+
+		topClaims, totalClaims, err := b.claimsAnalyzer.ExtractTopClaims(ctx, proposalContent)
+		if err != nil {
+			msg := fmt.Sprintf("Error extracting claims: %v", err)
+			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: &msg,
+			})
+			return
+		}
+
+		if len(topClaims) == 0 {
+			msg := "No verifiable historical claims found in the proposal."
+			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: &msg,
+			})
+			return
+		}
+
+		// Send header message as the interaction response
+		headerMsg := fmt.Sprintf("🔍 **Verifying Historical Claims for %s Referendum #%d**\n", network.Name, threadInfo.RefID)
+		headerMsg += fmt.Sprintf("Found %d total historical claims, verifying top %d most important:\n", totalClaims, len(topClaims))
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &headerMsg,
+		})
+
+		// Send claim messages as regular channel messages
+		claimMessages := make(map[int]*discordgo.Message)
+		for idx, claim := range topClaims {
+			msgContent := fmt.Sprintf("**Claim %d:** %s\n⏳ *Verifying...*", idx+1, claim.Claim)
+			msg, err := s.ChannelMessageSend(i.ChannelID, msgContent)
+			if err == nil {
+				claimMessages[idx] = msg
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		results, err := b.claimsAnalyzer.VerifyClaims(ctx, topClaims)
+		if err != nil && err != context.DeadlineExceeded {
+			log.Printf("Error during verification: %v", err)
+		}
+
+		validCount := 0
+		rejectedCount := 0
+		unknownCount := 0
+
+		for idx, result := range results {
+			statusEmoji := "❓"
+			switch result.Status {
+			case claims.StatusValid:
+				statusEmoji = "✅"
+				validCount++
+			case claims.StatusRejected:
+				statusEmoji = "❌"
+				rejectedCount++
+			case claims.StatusUnknown:
+				statusEmoji = "❓"
+				unknownCount++
+			}
+
+			if msg, exists := claimMessages[idx]; exists {
+				updatedContent := fmt.Sprintf("**Claim %d:** %s\n%s **%s** - %s",
+					idx+1,
+					topClaims[idx].Claim,
+					statusEmoji,
+					result.Status,
+					result.Evidence)
+
+				if len(result.SourceURLs) > 0 {
+					updatedContent += fmt.Sprintf("\n📌 Sources: %s", shareddiscord.FormatURLsNoEmbed(result.SourceURLs))
+				}
+
+				updatedContent = shareddiscord.WrapURLsNoEmbed(updatedContent)
+				s.ChannelMessageEdit(i.ChannelID, msg.ID, updatedContent)
+			}
+		}
+
+		summaryMsg := fmt.Sprintf("\n📊 **Verification Complete**\n✅ Valid: %d | ❌ Rejected: %d | ❓ Unknown: %d",
+			validCount, rejectedCount, unknownCount)
+		s.ChannelMessageSend(i.ChannelID, summaryMsg)
+	}()
+}
+
+func (b *Bot) handleTeamSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	// Check role permissions first
+	if b.config.ResearchRoleID != "" && !shareddiscord.HasRole(s, b.config.Base.GuildID, i.Member.User.ID, b.config.ResearchRoleID) {
+		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "You don't have permission to use this command.",
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
+
+	err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+	})
+	if err != nil {
+		log.Printf("Failed to acknowledge interaction: %v", err)
+		return
+	}
+
+	threadInfo, err := b.refManager.FindThread(i.ChannelID)
+	if err != nil || threadInfo == nil {
+		msg := "This command must be used in a referendum thread."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
+		return
+	}
+
+	network := b.networkManager.GetByID(threadInfo.NetworkID)
+	if network == nil {
+		msg := "Failed to identify network."
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+			Content: &msg,
+		})
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		proposalContent, err := b.getProposalContent(network.Name, uint32(threadInfo.RefID))
+		if err != nil {
+			msg := "Proposal content not found. Please run /refresh first."
+			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: &msg,
+			})
+			return
+		}
+
+		members, err := b.teamsAnalyzer.ExtractTeamMembers(ctx, proposalContent)
+		if err != nil {
+			msg := fmt.Sprintf("Error extracting team members: %v", err)
+			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: &msg,
+			})
+			return
+		}
+
+		if len(members) == 0 {
+			msg := "No team members found in the proposal."
+			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: &msg,
+			})
+			return
+		}
+
+		// Analyze all members (returns TeamAnalysisResult slice)
+		results, err := b.teamsAnalyzer.AnalyzeTeamMembers(ctx, members)
+		if err != nil {
+			msg := fmt.Sprintf("Error analyzing team members: %v", err)
+			s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+				Content: &msg,
+			})
+			return
+		}
+
+		// Send initial placeholder messages
+		claimMessages := make(map[int]*discordgo.Message)
+		for idx := range members {
+			msgContent := fmt.Sprintf("**Member %d:** %s\n⏳ *Analyzing...*", idx+1, members[idx].Name)
+			msg, err := s.ChannelMessageSend(i.ChannelID, msgContent)
+			if err == nil {
+				claimMessages[idx] = msg
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		// Update messages with results
+		for idx, result := range results {
+			if msg, exists := claimMessages[idx]; exists {
+				updatedContent := fmt.Sprintf("**Member %d:** %s\n", idx+1, result.Name)
+				if result.Role != "" {
+					updatedContent += fmt.Sprintf("**Role:** %s\n", result.Role)
+				}
+				if result.Capability != "" {
+					updatedContent += fmt.Sprintf("**Assessment:** %s\n", result.Capability)
+				}
+				if len(result.VerifiedURLs) > 0 {
+					updatedContent += fmt.Sprintf("**Verified URLs:** %s\n", strings.Join(result.VerifiedURLs, ", "))
+				}
+				if result.IsReal {
+					updatedContent += "✅ **Verified Real Person**\n"
+				} else {
+					updatedContent += "❓ **Verification Failed**\n"
+				}
+				if result.HasStatedSkills {
+					updatedContent += "✅ **Has Stated Skills**\n"
+				}
+
+				s.ChannelMessageEdit(i.ChannelID, msg.ID, updatedContent)
+			}
+		}
+
+		summaryMsg := "\n📊 **Team Analysis Complete**\n"
+		s.ChannelMessageSend(i.ChannelID, summaryMsg)
+	}()
+}
+
 func (b *Bot) handleTeam(s *discordgo.Session, m *discordgo.MessageCreate) {
-	if b.config.ResearchRoleID != "" && !shareddiscord.HasRole(s, b.config.GuildID, m.Author.ID, b.config.ResearchRoleID) {
+	if b.config.ResearchRoleID != "" && !shareddiscord.HasRole(s, b.config.Base.GuildID, m.Author.ID, b.config.ResearchRoleID) {
 		s.ChannelMessageSend(m.ChannelID, "You don't have permission to use this command.")
 		return
 	}
