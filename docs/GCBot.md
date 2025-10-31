@@ -1,321 +1,91 @@
-# GCBot - GovComms Discord Bot
+# Discord Modules
 
-## Overview
+This repository currently exposes three Discord-facing modules that all run inside the `govcomms` binary. Each module registers its own slash commands when the bot logs in and shares the same connection, database handle, and (optionally) Redis client.
 
-GCBot is the Discord integration component of the GovComms platform. It manages the feedback command system, relays messages between the web platform and Discord, and handles the initial Polkassembly posting. The bot ensures seamless communication flow between referendum proponents and DAO members.
+## Module Summary
 
-## Features
+| Module | Commands | Purpose |
+| --- | --- | --- |
+| AI Q&A | `/question`, `/refresh`, `/context` | Surfaced proposal content and prior Q&A history on demand. |
+| Research | `/research`, `/team` | Generates deeper AI-assisted summaries about claims and teams. |
+| Feedback | `/feedback` | Accepts written feedback inside referendum threads and posts an in-thread embed. |
 
-- **Feedback Command**: `!feedback` command for DAO members to submit feedback
-- **Message Relay**: Automatically posts web platform messages to Discord threads
-- **Thread Management**: Tracks and manages referendum discussion threads
-- **Polkassembly Integration**: Posts first feedback to Polkassembly
-- **Multi-Network Support**: Handles both Polkadot and Kusama networks
-- **Rate Limiting**: Prevents spam and abuse
+All commands must be invoked from an existing referendum thread that the bot can map back to a `shared.gov.Ref` record.
 
-## Architecture
+## Slash Commands
 
-### Components
+### `/question`
+- **Module**: AI Q&A
+- **Options**: `question` (string)
+- **Role requirement**: `qa_role_id`
+- **Flow**:
+  1. Validates the command is executed inside a mapped referendum thread.
+  2. Fetches cached proposal content (refreshing from Polkassembly if necessary).
+  3. Calls the shared AI provider (`shared/ai`) to produce an answer.
+  4. Stores the question/answer pair in MySQL and replies in-thread.
 
-1. **Bot Core**: Discord.js wrapper managing connection and events
-2. **Feedback Handler**: Processes !feedback commands
-3. **Message Monitor**: Polls for new messages from the API
-4. **Thread Manager**: Maps Discord threads to referenda
-5. **Network Manager**: Handles multi-network configuration
-6. **Polkassembly Service**: Posts feedback to Polkassembly
+### `/refresh`
+- Rebuilds cached proposal content from Polkassembly.
+- Same role requirements and thread validation as `/question`.
 
-### Message Flow
+### `/context`
+- Displays the most recent Q&A entries for the referendum.
 
-1. DAO member uses `!feedback` in referendum thread
-2. Bot validates permissions and thread context
-3. Message stored in database via API
-4. If first message, posted to Polkassembly
-5. Proponent receives notification on web platform
-6. Proponent responds via web interface
-7. Bot posts response back to Discord thread
+### `/research`
+- **Module**: Research bot
+- **Role requirement**: `research_role_id`
+- Generates claim verification results asynchronously, posts progress messages per claim, and edits them with results.
 
-## Commands
+### `/team`
+- Runs an AI-assisted team analysis, posting interim messages per team member before editing them with the final summary.
 
-### !feedback
+### `/feedback`
+- **Module**: Feedback bot
+- **Role requirement**: `feedback_role_id`
+- Ensures the thread can be mapped to a `Ref` record, persists the message, publishes a Redis event (type `feedback_submitted`), and posts a Discord embed summarising the submission. Long messages include a `.txt` attachment.
 
-Submit feedback for a referendum.
+## Configuration Checklist
 
-**Usage:**
-    !feedback Your detailed feedback message here
+1. **Database & Redis**
+   - A MySQL DSN is required for all modules. The feedback module additionally needs Redis when enabled (`REDIS_URL`).
+   - `shared/config/services.go` outlines every field loaded from the database or environment.
 
-**Requirements:**
-- Must have feedback role
-- Must be used in a referendum thread
-- Message must be 10-5000 characters
-- Rate limited to once per 30 seconds
+2. **Discord Setup**
+   - The bot requires the following gateway intents: Guilds, Guild Messages, Message Content.
+   - Permissions: Read/Send Messages, Embed Links, Manage Threads, Read Message History.
+   - Slash commands are registered per guild. Ensure `guild_id` (or `GUILD_ID`) is set correctly.
 
-**Example:**
-    !feedback The treasury amount seems high for the deliverables. 
-    Could you provide a breakdown of how the funds will be allocated?
+3. **Role IDs**
+   - Store role IDs in the `settings` table (`qa_role_id`, `research_role_id`, `feedback_role_id`) or export the equivalent environment variables.
 
-## Configuration
+4. **AI Providers**
+   - Provide either `openai_api_key` (`OPENAI_API_KEY`) or `claude_api_key` (`CLAUDE_API_KEY`).
+   - Set `ai_provider` / `AI_PROVIDER` if you wish to force a specific provider, and optionally override `ai_model`.
 
-### Environment Variables
+5. **Flags**
+   - Start the binary with `--enable-qa`, `--enable-research`, and/or `--enable-feedback` depending on which modules you want to run.
 
-    # Database
-    MYSQL_DSN=user:pass@tcp(host:port)/database
+## Known Limitations
 
-    # Cache
-    REDIS_URL=redis://host:port/db
+- There is no web UI or REST API in this repository; earlier documentation referenced modules that no longer exist.
+- The feedback module does not yet relay web-originated replies back into Discord or post the first comment to Polkassembly; only inbound feedback from Discord is handled.
+- Rate limiting and moderation policies still need to be reintroduced.
 
-    # Discord
-    DISCORD_TOKEN=your-bot-token
-    FEEDBACK_ROLE_ID=role-id-for-feedback
-    GUILD_ID=your-discord-guild-id
+## Observability
 
-    # Polkassembly (optional)
-    POLKASSEMBLY_SEED="twelve word mnemonic seed phrase"
-    # Or network-specific:
-    POLKASSEMBLY_POLKADOT_SEED="polkadot specific seed"
-    POLKASSEMBLY_KUSAMA_SEED="kusama specific seed"
+- Each module logs a startup message when it successfully registers slash commands.
+- Feedback embeds use a consistent colour (`0x5865F2`) and include the Discord user tag in the footer.
+- Redis publishes messages on the `govcomms.messages` stream. Downstream workers are expected to consume and dispatch those events.
 
-### Database Configuration
+## Updating Thread Mappings
 
-The bot reads configuration from the database:
-- Network Discord channels
-- Polkassembly API endpoints
-- Frontend URLs for links
+- Thread mapping is kept up-to-date by:
+  - Handling `THREAD_CREATE` and `THREAD_UPDATE` events.
+  - The feedback bot’s periodic sync (`GuildThreadsActive`) which reconciles active threads.
+  - `UpsertThreadMapping` creates placeholder `Ref` rows if the indexer has not populated them yet.
 
-## Discord Setup
+## Deployment Notes
 
-### Bot Permissions
-
-Required Discord permissions:
-- Read Messages
-- Send Messages
-- Embed Links
-- Read Message History
-- View Channels
-- Manage Threads
-
-### Bot Intents
-
-Required gateway intents:
-- Guild Messages
-- Message Content
-- Guilds
-
-### Role Setup
-
-1. Create a feedback role in Discord
-2. Assign role to authorized DAO members
-3. Set role ID in environment config
-
-### Channel Setup
-
-1. Create a channel for each network (Polkadot/Kusama)
-2. Configure channel IDs in database
-3. Bot will monitor threads in these channels
-
-## Thread Detection
-
-The bot automatically detects referendum threads by name patterns:
-- `#123: Title`
-- `123 - Title`
-- `[123] Title`
-- `123 Title`
-
-Threads must be in configured network channels.
-
-## Message Formatting
-
-### Feedback Submission Response
-
-    Feedback Submitted
-    Your feedback for Polkadot/123 has been submitted.
-
-    Continue Discussion
-    Click here to continue the conversation
-
-    ✅ Successfully posted to Polkassembly!
-
-### Relayed Messages
-
-Messages from the web platform are displayed as embeds:
-
-    Message from 5Grw...S0zH
-    This is the message content from the proponent.
-
-    Continue Discussion
-    Click here
-
-    Via GovComms | Polkadot #123
-
-## Polkassembly Integration
-
-### First Message Posting
-
-When the first feedback is submitted:
-
-1. Bot formats message with intro/outro
-2. Creates Polkassembly-compatible markdown
-3. Signs transaction with configured account
-4. Posts comment to referendum
-5. Includes link back to GovComms
-
-### Message Format
-
-    ## 🏛️ REEEEEEEEEE DAO Feedback
-
-    The **REEEEEEEEEE DAO** is a decentralized collective...
-
-    ### 📋 Community Feedback
-
-    > Original feedback message here
-
-    ---
-
-    ### 💬 Continue the Discussion
-
-    We welcome proponents to engage directly...
-
-    👉 **[Continue discussion with the DAO](https://govcomms.io/polkadot/123)**
-
-## Monitoring
-
-### Service Status
-
-    sudo systemctl status gcbot
-
-### Logs
-
-View real-time logs:
-
-    sudo journalctl -u gcbot -f
-
-### Key Log Messages
-
-Successful startup:
-
-    Discord bot logged in as GovComms#1234
-    Thread synchronization complete. Synced 42 threads
-    Starting Discord message monitor
-
-Feedback processing:
-
-    Feedback command received from User#5678 in channel 123456
-    Processing feedback for Polkadot ref #123
-    Feedback submitted for polkadot/123: 150 chars
-    Successfully posted to Polkassembly for Polkadot ref #123
-
-Message relay:
-
-    Checking for new messages...
-    Posting message 789 to thread 987654
-    Message posted successfully
-
-## Error Handling
-
-### Common Errors
-
-1. **Rate Limit Exceeded**
-   - User message: "Please wait X minutes and Y seconds"
-   - Log: Rate limit hit for user
-
-2. **Invalid Thread**
-   - User message: "This command must be used in a referendum thread"
-   - Ensure thread name matches pattern
-
-3. **No Permission**
-   - User message: "You don't have permission"
-   - Check user has feedback role
-
-4. **Polkassembly Failed**
-   - Warning sent to Discord
-   - Message still saved in database
-   - Manual intervention may be needed
-
-### Recovery Procedures
-
-1. **Bot Disconnected**
-   - Auto-reconnects with exponential backoff
-   - Check Discord token validity
-   - Verify network connectivity
-
-2. **Database Connection Lost**
-   - Reconnection attempted automatically
-   - Check MySQL service status
-   - Verify credentials
-
-3. **Thread Sync Issues**
-   - Run manual sync on startup
-   - Check channel permissions
-   - Verify thread naming
-
-## Development
-
-### Testing Commands
-
-Test feedback processing:
-
-    !feedback Test message for development
-
-### Debug Mode
-
-Enable debug logging:
-
-    LOG_LEVEL=debug ./gcbot
-
-### Local Development
-
-1. Create test Discord server
-2. Set up test channels and roles
-3. Use development database
-4. Point to local API instance
-
-## Best Practices
-
-1. **Thread Management**
-   - Keep thread names consistent
-   - Archive old threads regularly
-   - Monitor thread limits
-
-2. **Role Management**
-   - Regularly audit feedback role members
-   - Document role assignment process
-   - Use role hierarchies properly
-
-3. **Message Handling**
-   - Monitor message queue size
-   - Handle long messages gracefully
-   - Validate markdown formatting
-
-4. **Security**
-   - Rotate bot token periodically
-   - Limit bot permissions to minimum needed
-   - Monitor for suspicious activity
-
-## Troubleshooting Guide
-
-### Bot Won't Start
-
-1. Check Discord token is valid
-2. Verify database connection
-3. Ensure Redis is running
-4. Check file permissions
-
-### Commands Not Working
-
-1. Verify bot has message content intent
-2. Check command prefix is correct
-3. Ensure user has required role
-4. Verify thread is detected correctly
-
-### Messages Not Relaying
-
-1. Check message monitor is running
-2. Verify API connectivity
-3. Check thread mapping in database
-4. Review error logs
-
-### Polkassembly Issues
-
-1. Verify seed phrase is correct
-2. Check network configuration
-3. Test Polkassembly API directly
-4. Monitor rate limits
+- Use the sample unit file in `docs/systemd/govcomms.service` as a starting point.
+- When running multiple modules, ensure the role IDs and intents support all commands.
+- Consider seeding the `settings` table before the bot starts so that slash commands register cleanly on first boot.
