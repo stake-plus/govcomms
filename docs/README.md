@@ -13,7 +13,7 @@ Each module is optional and can be toggled on or off at runtime. The codebase no
 ## Architecture Snapshot
 
 ```
-./src/cmd/govcomms      # single entry point
+./src                   # single entry point
 ./src/ai-qa             # AI Q&A module
 ./src/research-bot      # Research module
 ./src/feedback          # Feedback module + indexer helpers
@@ -30,7 +30,7 @@ The services share:
 
 ```bash
 # Build the combined binary
-GOOS=$(go env GOOS) GOARCH=$(go env GOARCH) go build -o bin/govcomms ./src/cmd/govcomms
+GOOS=$(go env GOOS) GOARCH=$(go env GOARCH) go build -o bin/govcomms ./src
 
 # Run with the desired modules
 ./bin/govcomms --enable-feedback            # QA + Research + Feedback
