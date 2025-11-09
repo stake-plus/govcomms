@@ -218,12 +218,23 @@ func (b *Bot) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.
 	msgs := shareddiscord.BuildLongMessages(message, "")
 	if len(msgs) > 0 {
 		// Edit the deferred response with the first chunk
-		s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{
+		flags := discordgo.MessageFlagsSuppressEmbeds
+		if _, err := s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{
 			Content: &msgs[0],
-		})
+			Flags:   flags,
+		}); err != nil {
+			log.Printf("Failed to send interaction response: %v", err)
+			return
+		}
 		// Send additional chunks as regular messages
 		for idx := 1; idx < len(msgs); idx++ {
-			s.ChannelMessageSend(interaction.ChannelID, msgs[idx])
+			if _, err := s.ChannelMessageSendComplex(interaction.ChannelID, &discordgo.MessageSend{
+				Content: msgs[idx],
+				Flags:   flags,
+			}); err != nil {
+				log.Printf("Failed to send follow-up message: %v", err)
+				return
+			}
 		}
 	}
 }
@@ -356,7 +367,13 @@ func (b *Bot) sendLongMessage(s *discordgo.Session, channelID string, userID str
 		if i > 0 {
 			s.ChannelTyping(channelID)
 		}
-		s.ChannelMessageSend(channelID, msg)
+		if _, err := s.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+			Content: msg,
+			Flags:   discordgo.MessageFlagsSuppressEmbeds,
+		}); err != nil {
+			log.Printf("Failed to send message chunk: %v", err)
+			return
+		}
 	}
 }
 
