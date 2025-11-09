@@ -218,13 +218,22 @@ func (b *Bot) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.
 	msgs := shareddiscord.BuildLongMessages(message, "")
 	if len(msgs) > 0 {
 		// Edit the deferred response with the first chunk
-		flags := discordgo.MessageFlagsSuppressEmbeds
-		if _, err := s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{
+		resp, err := s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{
 			Content: &msgs[0],
-			Flags:   flags,
-		}); err != nil {
+		})
+		if err != nil {
 			log.Printf("Failed to send interaction response: %v", err)
 			return
+		}
+		flags := discordgo.MessageFlagsSuppressEmbeds
+		if resp != nil {
+			if _, err := s.ChannelMessageEditComplex(&discordgo.MessageEdit{
+				ID:      resp.ID,
+				Channel: resp.ChannelID,
+				Flags:   &flags,
+			}); err != nil {
+				log.Printf("Failed to suppress embeds on response: %v", err)
+			}
 		}
 		// Send additional chunks as regular messages
 		for idx := 1; idx < len(msgs); idx++ {
