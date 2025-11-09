@@ -211,10 +211,10 @@ func (b *Bot) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interaction
 		log.Printf("Error saving Q&A history: %v", err)
 	}
 
-	b.sendLongMessageSlash(s, i.Interaction, answer)
+	b.sendLongMessageSlash(s, i.Interaction, question, answer)
 }
 
-func (b *Bot) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.Interaction, message string) {
+func (b *Bot) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.Interaction, question string, message string) {
 	userID := ""
 	if interaction.Member != nil && interaction.Member.User != nil {
 		userID = interaction.Member.User.ID
@@ -222,7 +222,12 @@ func (b *Bot) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.
 		userID = interaction.User.ID
 	}
 
-	msgs := shareddiscord.BuildLongMessages(message, userID)
+	formatted := message
+	if strings.TrimSpace(question) != "" {
+		formatted = fmt.Sprintf("> **Question:** %s\n\n%s", question, message)
+	}
+
+	msgs := shareddiscord.BuildLongMessages(formatted, userID)
 	if len(msgs) > 0 {
 		// Edit the deferred response with the first chunk
 		resp, err := s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{
