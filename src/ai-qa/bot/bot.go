@@ -215,7 +215,14 @@ func (b *Bot) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interaction
 }
 
 func (b *Bot) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.Interaction, message string) {
-	msgs := shareddiscord.BuildLongMessages(message, "")
+	userID := ""
+	if interaction.Member != nil && interaction.Member.User != nil {
+		userID = interaction.Member.User.ID
+	} else if interaction.User != nil {
+		userID = interaction.User.ID
+	}
+
+	msgs := shareddiscord.BuildLongMessages(message, userID)
 	if len(msgs) > 0 {
 		// Edit the deferred response with the first chunk
 		resp, err := s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{
