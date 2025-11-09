@@ -42,13 +42,15 @@ ENABLE_QA=0 ./bin/govcomms                  # Research only (via env overrides)
 
 | Flag | Env var | Default | Purpose |
 | --- | --- | --- | --- |
-| `--enable-qa` | `ENABLE_QA` | `true` | Start the AI Q&A module |
+| `--enable-qa` | `ENABLE_QA` | `true` | Start the AI Q&A module (enabled by default) |
 | `--enable-research` | `ENABLE_RESEARCH` | `true` | Start the Research module |
 | `--enable-feedback` | `ENABLE_FEEDBACK` | `false` | Start the Feedback module |
 
 ## Configuration
 
 Settings are read from the `settings` table first (via `shared/data/settings.go`) and fall back to environment variables. Key values:
+
+> **Note:** As long as an OpenAI API key is configured, the AI Q&A module automatically performs web-backed answers—no extra feature flags are required.
 
 | Setting / Env | Description |
 | --- | --- |
@@ -61,7 +63,6 @@ Settings are read from the `settings` table first (via `shared/data/settings.go`
 | `claude_api_key` / `CLAUDE_API_KEY` | Claude API key (optional alternative) |
 | `ai_provider` / `AI_PROVIDER` | `openai` (default) or `claude` |
 | `ai_model` / `AI_MODEL` | Model name (falls back to provider defaults) |
-| `ai_enable_web_search` | `1` to turn on web search in the AI Q&A flow |
 | `redis_url` / `REDIS_URL` | Required only when `--enable-feedback` is true |
 | `indexer_workers` | Number of block indexer workers (feedback bot) |
 | `indexer_interval_minutes` | Interval for referendum sync (feedback bot) |
