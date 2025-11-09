@@ -226,11 +226,12 @@ func (b *Bot) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.
 			return
 		}
 		flags := discordgo.MessageFlagsSuppressEmbeds
-		if resp != nil {
+		if resp != nil && resp.ChannelID != "" && resp.ID != "" {
 			if _, err := s.ChannelMessageEditComplex(&discordgo.MessageEdit{
 				ID:      resp.ID,
 				Channel: resp.ChannelID,
-				Flags:   &flags,
+				Content: resp.Content,
+				Flags:   flags,
 			}); err != nil {
 				log.Printf("Failed to suppress embeds on response: %v", err)
 			}
