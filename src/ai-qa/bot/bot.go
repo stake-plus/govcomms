@@ -183,28 +183,18 @@ func (b *Bot) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interaction
 	// Combine proposal content with Q&A history
 	fullContent := content + qaContext
 
-	var answer string
+	ctx := context.Background()
+	opts := sharedai.Options{
+		Model:        b.config.AIModel,
+		SystemPrompt: b.config.AISystemPrompt,
+	}
 
-	if b.config.AIConfig.AIEnableWeb {
-		// Use web search tools via shared client when enabled
-		client, ok := b.aiClient.(interface {
-			Respond(context.Context, string, []sharedai.Tool, sharedai.Options) (string, error)
-		})
-		if ok {
-			input := "Context:\n" + fullContent + "\n\nQuestion:\n" + question
-			answer, err = client.Respond(context.Background(), input, []sharedai.Tool{{Type: "web_search"}}, sharedai.Options{
-				Model:               b.config.AIModel,
-				SystemPrompt:        b.config.AISystemPrompt,
-				MaxCompletionTokens: 0,
-			})
-		} else {
-			answer, err = b.aiClient.AnswerQuestion(context.Background(), fullContent, question, sharedai.Options{Model: b.config.AIModel, SystemPrompt: b.config.AISystemPrompt})
-		}
-	} else {
-		answer, err = b.aiClient.AnswerQuestion(context.Background(), fullContent, question, sharedai.Options{
-			Model:        b.config.AIModel,
-			SystemPrompt: b.config.AISystemPrompt,
-		})
+	input := "Context:\n" + fullContent + "\n\nQuestion:\n" + question + "\n\nUse web search as needed to ensure the answer reflects the latest information."
+
+	answer, err := b.aiClient.Respond(ctx, input, []sharedai.Tool{{Type: "web_search"}}, opts)
+	if err != nil {
+		log.Printf("Web-search answer failed, falling back to cached content: %v", err)
+		answer, err = b.aiClient.AnswerQuestion(ctx, fullContent, question, opts)
 	}
 	if err != nil {
 		log.Printf("Error getting AI response: %v", err)
