@@ -13,8 +13,10 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/stake-plus/govcomms/src/feedback/data"
 	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
+	shareddata "github.com/stake-plus/govcomms/src/shared/data"
 	shareddiscord "github.com/stake-plus/govcomms/src/shared/discord"
 	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
+	sharedpolkassembly "github.com/stake-plus/govcomms/src/shared/polkassembly"
 	"gorm.io/gorm"
 )
 
@@ -25,6 +27,7 @@ type Bot struct {
 	session        *discordgo.Session
 	networkManager *sharedgov.NetworkManager
 	refManager     *sharedgov.ReferendumManager
+	polkassembly   *sharedpolkassembly.Service
 	runtimeCtx     context.Context
 	cancelFunc     context.CancelFunc
 }
@@ -65,6 +68,21 @@ func New(cfg *sharedconfig.FeedbackConfig, db *gorm.DB, rdb *redis.Client) (*Bot
 
 	refManager := sharedgov.NewReferendumManager(db)
 
+	var paService *sharedpolkassembly.Service
+	if networkManager != nil {
+		if service, svcErr := sharedpolkassembly.NewService(
+			sharedpolkassembly.ServiceConfig{
+				Endpoint: cfg.PolkassemblyEndpoint,
+				Logger:   log.Default(),
+			},
+			networkManager.GetAll(),
+		); svcErr != nil {
+			log.Printf("feedback: polkassembly service disabled: %v", svcErr)
+		} else {
+			paService = service
+		}
+	}
+
 	bot := &Bot{
 		config:         cfg,
 		db:             db,
@@ -72,6 +90,7 @@ func New(cfg *sharedconfig.FeedbackConfig, db *gorm.DB, rdb *redis.Client) (*Bot
 		session:        session,
 		networkManager: networkManager,
 		refManager:     refManager,
+		polkassembly:   paService,
 	}
 
 	bot.initHandlers()
@@ -241,11 +260,43 @@ func (b *Bot) handleFeedbackSlash(s *discordgo.Session, i *discordgo.Interaction
 
 	authorTag := fmt.Sprintf("%s#%s", user.User.Username, user.User.Discriminator)
 
-	if err := data.SaveFeedbackMessage(b.db, &ref, authorTag, message); err != nil {
+	msgRecord, err := data.SaveFeedbackMessage(b.db, &ref, authorTag, message)
+	if err != nil {
 		log.Printf("feedback: failed to persist message: %v", err)
 		msg := "Failed to store feedback. Please try again later."
 		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
 		return
+	}
+
+	if b.polkassembly != nil {
+		if count, err := data.CountFeedbackMessages(b.db, threadInfo.RefDBID); err != nil {
+			log.Printf("feedback: failed to count messages: %v", err)
+		} else if count == 1 {
+			gcURL := shareddata.GetSetting("gc_url")
+			if gcURL == "" {
+				gcURL = "http://localhost:3000"
+			}
+			gcURL = strings.TrimRight(gcURL, "/")
+			link := fmt.Sprintf("%s/%s/%d", gcURL, strings.ToLower(network.Name), ref.RefID)
+
+			networkName := network.Name
+			refID := ref.RefID
+			messageCopy := message
+			messageID := msgRecord.ID
+
+			go func() {
+				commentID, err := b.polkassembly.PostFirstMessage(networkName, int(refID), messageCopy, link)
+				if err != nil {
+					log.Printf("feedback: polkassembly post failed: %v", err)
+					return
+				}
+				if commentID != 0 {
+					if err := data.UpdateFeedbackMessagePolkassembly(b.db, messageID, fmt.Sprintf("%d", commentID), nil, ""); err != nil {
+						log.Printf("feedback: failed to update message with polkassembly id: %v", err)
+					}
+				}
+			}()
+		}
 	}
 
 	if b.redis != nil {

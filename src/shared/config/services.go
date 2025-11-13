@@ -96,12 +96,12 @@ func LoadResearchConfig(db *gorm.DB) ResearchConfig {
 	tempDir := GetSetting("qa_temp_dir", "QA_TEMP_DIR", "/tmp/govcomms-qa")
 
 	return ResearchConfig{
-		Base:          base,
-		OpenAIKey:     openAIKey,
-		AIModel:       aiModel,
-		AIEnableWeb:   aiEnableWeb,
+		Base:           base,
+		OpenAIKey:      openAIKey,
+		AIModel:        aiModel,
+		AIEnableWeb:    aiEnableWeb,
 		ResearchRoleID: researchRoleID,
-		TempDir:       tempDir,
+		TempDir:        tempDir,
 	}
 }
 
@@ -109,9 +109,10 @@ func LoadResearchConfig(db *gorm.DB) ResearchConfig {
 type FeedbackConfig struct {
 	Base
 	FeedbackRoleID         string
-	RedisURL                string
-	IndexerWorkers          int
-	IndexerIntervalMinutes  int
+	RedisURL               string
+	IndexerWorkers         int
+	IndexerIntervalMinutes int
+	PolkassemblyEndpoint   string
 }
 
 // LoadFeedbackConfig loads Feedback bot configuration
@@ -119,6 +120,7 @@ func LoadFeedbackConfig(db *gorm.DB) FeedbackConfig {
 	base := LoadBase(db)
 	feedbackRoleID := GetSetting("feedback_role_id", "FEEDBACK_ROLE_ID", "")
 	redisURL := getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+	polkassemblyEndpoint := GetSetting("polkassembly_endpoint", "POLKASSEMBLY_ENDPOINT", "https://api.polkassembly.io/api/v1")
 
 	workers := 10
 	if workerStr := shareddata.GetSetting("indexer_workers"); workerStr != "" {
@@ -137,9 +139,10 @@ func LoadFeedbackConfig(db *gorm.DB) FeedbackConfig {
 	return FeedbackConfig{
 		Base:                   base,
 		FeedbackRoleID:         feedbackRoleID,
-		RedisURL:                redisURL,
+		RedisURL:               redisURL,
 		IndexerWorkers:         workers,
 		IndexerIntervalMinutes: intervalMinutes,
+		PolkassemblyEndpoint:   polkassemblyEndpoint,
 	}
 }
 
@@ -149,4 +152,3 @@ func getenv(key, def string) string {
 	}
 	return def
 }
-

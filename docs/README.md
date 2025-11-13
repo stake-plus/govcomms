@@ -6,7 +6,7 @@ GovComms currently ships as a single Go binary (`govcomms`) that can host up to 
 
 - **AI Q&A bot (`/question`, `/refresh`, `/context`)** – Answers referendum questions using the shared AI client.
 - **Research bot (`/research`, `/team`)** – Runs deeper AI-assisted analysis on proposals.
-- **Feedback bot (`/feedback`)** – Accepts feedback inside referendum threads, stores it in MySQL, publishes a Redis event, and posts an embed back into the thread.
+- **Feedback bot (`/feedback`)** – Accepts feedback inside referendum threads, stores it in MySQL, publishes a Redis event, posts an embed back into the thread, and (when a Polkassembly seed is configured for the network) publishes the first reply on Polkassembly.
 
 Each module is optional and can be toggled on or off at runtime. The codebase no longer includes the REST API or React UI that earlier documentation referenced.
 
@@ -54,6 +54,7 @@ Settings are read from the `settings` table first (via `shared/data/settings.go`
 
 | Setting / Env | Description |
 | --- | --- |
+| `mysql_dsn` / `MYSQL_DSN` | MySQL DSN (defaults to a local dev DSN if unset) |
 | `discord_token` / `DISCORD_TOKEN` | Discord bot token (all modules) |
 | `guild_id` / `GUILD_ID` | Guild ID where slash commands are registered |
 | `qa_role_id` / `QA_ROLE_ID` | Role allowed to use `/question` |
@@ -63,9 +64,25 @@ Settings are read from the `settings` table first (via `shared/data/settings.go`
 | `claude_api_key` / `CLAUDE_API_KEY` | Claude API key (optional alternative) |
 | `ai_provider` / `AI_PROVIDER` | `openai` (default) or `claude` |
 | `ai_model` / `AI_MODEL` | Model name (falls back to provider defaults) |
+| `ai_system_prompt` / `AI_SYSTEM_PROMPT` | Custom system prompt for AI responses |
+| `ai_enable_web_search` / `AI_ENABLE_WEB_SEARCH` | `"1"` to enable web search augmentation |
+| `ai_enable_deep_search` / `AI_ENABLE_DEEP_SEARCH` | `"1"` to enable deep search aggregation |
 | `redis_url` / `REDIS_URL` | Required only when `--enable-feedback` is true |
 | `indexer_workers` | Number of block indexer workers (feedback bot) |
 | `indexer_interval_minutes` | Interval for referendum sync (feedback bot) |
+| `gc_url` | Base URL used when linking back to the external discussion page |
+
+### Network‑specific configuration
+
+Per-network Polkassembly credentials live directly in the `networks` table. Make sure the table includes the following columns (see `db/database.sql` for reference):
+
+```sql
+ALTER TABLE networks
+    ADD COLUMN polkassembly_seed varchar(512) DEFAULT '',
+    ADD COLUMN ss58_prefix smallint unsigned NULL;
+```
+
+Populate `polkassembly_seed` with the sr25519 seed phrase and (optionally) `ss58_prefix` with the correct network prefix. The feedback bot will automatically post the first feedback message to Polkassembly when a seed is present.
 
 The shared config loader (`shared/config/services.go`) can be consulted for the full list of fields per module.
 
@@ -83,8 +100,8 @@ The shared config loader (`shared/config/services.go`) can be consulted for the 
 ## Current Limitations
 
 - There is **no running REST API or web UI** in this repository. Earlier documentation referenced these components but they are not present.
-- The feedback bot publishes events and posts in-thread embeds, but **does not currently relay web responses back to Discord** or auto-post to Polkassembly.
-- Rate limiting, moderation workflows, and Polkassembly publishing are pending reimplementation.
+- The feedback bot still does not relay web-originated replies back into Discord; only Discord submissions are ingested.
+- Moderation tooling and fine-grained rate limiting are not implemented.
 - The feedback bot assumes MySQL contains referendum rows; the new upsert logic will create placeholders if the indexer has not run yet.
 
 These gaps should be addressed before relying on the documentation for production deployments.

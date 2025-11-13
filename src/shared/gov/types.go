@@ -4,11 +4,13 @@ import "time"
 
 // Network represents a blockchain network (Polkadot, Kusama, etc.)
 type Network struct {
-	ID               uint8  `gorm:"primaryKey"`
-	Name             string `gorm:"size:32;unique;not null"`
-	Symbol           string `gorm:"size:8;not null"`
-	URL              string `gorm:"size:256;not null"`
-	DiscordChannelID string `gorm:"size:64"`
+	ID               uint8   `gorm:"primaryKey"`
+	Name             string  `gorm:"size:32;unique;not null"`
+	Symbol           string  `gorm:"size:8;not null"`
+	URL              string  `gorm:"size:256;not null"`
+	DiscordChannelID string  `gorm:"size:64"`
+	PolkassemblySeed string  `gorm:"size:512"`
+	SS58Prefix       *uint16 `gorm:"column:ss58_prefix"`
 }
 
 // RefThread maps Discord thread IDs to referendum information

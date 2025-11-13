@@ -8,7 +8,7 @@ This repository currently exposes three Discord-facing modules that all run insi
 | --- | --- | --- |
 | AI Q&A | `/question`, `/refresh`, `/context` | Surfaced proposal content and prior Q&A history on demand. |
 | Research | `/research`, `/team` | Generates deeper AI-assisted summaries about claims and teams. |
-| Feedback | `/feedback` | Accepts written feedback inside referendum threads and posts an in-thread embed. |
+| Feedback | `/feedback` | Accepts written feedback inside referendum threads, posts an in-thread embed, and optionally mirrors the first message to Polkassembly. |
 
 All commands must be invoked from an existing referendum thread that the bot can map back to a `shared.gov.Ref` record.
 
@@ -49,6 +49,7 @@ All commands must be invoked from an existing referendum thread that the bot can
 1. **Database & Redis**
    - A MySQL DSN is required for all modules. The feedback module additionally needs Redis when enabled (`REDIS_URL`).
    - `shared/config/services.go` outlines every field loaded from the database or environment.
+   - Set `gc_url` in the `settings` table so feedback embeds can link back to your external discussion UI when mirroring to Polkassembly.
 
 2. **Discord Setup**
    - The bot requires the following gateway intents: Guilds, Guild Messages, Message Content.
@@ -62,13 +63,16 @@ All commands must be invoked from an existing referendum thread that the bot can
    - Provide either `openai_api_key` (`OPENAI_API_KEY`) or `claude_api_key` (`CLAUDE_API_KEY`).
    - Set `ai_provider` / `AI_PROVIDER` if you wish to force a specific provider, and optionally override `ai_model`.
 
-5. **Flags**
+5. **Polkassembly credentials**
+   - Add `polkassembly_seed` (and optionally `ss58_prefix`) to each row in the `networks` table where you want automatic Polkassembly posting. Without a seed, the feedback bot will skip the outbound publish.
+
+6. **Flags**
    - Start the binary with `--enable-qa`, `--enable-research`, and/or `--enable-feedback` depending on which modules you want to run.
 
 ## Known Limitations
 
 - There is no web UI or REST API in this repository; earlier documentation referenced modules that no longer exist.
-- The feedback module does not yet relay web-originated replies back into Discord or post the first comment to Polkassembly; only inbound feedback from Discord is handled.
+- The feedback module does not yet relay web-originated replies back into Discord; only inbound feedback from Discord is handled. (It will, however, post the first Discord feedback message to Polkassembly when a seed is configured.)
 - Rate limiting and moderation policies still need to be reintroduced.
 
 ## Observability
