@@ -260,8 +260,10 @@ func (c *Client) PostComment(content string, postID int, network string) (int, e
 		if err != nil {
 			var httpErr *HTTPError
 			if errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden) && attempt == 0 {
-				if loginErr := c.Login(); loginErr != nil {
-					return 0, fmt.Errorf("reauthenticate: %w", loginErr)
+				if signupErr := c.Signup(network); signupErr != nil {
+					if loginErr := c.Login(); loginErr != nil {
+						return 0, fmt.Errorf("reauthenticate: %w", signupErr)
+					}
 				}
 				continue
 			}
