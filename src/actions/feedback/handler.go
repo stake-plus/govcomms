@@ -52,7 +52,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 
 	length := utf8.RuneCountInString(message)
 	if length < 10 || length > 5000 {
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
 				Content: "Feedback must be between 10 and 5000 characters.",
@@ -63,7 +63,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 	}
 
 	if h.Config.FeedbackRoleID != "" && !shareddiscord.HasRole(s, h.Config.Base.GuildID, user.User.ID, h.Config.FeedbackRoleID) {
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
 				Content: "You don't have permission to use this command.",
@@ -73,7 +73,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 		return
 	}
 
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	}); err != nil {
 		log.Printf("feedback: failed to acknowledge interaction: %v", err)
@@ -82,21 +82,21 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 
 	if h.Deps.EnsureThreadMapping == nil {
 		msg := "Feedback action misconfigured: missing thread mapper."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
 		return
 	}
 
 	threadInfo, err := h.Deps.EnsureThreadMapping(i.ChannelID)
 	if err != nil {
 		msg := "This command must be used in a referendum thread."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
 		return
 	}
 
 	network := h.NetworkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
 		msg := "Unable to identify the associated network for this thread."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
 		return
 	}
 
@@ -104,7 +104,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 	if err := h.DB.First(&ref, threadInfo.RefDBID).Error; err != nil {
 		log.Printf("feedback: failed to load referendum %d: %v", threadInfo.RefDBID, err)
 		msg := "Could not load referendum details. Please try again later."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
 		return
 	}
 
@@ -113,7 +113,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 	if _, err := data.SaveFeedbackMessage(h.DB, &ref, authorTag, message); err != nil {
 		log.Printf("feedback: failed to persist message: %v", err)
 		msg := "Failed to store feedback. Please try again later."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
 		return
 	}
 
@@ -127,5 +127,5 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 
 	response := fmt.Sprintf("✅ Thank you %s! Your feedback for %s referendum #%d has been posted.",
 		authorTag, network.Name, ref.RefID)
-	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &response})
+	shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &response})
 }

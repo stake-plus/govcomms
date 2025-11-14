@@ -273,7 +273,7 @@ func sendStyledSlashResponse(s *discordgo.Session, i *discordgo.InteractionCreat
 	chunks := shareddiscord.BuildStyledMessages(title, body, "")
 	if len(chunks) == 0 {
 		empty := ""
-	shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &empty})
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &empty})
 		return
 	}
 

@@ -246,7 +246,7 @@ func (b *Module) postFeedbackMessage(s *discordgo.Session, threadID string, netw
 		}
 	}
 
-	if _, err := s.ChannelMessageSendComplex(threadID, messageSend); err != nil {
+	if _, err := shareddiscord.SendComplexMessageNoEmbed(s, threadID, messageSend); err != nil {
 		log.Printf("feedback: failed to post feedback message: %v", err)
 	}
 }
@@ -512,7 +512,7 @@ func (b *Module) announcePolkassemblyReply(threadID string, network *sharedgov.N
 	embed.URL = fmt.Sprintf("https://%s.polkassembly.io/referendum/%d?commentId=%d",
 		strings.ToLower(network.Name), ref.RefID, comment.ID)
 
-	if _, err := b.session.ChannelMessageSendComplex(threadID, &discordgo.MessageSend{
+	if _, err := shareddiscord.SendComplexMessageNoEmbed(b.session, threadID, &discordgo.MessageSend{
 		Embeds: []*discordgo.MessageEmbed{embed},
 	}); err != nil {
 		log.Printf("feedback: failed to post polkassembly reply to Discord: %v", err)

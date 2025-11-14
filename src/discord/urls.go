@@ -83,4 +83,3 @@ func trimTrailingPunctuation(input string) (string, string) {
 
 	return "", input
 }
-

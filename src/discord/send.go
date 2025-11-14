@@ -62,7 +62,9 @@ func sanitizeWebhookEdit(edit *discordgo.WebhookEdit) {
 		edit.Content = &cleaned
 	}
 
-	sanitizeEmbeds(edit.Embeds)
+	if edit.Embeds != nil {
+		sanitizeEmbeds(*edit.Embeds)
+	}
 }
 
 func sanitizeMessageSend(msg *discordgo.MessageSend) {
@@ -104,5 +106,3 @@ func sanitizeEmbeds(embeds []*discordgo.MessageEmbed) {
 		}
 	}
 }
-
-
