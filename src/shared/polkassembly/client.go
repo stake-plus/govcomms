@@ -355,36 +355,48 @@ func (c *Client) fetchUserID(network string) (int, error) {
 
 	url := fmt.Sprintf("%s/auth/data/profileWithAddress?address=%s", c.endpoint, c.signer.Address())
 
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return 0, fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("x-network", c.network)
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.loginData.Token))
+	for attempt := 0; attempt < 2; attempt++ {
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return 0, fmt.Errorf("create request: %w", err)
+		}
+		req.Header.Set("x-network", c.network)
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.loginData.Token))
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return 0, fmt.Errorf("fetch profile failed: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return 0, fmt.Errorf("fetch profile failed: %w", err)
+		}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return 0, fmt.Errorf("read response: %w", err)
+		if resp.StatusCode == http.StatusUnauthorized && attempt == 0 {
+			resp.Body.Close()
+			if err := c.Login(); err != nil {
+				return 0, fmt.Errorf("reauthenticate: %w", err)
+			}
+			continue
+		}
+
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return 0, fmt.Errorf("read response: %w", readErr)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return 0, fmt.Errorf("unexpected status: %d", resp.StatusCode)
+		}
+
+		var profile struct {
+			UserID int `json:"user_id"`
+		}
+		if err := json.Unmarshal(body, &profile); err != nil {
+			return 0, fmt.Errorf("parse profile: %w", err)
+		}
+
+		return profile.UserID, nil
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("unexpected status: %d", resp.StatusCode)
-	}
-
-	var profile struct {
-		UserID int `json:"user_id"`
-	}
-	if err := json.Unmarshal(body, &profile); err != nil {
-		return 0, fmt.Errorf("parse profile: %w", err)
-	}
-
-	return profile.UserID, nil
+	return 0, fmt.Errorf("unable to fetch profile after retry")
 }
 
 // HTTPError represents an HTTP error response

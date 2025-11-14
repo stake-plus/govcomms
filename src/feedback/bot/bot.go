@@ -623,15 +623,16 @@ func (b *Bot) announcePolkassemblyReply(threadID string, network *sharedgov.Netw
 	}
 }
 
+const polkassemblyRetryAttempts = 5
+const polkassemblyRetryDelay = 5 * time.Minute
+
 func (b *Bot) schedulePolkassemblyFirstMessage(network *sharedgov.Network, ref *sharedgov.Ref) {
 	if b.polkassembly == nil || network == nil || ref == nil {
 		return
 	}
 
 	go func() {
-		if err := b.postFirstMessageIfNeeded(network, ref); err != nil {
-			log.Printf("feedback: polkassembly post failed: %v", err)
-		}
+		b.tryPostFirstMessageWithRetry(network, ref, 0)
 	}()
 }
 
@@ -642,6 +643,17 @@ func (b *Bot) ensurePolkassemblyFirstMessage(network *sharedgov.Network, ref *sh
 
 	if err := b.postFirstMessageIfNeeded(network, ref); err != nil {
 		log.Printf("feedback: polkassembly post failed: %v", err)
+	}
+}
+
+func (b *Bot) tryPostFirstMessageWithRetry(network *sharedgov.Network, ref *sharedgov.Ref, attempt int) {
+	if err := b.postFirstMessageIfNeeded(network, ref); err != nil {
+		log.Printf("feedback: polkassembly post failed (attempt %d): %v", attempt+1, err)
+		if attempt+1 < polkassemblyRetryAttempts {
+			time.AfterFunc(polkassemblyRetryDelay, func() {
+				b.tryPostFirstMessageWithRetry(network, ref, attempt+1)
+			})
+		}
 	}
 }
 
