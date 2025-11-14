@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
