@@ -169,8 +169,11 @@ func (ni *NetworkIndexer) indexOnce(ctx context.Context) {
 	log.Printf("%s indexer: Chain has %d total referenda", ni.networkName, refCount)
 
 	var ongoingRefs []sharedgov.Ref
-	ni.db.Where("network_id = ? AND finalized = ?", ni.networkID, false).Find(&ongoingRefs)
-	log.Printf("%s indexer: Found %d ongoing referenda in database", ni.networkName, len(ongoingRefs))
+	if err := ni.db.Where("network_id = ? AND finalized = ?", ni.networkID, false).Find(&ongoingRefs).Error; err != nil {
+		log.Printf("%s indexer: failed to load ongoing referenda: %v", ni.networkName, err)
+	} else {
+		log.Printf("%s indexer: Found %d ongoing referenda in database", ni.networkName, len(ongoingRefs))
+	}
 
 	for _, ref := range ongoingRefs {
 		select {
@@ -185,6 +188,36 @@ func (ni *NetworkIndexer) indexOnce(ctx context.Context) {
 	start := uint64(0)
 	if refCount > 100 {
 		start = uint64(refCount - 100)
+	}
+
+	var storedCount int64
+	if err := ni.db.Model(&sharedgov.Ref{}).
+		Where("network_id = ?", ni.networkID).
+		Count(&storedCount).Error; err != nil {
+		log.Printf("%s indexer: failed to count stored referenda: %v", ni.networkName, err)
+	} else {
+		switch {
+		case storedCount == 0:
+			start = 0
+			log.Printf("%s indexer: no local referenda found, performing full backfill", ni.networkName)
+		default:
+			var maxStored uint64
+			if err := ni.db.Model(&sharedgov.Ref{}).
+				Where("network_id = ?", ni.networkID).
+				Select("MAX(ref_id)").
+				Scan(&maxStored).Error; err != nil {
+				log.Printf("%s indexer: failed to determine highest stored referendum: %v", ni.networkName, err)
+			} else if maxStored+1 < uint64(refCount) {
+				const catchupBuffer uint64 = 10
+				if maxStored > catchupBuffer {
+					start = maxStored - catchupBuffer
+				} else {
+					start = 0
+				}
+				log.Printf("%s indexer: catching up missing referenda (db max=%d, chain max=%d) starting at %d",
+					ni.networkName, maxStored, refCount-1, start)
+			}
+		}
 	}
 
 	for i := start; i < uint64(refCount); i++ {

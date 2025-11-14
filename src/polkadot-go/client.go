@@ -1,6 +1,7 @@
 package polkadot
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -159,8 +160,11 @@ func (c *Client) GetHeader(hash *string) (*Header, error) {
 		return nil, err
 	}
 
+	numberBytes := make([]byte, 4)
+	binary.LittleEndian.PutUint32(numberBytes, uint32(header.Number))
+
 	return &Header{
-		Number: fmt.Sprintf("0x%08x", uint64(header.Number)),
+		Number: codec.HexEncodeToString(numberBytes),
 	}, nil
 }
 
