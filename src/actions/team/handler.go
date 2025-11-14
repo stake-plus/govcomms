@@ -24,17 +24,6 @@ type Handler struct {
 	TeamsAnalyzer  *teams.Analyzer
 }
 
-type cardContent struct {
-	Title string
-	Body  string
-}
-
-type columnGroup struct {
-	MessageID string
-	ChannelID string
-	Indexes   []int
-}
-
 // HandleMessage processes the message-based team command.
 func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if h == nil {
@@ -131,24 +120,20 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 		log.Printf("team: header send failed: %v", err)
 	}
 
-	memberCards := make([]cardContent, len(members))
+	memberMessages := make(map[int]*discordgo.Message)
 	for i, member := range members {
 		body := member.Name
 		if member.Role != "" {
 			body += fmt.Sprintf(" (%s)", member.Role)
 		}
 		body += "\n⏳ *Analyzing...*"
-		memberCards[i] = cardContent{
-			Title: fmt.Sprintf("Member %d", i+1),
-			Body:  body,
-		}
-	}
 
-	memberGroups, memberLookup, err := sendColumnCardGroups(s, channelID, memberCards, 2)
-	if err != nil {
-		log.Printf("team: failed to send member placeholders: %v", err)
-		sendTeamStyledMessage(s, channelID, "Team", "Failed to prepare analysis output. Please try again.")
-		return
+		content := shareddiscord.FormatStyledBlock(fmt.Sprintf("Member %d", i+1), body)
+		msg, err := shareddiscord.SendMessageNoEmbed(s, channelID, content)
+		if err == nil {
+			memberMessages[i] = msg
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	results, err := h.TeamsAnalyzer.AnalyzeTeamMembers(ctx, members)
@@ -175,22 +160,34 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 			statusIcons += " | ⚠️ Skills Unverified"
 		}
 
-		var sections []string
-		header := result.Name
-		if result.Role != "" {
-			header += fmt.Sprintf(" (%s)", result.Role)
-		}
-		sections = append(sections, header)
-		sections = append(sections, statusIcons)
-		if strings.TrimSpace(result.Capability) != "" {
-			sections = append(sections, fmt.Sprintf("💼 %s", result.Capability))
-		}
-		if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.VerifiedURLs); urls != "" {
-			sections = append(sections, urls)
-		}
+		if msg, exists := memberMessages[i]; exists {
+			var sections []string
+			header := result.Name
+			if result.Role != "" {
+				header += fmt.Sprintf(" (%s)", result.Role)
+			}
+			sections = append(sections, header)
+			sections = append(sections, statusIcons)
+			if strings.TrimSpace(result.Capability) != "" {
+				sections = append(sections, fmt.Sprintf("💼 %s", result.Capability))
+			}
+			if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.VerifiedURLs); urls != "" {
+				sections = append(sections, urls)
+			}
 
-		memberCards[i].Body = strings.Join(sections, "\n\n")
-		updateColumnCardMessage(s, memberGroups, memberLookup, memberCards, i, "team")
+			body := strings.Join(sections, "\n\n")
+			payload := shareddiscord.BuildStyledMessage(fmt.Sprintf("Member %d", i+1), body)
+			edit := &discordgo.MessageEdit{
+				ID:      msg.ID,
+				Channel: channelID,
+				Content: &payload.Content,
+			}
+			if len(payload.Components) > 0 {
+				components := payload.Components
+				edit.Components = &components
+			}
+			shareddiscord.EditMessageComplexNoEmbed(s, edit)
+		}
 	}
 
 	teamAssessment := "❌ Team unlikely to complete the proposed task"
@@ -242,24 +239,20 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 		return
 	}
 
-	memberCards := make([]cardContent, len(members))
+	memberMessages := make(map[int]*discordgo.Message)
 	for idx, member := range members {
 		body := member.Name
 		if member.Role != "" {
 			body += fmt.Sprintf(" (%s)", member.Role)
 		}
 		body += "\n⏳ *Analyzing...*"
-		memberCards[idx] = cardContent{
-			Title: fmt.Sprintf("Member %d", idx+1),
-			Body:  body,
-		}
-	}
 
-	memberGroups, memberLookup, err := sendColumnCardGroups(s, i.ChannelID, memberCards, 2)
-	if err != nil {
-		log.Printf("team: slash member placeholders failed: %v", err)
-		sendTeamStyledMessage(s, i.ChannelID, "Team", "Failed to prepare analysis output. Please try again.")
-		return
+		content := shareddiscord.FormatStyledBlock(fmt.Sprintf("Member %d", idx+1), body)
+		msg, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, content)
+		if err == nil {
+			memberMessages[idx] = msg
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 
 	results, err := h.TeamsAnalyzer.AnalyzeTeamMembers(ctx, members)
@@ -279,36 +272,48 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 			skilledCount++
 		}
 
-		var sections []string
-		header := result.Name
-		if result.Role != "" {
-			header += fmt.Sprintf(" (%s)", result.Role)
-		}
-		sections = append(sections, header)
+		if msg, exists := memberMessages[idx]; exists {
+			var sections []string
+			header := result.Name
+			if result.Role != "" {
+				header += fmt.Sprintf(" (%s)", result.Role)
+			}
+			sections = append(sections, header)
 
-		if strings.TrimSpace(result.Capability) != "" {
-			sections = append(sections, fmt.Sprintf("Assessment: %s", result.Capability))
-		}
+			if strings.TrimSpace(result.Capability) != "" {
+				sections = append(sections, fmt.Sprintf("Assessment: %s", result.Capability))
+			}
 
-		status := ""
-		if result.IsReal {
-			status += "👤 Verified Real Person"
-		} else {
-			status += "❓ Verification Failed"
-		}
-		if result.HasStatedSkills {
-			status += " • 🎯 Has Stated Skills"
-		}
-		if status != "" {
-			sections = append(sections, status)
-		}
+			status := ""
+			if result.IsReal {
+				status += "👤 Verified Real Person"
+			} else {
+				status += "❓ Verification Failed"
+			}
+			if result.HasStatedSkills {
+				status += " • 🎯 Has Stated Skills"
+			}
+			if status != "" {
+				sections = append(sections, status)
+			}
 
-		if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.VerifiedURLs); urls != "" {
-			sections = append(sections, urls)
-		}
+			if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.VerifiedURLs); urls != "" {
+				sections = append(sections, urls)
+			}
 
-		memberCards[idx].Body = strings.Join(sections, "\n\n")
-		updateColumnCardMessage(s, memberGroups, memberLookup, memberCards, idx, "team")
+			body := strings.Join(sections, "\n\n")
+			payload := shareddiscord.BuildStyledMessage(fmt.Sprintf("Member %d", idx+1), body)
+			edit := &discordgo.MessageEdit{
+				ID:      msg.ID,
+				Channel: i.ChannelID,
+				Content: &payload.Content,
+			}
+			if len(payload.Components) > 0 {
+				components := payload.Components
+				edit.Components = &components
+			}
+			shareddiscord.EditMessageComplexNoEmbed(s, edit)
+		}
 	}
 
 	teamAssessment := "❌ Team unlikely to complete the proposed task"
@@ -359,114 +364,4 @@ func sendTeamWebhookEdit(s *discordgo.Session, interaction *discordgo.Interactio
 		edit.Components = &components
 	}
 	shareddiscord.InteractionResponseEditNoEmbed(s, interaction, edit)
-}
-
-func sendColumnCardGroups(s *discordgo.Session, channelID string, cards []cardContent, columns int) ([]columnGroup, []int, error) {
-	if columns < 1 {
-		columns = 1
-	}
-	if len(cards) == 0 {
-		return nil, nil, nil
-	}
-
-	var groups []columnGroup
-	for start := 0; start < len(cards); start += columns {
-		end := start + columns
-		if end > len(cards) {
-			end = len(cards)
-		}
-
-		var (
-			indexes  []int
-			payloads []shareddiscord.StyledMessage
-		)
-
-		for idx := start; idx < end; idx++ {
-			indexes = append(indexes, idx)
-			payloads = append(payloads, shareddiscord.BuildStyledMessage(cards[idx].Title, cards[idx].Body))
-		}
-
-		combined := shareddiscord.CombineStyledGroup(payloads)
-		msg := &discordgo.MessageSend{
-			Content: combined.Content,
-		}
-		if len(combined.Components) > 0 {
-			msg.Components = combined.Components
-		}
-
-		sent, err := shareddiscord.SendComplexMessageNoEmbed(s, channelID, msg)
-		if err != nil {
-			return nil, nil, err
-		}
-
-		groups = append(groups, columnGroup{
-			MessageID: sent.ID,
-			ChannelID: channelID,
-			Indexes:   indexes,
-		})
-
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	lookup := make([]int, len(cards))
-	for groupIdx, grp := range groups {
-		for _, cardIdx := range grp.Indexes {
-			lookup[cardIdx] = groupIdx
-		}
-	}
-
-	return groups, lookup, nil
-}
-
-func updateColumnCardMessage(s *discordgo.Session, groups []columnGroup, lookup []int, cards []cardContent, targetIdx int, prefix string) {
-	if targetIdx < 0 || targetIdx >= len(lookup) {
-		return
-	}
-	if len(groups) == 0 {
-		return
-	}
-
-	groupIdx := lookup[targetIdx]
-	if groupIdx < 0 || groupIdx >= len(groups) {
-		return
-	}
-
-	group := groups[groupIdx]
-	combined := combineCardGroup(cards, group.Indexes)
-
-	edit := &discordgo.MessageEdit{
-		ID:      group.MessageID,
-		Channel: group.ChannelID,
-		Content: &combined.Content,
-	}
-	if len(combined.Components) > 0 {
-		components := combined.Components
-		edit.Components = &components
-	} else {
-		empty := []discordgo.MessageComponent{}
-		edit.Components = &empty
-	}
-
-	if _, err := shareddiscord.EditMessageComplexNoEmbed(s, edit); err != nil {
-		log.Printf("%s: update column message failed: %v", prefix, err)
-	}
-}
-
-func combineCardGroup(cards []cardContent, indexes []int) shareddiscord.StyledMessage {
-	if len(indexes) == 0 {
-		return shareddiscord.StyledMessage{}
-	}
-	if len(indexes) == 1 {
-		card := cards[indexes[0]]
-		return shareddiscord.BuildStyledMessage(card.Title, card.Body)
-	}
-
-	var payloads []shareddiscord.StyledMessage
-	for _, idx := range indexes {
-		if idx < 0 || idx >= len(cards) {
-			continue
-		}
-		payloads = append(payloads, shareddiscord.BuildStyledMessage(cards[idx].Title, cards[idx].Body))
-	}
-	return shareddiscord.CombineStyledGroup(payloads)
 }

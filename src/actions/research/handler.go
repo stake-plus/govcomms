@@ -310,7 +310,8 @@ func editStyledMessage(s *discordgo.Session, channelID, messageID, title, body s
 		Content: &payload.Content,
 	}
 	if len(payload.Components) > 0 {
-		edit.Components = payload.Components
+		components := payload.Components
+		edit.Components = &components
 	}
 	if _, err := shareddiscord.EditMessageComplexNoEmbed(s, edit); err != nil {
 		log.Printf("research: edit failed: %v", err)
