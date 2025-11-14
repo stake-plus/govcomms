@@ -1,11 +1,9 @@
 DROP TABLE IF EXISTS qa_history;
-DROP TABLE IF EXISTS dao_votes;
 DROP TABLE IF EXISTS ref_proponents;
 DROP TABLE IF EXISTS ref_messages;
 DROP TABLE IF EXISTS ref_threads;
 DROP TABLE IF EXISTS refs;
 DROP TABLE IF EXISTS network_rpcs;
-DROP TABLE IF EXISTS dao_members;
 DROP TABLE IF EXISTS networks;
 DROP TABLE IF EXISTS settings;
 
@@ -41,14 +39,6 @@ CREATE TABLE IF NOT EXISTS `network_rpcs` (
   PRIMARY KEY (`id`),
   KEY `idx_rpc_network` (`network_id`),
   CONSTRAINT `fk_rpc_network` FOREIGN KEY (`network_id`) REFERENCES `networks` (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- DAO members
-CREATE TABLE IF NOT EXISTS `dao_members` (
-  `address` varchar(128) NOT NULL,
-  `discord` varchar(64) DEFAULT NULL,
-  `is_admin` tinyint(1) DEFAULT '0',
-  PRIMARY KEY (`address`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Proposals/Referenda with new columns for Polkassembly integration
@@ -153,20 +143,6 @@ CREATE TABLE IF NOT EXISTS `ref_proponents` (
   PRIMARY KEY (`ref_id`,`address`),
   KEY `idx_participant_address` (`address`),
   CONSTRAINT `fk_participant_proposal` FOREIGN KEY (`ref_id`) REFERENCES `refs` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- DAO votes (for internal DAO voting)
-CREATE TABLE IF NOT EXISTS `dao_votes` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `ref_id` bigint unsigned NOT NULL,
-  `dao_member_id` varchar(128) NOT NULL,
-  `choice` int NOT NULL,
-  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `idx_vote_proposal_voter` (`ref_id`,`dao_member_id`),
-  KEY `idx_vote_dao_member` (`dao_member_id`),
-  CONSTRAINT `fk_vote_dao_member` FOREIGN KEY (`dao_member_id`) REFERENCES `dao_members` (`address`),
-  CONSTRAINT `fk_vote_proposal` FOREIGN KEY (`ref_id`) REFERENCES `refs` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Insert initial settings with your actual values

@@ -1,16 +1,15 @@
 package data
 
 import (
-    "os"
+	"log"
+	"os"
 )
 
-// GetMySQLDSN returns DSN from env with a fixed default.
+// GetMySQLDSN returns the MySQL DSN configured via environment.
 func GetMySQLDSN() string {
-    dsn := os.Getenv("MYSQL_DSN")
-    if dsn == "" {
-        dsn = "govcomms:DK3mfv93jf4m@tcp(127.0.0.1:3306)/govcomms"
-    }
-    return dsn
+	dsn := os.Getenv("MYSQL_DSN")
+	if dsn == "" {
+		log.Fatalf("MYSQL_DSN is not set")
+	}
+	return dsn
 }
-
-
