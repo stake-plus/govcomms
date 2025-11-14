@@ -347,6 +347,11 @@ func buildLinkButtons(refs []linkReference) []discordgo.MessageComponent {
 	return components
 }
 
+// BuildLinkButtons exposes link button construction for external callers.
+func BuildLinkButtons(refs []linkReference) []discordgo.MessageComponent {
+	return buildLinkButtons(refs)
+}
+
 func formatSimpleBlock(title string, body string) string {
 	body = strings.TrimSpace(body)
 	if body == "" {
