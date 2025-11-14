@@ -371,7 +371,7 @@ func truncateForDiscord(value string, limit int) string {
 	runes := []rune(value)
 	if len(runes) <= limit {
 		return value
-}
+	}
 	if limit <= 1 {
 		return string(runes[:limit])
 	}
