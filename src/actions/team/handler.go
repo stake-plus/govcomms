@@ -127,7 +127,7 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 	realCount := 0
 	skilledCount := 0
 
-	var memberBlocks []string
+	var memberPanels []shareddiscord.StyledMessage
 	for i, result := range results {
 		statusIcons := ""
 		if result.IsReal {
@@ -158,7 +158,8 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 		}
 
 		body := strings.Join(sections, "\n\n")
-		memberBlocks = append(memberBlocks, shareddiscord.FormatStyledBlock(fmt.Sprintf("Member %d • %s", i+1, header), body))
+		panel := shareddiscord.BuildStyledMessage(fmt.Sprintf("Member %d • %s", i+1, header), body)
+		memberPanels = append(memberPanels, panel)
 	}
 
 	teamAssessment := "❌ Team unlikely to complete the proposed task"
@@ -170,11 +171,7 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 
 	summaryBody := fmt.Sprintf("👤 Real People: %d/%d | 🎯 Verified Skills: %d/%d\n\n**Assessment:** %s",
 		realCount, len(results), skilledCount, len(results), teamAssessment)
-	finalText := headerBody + "\n\n" + summaryBody
-	if len(memberBlocks) > 0 {
-		finalText += "\n\n" + strings.Join(memberBlocks, "\n\n")
-	}
-	finalHeaderBody := finalText
+	finalHeaderBody := headerBody + "\n\n" + summaryBody
 	if headerHandle != nil {
 		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
 			log.Printf("team: header update failed: %v", err)
@@ -183,6 +180,8 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 	} else {
 		sendTeamStyledMessage(s, channelID, headerTitle, finalHeaderBody)
 	}
+
+	dispatchPanels(s, channelID, memberPanels, "team")
 }
 
 func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.InteractionCreate, network string, refID uint32) {
@@ -223,7 +222,7 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 	realCount := 0
 	skilledCount := 0
 
-	var memberBlocks []string
+	var memberPanels []shareddiscord.StyledMessage
 	for idx, result := range results {
 		if result.IsReal {
 			realCount++
@@ -260,7 +259,8 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 		}
 
 		body := strings.Join(sections, "\n\n")
-		memberBlocks = append(memberBlocks, shareddiscord.FormatStyledBlock(fmt.Sprintf("Member %d • %s", idx+1, header), body))
+		panel := shareddiscord.BuildStyledMessage(fmt.Sprintf("Member %d • %s", idx+1, header), body)
+		memberPanels = append(memberPanels, panel)
 	}
 
 	teamAssessment := "❌ Team unlikely to complete the proposed task"
@@ -270,12 +270,8 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 		teamAssessment = "⚠️ Team may be capable but has some concerns"
 	}
 
-	finalText := fmt.Sprintf("%s\n\n👤 Real People: %d/%d | 🎯 Verified Skills: %d/%d\n\n**Assessment:** %s",
+	finalHeaderBody := fmt.Sprintf("%s\n\n👤 Real People: %d/%d | 🎯 Verified Skills: %d/%d\n\n**Assessment:** %s",
 		headerBody, realCount, len(results), skilledCount, len(results), teamAssessment)
-	if len(memberBlocks) > 0 {
-		finalText += "\n\n" + strings.Join(memberBlocks, "\n\n")
-	}
-	finalHeaderBody := finalText
 	if headerHandle != nil {
 		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
 			log.Printf("team: slash header update failed: %v", err)
@@ -284,6 +280,8 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 	} else {
 		sendTeamStyledMessage(s, i.ChannelID, headerTitle, finalHeaderBody)
 	}
+
+	dispatchPanels(s, channelIDOrInteraction(i), memberPanels, "team")
 }
 
 func sendTeamStyledMessage(s *discordgo.Session, channelID, title, body string) {
