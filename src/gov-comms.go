@@ -1,16 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
-	aiqabot "github.com/stake-plus/govcomms/src/ai-qa/bot"
-	fbbot "github.com/stake-plus/govcomms/src/feedback/bot"
-	rbbot "github.com/stake-plus/govcomms/src/research-bot/bot"
-	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
+	"github.com/stake-plus/govcomms/src/actions"
 	shareddata "github.com/stake-plus/govcomms/src/shared/data"
 )
 
@@ -27,45 +25,16 @@ func main() {
 		log.Fatalf("db: %v", err)
 	}
 
-	// Start modules as requested
-	var qa *aiqabot.Bot
-	var research *rbbot.Bot
-	var feedback *fbbot.Bot
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	if *enableQA {
-		cfg := sharedconfig.LoadQAConfig(db)
-		qa, err = aiqabot.New(&cfg, db)
-		if err != nil {
-			log.Fatalf("qa bot: %v", err)
-		}
-		if err := qa.Start(); err != nil {
-			log.Fatalf("qa start: %v", err)
-		}
-		log.Printf("AI Q&A started")
-	}
-
-	if *enableResearch {
-		cfg := sharedconfig.LoadResearchConfig(db)
-		research, err = rbbot.New(&cfg, db)
-		if err != nil {
-			log.Fatalf("research bot: %v", err)
-		}
-		if err := research.Start(); err != nil {
-			log.Fatalf("research start: %v", err)
-		}
-		log.Printf("Research bot started")
-	}
-
-	if *enableFeedback {
-		cfg := sharedconfig.LoadFeedbackConfig(db)
-		feedback, err = fbbot.New(&cfg, db)
-		if err != nil {
-			log.Fatalf("feedback bot: %v", err)
-		}
-		if err := feedback.Start(); err != nil {
-			log.Fatalf("feedback start: %v", err)
-		}
-		log.Printf("Feedback bot started")
+	manager, err := actions.StartAll(ctx, db, actions.Options{
+		EnableQA:       *enableQA,
+		EnableResearch: *enableResearch,
+		EnableFeedback: *enableFeedback,
+	})
+	if err != nil {
+		log.Fatalf("actions start: %v", err)
 	}
 
 	// Wait for termination
@@ -73,15 +42,7 @@ func main() {
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs
 
-	if qa != nil {
-		qa.Stop()
-	}
-	if research != nil {
-		research.Stop()
-	}
-	if feedback != nil {
-		feedback.Stop()
-	}
+	manager.Stop(ctx)
 }
 
 func envBool(key string, def bool) bool {

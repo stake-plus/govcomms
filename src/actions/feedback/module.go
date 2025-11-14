@@ -1,4 +1,4 @@
-package bot
+package feedback
 
 import (
 	"context"
@@ -12,7 +12,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/stake-plus/govcomms/src/feedback/data"
+	"github.com/stake-plus/govcomms/src/actions/core"
+	"github.com/stake-plus/govcomms/src/actions/feedback/data"
 	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
 	shareddata "github.com/stake-plus/govcomms/src/shared/data"
 	shareddiscord "github.com/stake-plus/govcomms/src/shared/discord"
@@ -21,15 +22,18 @@ import (
 	"gorm.io/gorm"
 )
 
-type Bot struct {
+var _ core.Module = (*Module)(nil)
+
+type Module struct {
 	config         *sharedconfig.FeedbackConfig
 	db             *gorm.DB
 	session        *discordgo.Session
+	handler        *Handler
 	networkManager *sharedgov.NetworkManager
 	refManager     *sharedgov.ReferendumManager
 	polkassembly   *sharedpolkassembly.Service
 	runtimeCtx     context.Context
-	cancelFunc     context.CancelFunc
+	cancel         context.CancelFunc
 	polkassemblyMu sync.Mutex
 }
 
@@ -38,7 +42,7 @@ const (
 	polkassemblyReplyColor = 0xF39C12
 )
 
-func (b *Bot) ensureNetworkManager() error {
+func (b *Module) ensureNetworkManager() error {
 	if b.networkManager != nil {
 		return nil
 	}
@@ -52,7 +56,7 @@ func (b *Bot) ensureNetworkManager() error {
 	return nil
 }
 
-func New(cfg *sharedconfig.FeedbackConfig, db *gorm.DB) (*Bot, error) {
+func NewModule(cfg *sharedconfig.FeedbackConfig, db *gorm.DB) (*Module, error) {
 	session, err := discordgo.New("Bot " + cfg.Base.Token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Discord session: %w", err)
@@ -86,7 +90,7 @@ func New(cfg *sharedconfig.FeedbackConfig, db *gorm.DB) (*Bot, error) {
 		}
 	}
 
-	bot := &Bot{
+	module := &Module{
 		config:         cfg,
 		db:             db,
 		session:        session,
@@ -95,18 +99,33 @@ func New(cfg *sharedconfig.FeedbackConfig, db *gorm.DB) (*Bot, error) {
 		polkassembly:   paService,
 	}
 
-	bot.initHandlers()
-	return bot, nil
+	module.handler = &Handler{
+		Config:         cfg,
+		DB:             db,
+		NetworkManager: networkManager,
+		RefManager:     refManager,
+		Deps: Dependencies{
+			EnsureThreadMapping:              module.ensureThreadMapping,
+			PostFeedbackMessage:              module.postFeedbackMessage,
+			SchedulePolkassemblyFirstMessage: module.schedulePolkassemblyFirstMessage,
+		},
+	}
+
+	module.initHandlers()
+	return module, nil
 }
 
-func (b *Bot) initHandlers() {
+// Name implements actions.Module.
+func (b *Module) Name() string { return "feedback" }
+
+func (b *Module) initHandlers() {
 	b.session.AddHandler(b.onReady)
 	b.session.AddHandler(b.onInteractionCreate)
 	b.session.AddHandler(b.onThreadCreate)
 	b.session.AddHandler(b.onThreadUpdate)
 }
 
-func (b *Bot) onReady(s *discordgo.Session, r *discordgo.Ready) {
+func (b *Module) onReady(s *discordgo.Session, r *discordgo.Ready) {
 	log.Printf("Feedback bot logged in as: %v#%v", s.State.User.Username, s.State.User.Discriminator)
 
 	if err := shareddiscord.RegisterSlashCommands(s, b.config.Base.GuildID, shareddiscord.CommandFeedback); err != nil {
@@ -124,7 +143,7 @@ func (b *Bot) onReady(s *discordgo.Session, r *discordgo.Ready) {
 	}
 }
 
-func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
+func (b *Module) onInteractionCreate(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	if i.Type != discordgo.InteractionApplicationCommand {
 		return
 	}
@@ -133,10 +152,10 @@ func (b *Bot) onInteractionCreate(s *discordgo.Session, i *discordgo.Interaction
 		return
 	}
 
-	b.handleFeedbackSlash(s, i)
+	b.handler.HandleSlash(s, i)
 }
 
-func (b *Bot) onThreadCreate(s *discordgo.Session, t *discordgo.ThreadCreate) {
+func (b *Module) onThreadCreate(s *discordgo.Session, t *discordgo.ThreadCreate) {
 	if t.Channel != nil {
 		if err := b.processThread(t.Channel); err != nil {
 			log.Printf("feedback: thread create mapping failed: %v", err)
@@ -144,7 +163,7 @@ func (b *Bot) onThreadCreate(s *discordgo.Session, t *discordgo.ThreadCreate) {
 	}
 }
 
-func (b *Bot) onThreadUpdate(s *discordgo.Session, t *discordgo.ThreadUpdate) {
+func (b *Module) onThreadUpdate(s *discordgo.Session, t *discordgo.ThreadUpdate) {
 	if t.Channel != nil {
 		if err := b.processThread(t.Channel); err != nil {
 			log.Printf("feedback: thread update mapping failed: %v", err)
@@ -152,10 +171,10 @@ func (b *Bot) onThreadUpdate(s *discordgo.Session, t *discordgo.ThreadUpdate) {
 	}
 }
 
-func (b *Bot) Start() error {
-	ctx, cancel := context.WithCancel(context.Background())
-	b.cancelFunc = cancel
-	b.runtimeCtx = ctx
+func (b *Module) Start(ctx context.Context) error {
+	runtimeCtx, cancel := context.WithCancel(ctx)
+	b.cancel = cancel
+	b.runtimeCtx = runtimeCtx
 
 	if err := b.session.Open(); err != nil {
 		return fmt.Errorf("failed to open Discord connection: %w", err)
@@ -163,18 +182,18 @@ func (b *Bot) Start() error {
 
 	go func() {
 		log.Println("feedback: starting network indexer service")
-		data.IndexerService(ctx, b.db, 5*time.Minute, b.config.IndexerWorkers)
+		data.IndexerService(runtimeCtx, b.db, 5*time.Minute, b.config.IndexerWorkers)
 	}()
 
-	go b.startReferendumSync(ctx)
-	go b.startPolkassemblyMonitor(ctx)
+	go b.startReferendumSync(runtimeCtx)
+	go b.startPolkassemblyMonitor(runtimeCtx)
 
 	return nil
 }
 
-func (b *Bot) Stop() {
-	if b.cancelFunc != nil {
-		b.cancelFunc()
+func (b *Module) Stop(ctx context.Context) {
+	if b.cancel != nil {
+		b.cancel()
 	}
 
 	b.runtimeCtx = nil
@@ -189,94 +208,9 @@ func (b *Bot) Stop() {
 			sqlDB.Close()
 		}
 	}
-
 }
 
-func (b *Bot) handleFeedbackSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	user := i.Member
-	if user == nil {
-		log.Printf("feedback: interaction missing member context")
-		return
-	}
-
-	message := ""
-	for _, opt := range i.ApplicationCommandData().Options {
-		if opt.Name == "message" {
-			message = strings.TrimSpace(opt.StringValue())
-			break
-		}
-	}
-
-	length := utf8.RuneCountInString(message)
-	if length < 10 || length > 5000 {
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Content: "Feedback must be between 10 and 5000 characters.",
-				Flags:   discordgo.MessageFlagsEphemeral,
-			},
-		})
-		return
-	}
-
-	if b.config.FeedbackRoleID != "" && !shareddiscord.HasRole(s, b.config.Base.GuildID, user.User.ID, b.config.FeedbackRoleID) {
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
-			Type: discordgo.InteractionResponseChannelMessageWithSource,
-			Data: &discordgo.InteractionResponseData{
-				Content: "You don't have permission to use this command.",
-				Flags:   discordgo.MessageFlagsEphemeral,
-			},
-		})
-		return
-	}
-
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{Type: discordgo.InteractionResponseDeferredChannelMessageWithSource}); err != nil {
-		log.Printf("feedback: failed to acknowledge interaction: %v", err)
-		return
-	}
-
-	threadInfo, err := b.ensureThreadMapping(i.ChannelID)
-	if err != nil {
-		msg := "This command must be used in a referendum thread."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
-		return
-	}
-
-	network := b.networkManager.GetByID(threadInfo.NetworkID)
-	if network == nil {
-		msg := "Unable to identify the associated network for this thread."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
-		return
-	}
-
-	var ref sharedgov.Ref
-	if err := b.db.First(&ref, threadInfo.RefDBID).Error; err != nil {
-		log.Printf("feedback: failed to load referendum %d: %v", threadInfo.RefDBID, err)
-		msg := "Could not load referendum details. Please try again later."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
-		return
-	}
-
-	authorTag := fmt.Sprintf("%s#%s", user.User.Username, user.User.Discriminator)
-
-	_, err = data.SaveFeedbackMessage(b.db, &ref, authorTag, message)
-	if err != nil {
-		log.Printf("feedback: failed to persist message: %v", err)
-		msg := "Failed to store feedback. Please try again later."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
-		return
-	}
-
-	b.schedulePolkassemblyFirstMessage(network, &ref)
-
-	b.postFeedbackMessage(s, i.ChannelID, network, &ref, authorTag, message)
-
-	response := fmt.Sprintf("✅ Thank you %s! Your feedback for %s referendum #%d has been posted.",
-		authorTag, network.Name, ref.RefID)
-	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &response})
-}
-
-func (b *Bot) postFeedbackMessage(s *discordgo.Session, threadID string, network *sharedgov.Network, ref *sharedgov.Ref, authorTag, message string) {
+func (b *Module) postFeedbackMessage(s *discordgo.Session, threadID string, network *sharedgov.Network, ref *sharedgov.Ref, authorTag, message string) {
 	if network == nil || ref == nil {
 		return
 	}
@@ -317,7 +251,7 @@ func (b *Bot) postFeedbackMessage(s *discordgo.Session, threadID string, network
 	}
 }
 
-func (b *Bot) ensureThreadMapping(channelID string) (*sharedgov.ThreadInfo, error) {
+func (b *Module) ensureThreadMapping(channelID string) (*sharedgov.ThreadInfo, error) {
 	info, err := b.refManager.FindThread(channelID)
 	if err == nil {
 		return info, nil
@@ -339,7 +273,7 @@ func (b *Bot) ensureThreadMapping(channelID string) (*sharedgov.ThreadInfo, erro
 	return b.refManager.FindThread(channelID)
 }
 
-func (b *Bot) processThread(thread *discordgo.Channel) error {
+func (b *Module) processThread(thread *discordgo.Channel) error {
 	if thread == nil {
 		return fmt.Errorf("nil thread provided")
 	}
@@ -365,7 +299,7 @@ func (b *Bot) processThread(thread *discordgo.Channel) error {
 	return nil
 }
 
-func (b *Bot) startReferendumSync(ctx context.Context) {
+func (b *Module) startReferendumSync(ctx context.Context) {
 	interval := time.Duration(b.config.IndexerIntervalMinutes) * time.Minute
 	if interval <= 0 {
 		interval = time.Hour
@@ -387,7 +321,7 @@ func (b *Bot) startReferendumSync(ctx context.Context) {
 	}
 }
 
-func (b *Bot) syncActiveThreads(ctx context.Context) error {
+func (b *Module) syncActiveThreads(ctx context.Context) error {
 	if b.config.Base.GuildID == "" {
 		return fmt.Errorf("guild id not configured")
 	}
@@ -406,7 +340,7 @@ func (b *Bot) syncActiveThreads(ctx context.Context) error {
 	return nil
 }
 
-func (b *Bot) startPolkassemblyMonitor(ctx context.Context) {
+func (b *Module) startPolkassemblyMonitor(ctx context.Context) {
 	ticker := time.NewTicker(15 * time.Minute)
 	defer ticker.Stop()
 
@@ -423,7 +357,7 @@ func (b *Bot) startPolkassemblyMonitor(ctx context.Context) {
 	}
 }
 
-func (b *Bot) refreshPolkassemblyCheck() error {
+func (b *Module) refreshPolkassemblyCheck() error {
 	if b.polkassembly == nil {
 		return nil
 	}
@@ -454,7 +388,7 @@ func (b *Bot) refreshPolkassemblyCheck() error {
 	return nil
 }
 
-func (b *Bot) processPolkassemblyReplies(ref *sharedgov.Ref) error {
+func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 	if b.polkassembly == nil {
 		return nil
 	}
@@ -549,7 +483,7 @@ func (b *Bot) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 	return nil
 }
 
-func (b *Bot) announcePolkassemblyReply(threadID string, network *sharedgov.Network, ref *sharedgov.Ref, comment sharedpolkassembly.Comment) {
+func (b *Module) announcePolkassemblyReply(threadID string, network *sharedgov.Network, ref *sharedgov.Ref, comment sharedpolkassembly.Comment) {
 	if b.session == nil || threadID == "" {
 		return
 	}
@@ -588,7 +522,7 @@ func (b *Bot) announcePolkassemblyReply(threadID string, network *sharedgov.Netw
 const polkassemblyRetryAttempts = 5
 const polkassemblyRetryDelay = 5 * time.Minute
 
-func (b *Bot) schedulePolkassemblyFirstMessage(network *sharedgov.Network, ref *sharedgov.Ref) {
+func (b *Module) schedulePolkassemblyFirstMessage(network *sharedgov.Network, ref *sharedgov.Ref) {
 	if b.polkassembly == nil || network == nil || ref == nil {
 		return
 	}
@@ -598,7 +532,7 @@ func (b *Bot) schedulePolkassemblyFirstMessage(network *sharedgov.Network, ref *
 	}()
 }
 
-func (b *Bot) ensurePolkassemblyFirstMessage(network *sharedgov.Network, ref *sharedgov.Ref) {
+func (b *Module) ensurePolkassemblyFirstMessage(network *sharedgov.Network, ref *sharedgov.Ref) {
 	if b.polkassembly == nil || network == nil || ref == nil {
 		return
 	}
@@ -608,7 +542,7 @@ func (b *Bot) ensurePolkassemblyFirstMessage(network *sharedgov.Network, ref *sh
 	}
 }
 
-func (b *Bot) tryPostFirstMessageWithRetry(network *sharedgov.Network, ref *sharedgov.Ref, attempt int) {
+func (b *Module) tryPostFirstMessageWithRetry(network *sharedgov.Network, ref *sharedgov.Ref, attempt int) {
 	if err := b.postFirstMessageIfNeeded(network, ref); err != nil {
 		log.Printf("feedback: polkassembly post failed (attempt %d): %v", attempt+1, err)
 		if attempt+1 < polkassemblyRetryAttempts {
@@ -619,7 +553,7 @@ func (b *Bot) tryPostFirstMessageWithRetry(network *sharedgov.Network, ref *shar
 	}
 }
 
-func (b *Bot) postFirstMessageIfNeeded(network *sharedgov.Network, ref *sharedgov.Ref) error {
+func (b *Module) postFirstMessageIfNeeded(network *sharedgov.Network, ref *sharedgov.Ref) error {
 	b.polkassemblyMu.Lock()
 	defer b.polkassemblyMu.Unlock()
 
