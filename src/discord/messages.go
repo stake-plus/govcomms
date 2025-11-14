@@ -2,6 +2,7 @@ package discord
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
