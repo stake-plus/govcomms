@@ -66,8 +66,7 @@ func New(cfg *sharedconfig.FeedbackConfig, db *gorm.DB) (*Bot, error) {
 
 	networkManager, err := sharedgov.NewNetworkManager(db)
 	if err != nil {
-		log.Printf("feedback: failed to create network manager: %v", err)
-		networkManager = nil
+		return nil, fmt.Errorf("feedback: load networks: %w", err)
 	}
 
 	refManager := sharedgov.NewReferendumManager(db)
