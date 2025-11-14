@@ -7,6 +7,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -31,6 +32,7 @@ type Bot struct {
 	polkassembly   *sharedpolkassembly.Service
 	runtimeCtx     context.Context
 	cancelFunc     context.CancelFunc
+	polkassemblyMu sync.Mutex
 }
 
 const (
@@ -272,36 +274,7 @@ func (b *Bot) handleFeedbackSlash(s *discordgo.Session, i *discordgo.Interaction
 		return
 	}
 
-	if b.polkassembly != nil {
-		if count, err := data.CountFeedbackMessages(b.db, threadInfo.RefDBID); err != nil {
-			log.Printf("feedback: failed to count messages: %v", err)
-		} else if count == 1 {
-			gcURL := shareddata.GetSetting("gc_url")
-			if gcURL == "" {
-				gcURL = "http://localhost:3000"
-			}
-			gcURL = strings.TrimRight(gcURL, "/")
-			link := fmt.Sprintf("%s/%s/%d", gcURL, strings.ToLower(network.Name), ref.RefID)
-
-			networkName := network.Name
-			refID := ref.RefID
-			messageCopy := message
-			messageID := msgRecord.ID
-
-			go func() {
-				commentID, err := b.polkassembly.PostFirstMessage(networkName, int(refID), messageCopy, link)
-				if err != nil {
-					log.Printf("feedback: polkassembly post failed: %v", err)
-					return
-				}
-				if commentID != 0 {
-					if err := data.UpdateFeedbackMessagePolkassembly(b.db, messageID, fmt.Sprintf("%d", commentID), nil, ""); err != nil {
-						log.Printf("feedback: failed to update message with polkassembly id: %v", err)
-					}
-				}
-			}()
-		}
-	}
+	b.schedulePolkassemblyFirstMessage(network, &ref)
 
 	if b.redis != nil {
 		payload := map[string]interface{}{
@@ -517,6 +490,8 @@ func (b *Bot) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 		return fmt.Errorf("no network configured for id %d", ref.NetworkID)
 	}
 
+	b.ensurePolkassemblyFirstMessage(network, ref)
+
 	messages, err := data.GetPolkassemblyMessages(b.db, ref.ID)
 	if err != nil {
 		return err
@@ -646,4 +621,63 @@ func (b *Bot) announcePolkassemblyReply(threadID string, network *sharedgov.Netw
 	}); err != nil {
 		log.Printf("feedback: failed to post polkassembly reply to Discord: %v", err)
 	}
+}
+
+func (b *Bot) schedulePolkassemblyFirstMessage(network *sharedgov.Network, ref *sharedgov.Ref) {
+	if b.polkassembly == nil || network == nil || ref == nil {
+		return
+	}
+
+	go func() {
+		if err := b.postFirstMessageIfNeeded(network, ref); err != nil {
+			log.Printf("feedback: polkassembly post failed: %v", err)
+		}
+	}()
+}
+
+func (b *Bot) ensurePolkassemblyFirstMessage(network *sharedgov.Network, ref *sharedgov.Ref) {
+	if b.polkassembly == nil || network == nil || ref == nil {
+		return
+	}
+
+	if err := b.postFirstMessageIfNeeded(network, ref); err != nil {
+		log.Printf("feedback: polkassembly post failed: %v", err)
+	}
+}
+
+func (b *Bot) postFirstMessageIfNeeded(network *sharedgov.Network, ref *sharedgov.Ref) error {
+	b.polkassemblyMu.Lock()
+	defer b.polkassemblyMu.Unlock()
+
+	firstMsg, err := data.GetFirstFeedbackMessage(b.db, ref.ID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return fmt.Errorf("load first feedback message: %w", err)
+	}
+
+	if firstMsg.PolkassemblyCommentID != nil && *firstMsg.PolkassemblyCommentID != "" {
+		return nil
+	}
+
+	gcURL := shareddata.GetSetting("gc_url")
+	if gcURL == "" {
+		gcURL = "http://localhost:3000"
+	}
+	gcURL = strings.TrimRight(gcURL, "/")
+	link := fmt.Sprintf("%s/%s/%d", gcURL, strings.ToLower(network.Name), ref.RefID)
+
+	commentID, err := b.polkassembly.PostFirstMessage(network.Name, int(ref.RefID), firstMsg.Body, link)
+	if err != nil {
+		return err
+	}
+
+	if commentID != 0 {
+		if err := data.UpdateFeedbackMessagePolkassembly(b.db, firstMsg.ID, fmt.Sprintf("%d", commentID), nil, ""); err != nil {
+			return fmt.Errorf("update feedback message polkassembly id: %w", err)
+		}
+	}
+
+	return nil
 }

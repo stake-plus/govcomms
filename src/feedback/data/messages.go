@@ -97,3 +97,12 @@ func SaveExternalPolkassemblyReply(db *gorm.DB, refDBID uint64, author, body str
 
 	return &msg, nil
 }
+
+// GetFirstFeedbackMessage returns the earliest feedback message for a referendum.
+func GetFirstFeedbackMessage(db *gorm.DB, refDBID uint64) (*sharedgov.RefMessage, error) {
+	var msg sharedgov.RefMessage
+	if err := db.Where("ref_id = ?", refDBID).Order("created_at ASC").First(&msg).Error; err != nil {
+		return nil, err
+	}
+	return &msg, nil
+}

@@ -342,6 +342,10 @@ func (c *Client) fetchUserID(network string) (int, error) {
 		c.network = strings.ToLower(strings.TrimSpace(network))
 	}
 
+	if c.loginData == nil || c.loginData.Token == "" {
+		return 0, fmt.Errorf("fetch profile: not authenticated")
+	}
+
 	if c.network == "" && c.loginData != nil {
 		c.network = c.loginData.Network
 	}
@@ -356,6 +360,7 @@ func (c *Client) fetchUserID(network string) (int, error) {
 		return 0, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("x-network", c.network)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.loginData.Token))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
