@@ -134,7 +134,7 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 	rejectedCount := 0
 	unknownCount := 0
 
-	var claimBlocks []string
+	var claimPanels []shareddiscord.StyledMessage
 	for i, result := range results {
 		statusEmoji := "❓"
 		switch result.Status {
@@ -160,16 +160,12 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 		}
 
 		statusLabel := strings.ToUpper(string(result.Status))
-		block := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d • %s", i+1, statusLabel), body)
-		claimBlocks = append(claimBlocks, block)
+		panel := shareddiscord.BuildStyledMessage(fmt.Sprintf("Claim %d • %s", i+1, statusLabel), body)
+		claimPanels = append(claimPanels, panel)
 	}
 
 	summaryMsg := fmt.Sprintf("✅ Valid: %d\n❌ Rejected: %d\n❓ Unknown: %d", validCount, rejectedCount, unknownCount)
-	finalText := fmt.Sprintf("%s\n\n%s", headerBody, summaryMsg)
-	if len(claimBlocks) > 0 {
-		finalText += "\n\n" + strings.Join(claimBlocks, "\n\n")
-	}
-	finalHeaderBody := finalText
+	finalHeaderBody := fmt.Sprintf("%s\n\n%s", headerBody, summaryMsg)
 	if headerHandle != nil {
 		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
 			log.Printf("research: header update failed: %v", err)
@@ -178,6 +174,8 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 	} else {
 		sendStyledMessage(s, channelID, headerTitle, finalHeaderBody)
 	}
+
+	dispatchPanels(s, channelID, claimPanels, "research")
 }
 
 func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.InteractionCreate, network string, refID uint32) {
@@ -227,7 +225,7 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 	rejectedCount := 0
 	unknownCount := 0
 
-	var claimBlocks []string
+	var claimPanels []shareddiscord.StyledMessage
 	for idx, result := range results {
 		statusEmoji := "❓"
 		switch result.Status {
@@ -253,16 +251,12 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 		}
 
 		statusLabel := strings.ToUpper(string(result.Status))
-		block := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d • %s", idx+1, statusLabel), body)
-		claimBlocks = append(claimBlocks, block)
+		panel := shareddiscord.BuildStyledMessage(fmt.Sprintf("Claim %d • %s", idx+1, statusLabel), body)
+		claimPanels = append(claimPanels, panel)
 	}
 
 	summaryMsg := fmt.Sprintf("✅ Valid: %d\n❌ Rejected: %d\n❓ Unknown: %d", validCount, rejectedCount, unknownCount)
-	finalText := fmt.Sprintf("%s\n\n%s", headerBody, summaryMsg)
-	if len(claimBlocks) > 0 {
-		finalText += "\n\n" + strings.Join(claimBlocks, "\n\n")
-	}
-	finalHeaderBody := finalText
+	finalHeaderBody := fmt.Sprintf("%s\n\n%s", headerBody, summaryMsg)
 	if headerHandle != nil {
 		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
 			log.Printf("research: slash header update failed: %v", err)
@@ -271,6 +265,8 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 	} else {
 		sendStyledMessage(s, i.ChannelID, headerTitle, finalHeaderBody)
 	}
+
+	dispatchPanels(s, i.ChannelID, claimPanels, "research")
 }
 
 func sendStyledMessage(s *discordgo.Session, channelID, title, body string) {
@@ -305,5 +301,23 @@ func editStyledMessage(s *discordgo.Session, channelID, messageID, title, body s
 	}
 	if _, err := shareddiscord.EditMessageComplexNoEmbed(s, edit); err != nil {
 		log.Printf("research: edit failed: %v", err)
+	}
+}
+
+func dispatchPanels(s *discordgo.Session, channelID string, panels []shareddiscord.StyledMessage, prefix string) {
+	if len(panels) == 0 {
+		return
+	}
+	for _, panel := range panels {
+		msg := &discordgo.MessageSend{
+			Content: panel.Content,
+		}
+		if len(panel.Components) > 0 {
+			msg.Components = panel.Components
+		}
+		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, channelID, msg); err != nil {
+			log.Printf("%s: panel send failed: %v", prefix, err)
+			return
+		}
 	}
 }
