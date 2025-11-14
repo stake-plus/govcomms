@@ -158,7 +158,7 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 		statusLine := fmt.Sprintf("Verification Status: %s", strings.Join(statusParts, " • "))
 
 		body := strings.Join([]string{nameLine, assessmentLine, statusLine}, "\n\n")
-		panel := shareddiscord.BuildStyledMessage("Team Member", body)
+		panel := shareddiscord.BuildStyledMessage("", body)
 		memberPanels = append(memberPanels, panel)
 	}
 
@@ -253,7 +253,7 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 		statusLine := fmt.Sprintf("Verification Status: %s", strings.Join(statusParts, " • "))
 
 		body := strings.Join([]string{nameLine, assessmentLine, statusLine}, "\n\n")
-		panel := shareddiscord.BuildStyledMessage("Team Member", body)
+		panel := shareddiscord.BuildStyledMessage("", body)
 		memberPanels = append(memberPanels, panel)
 	}
 
