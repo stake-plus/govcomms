@@ -24,6 +24,17 @@ type Handler struct {
 	TeamsAnalyzer  *teams.Analyzer
 }
 
+type cardContent struct {
+	Title string
+	Body  string
+}
+
+type columnGroup struct {
+	MessageID string
+	ChannelID string
+	Indexes   []int
+}
+
 // HandleMessage processes the message-based team command.
 func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if h == nil {
