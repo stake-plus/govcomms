@@ -1,41 +1,29 @@
 [Unit]
-Description=GovComms Multi-Bot Service
+Description=Stake Plus GovComms Service
 Documentation=https://github.com/stake-plus/govcomms
-After=network.target mysql.service
-Wants=mysql.service
+After=network-online.target mysql.service
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=govcomms
 Group=govcomms
 WorkingDirectory=/opt/govcomms
+EnvironmentFile=/opt/govcomms/.env.govcomms
 
-# Core configuration
-Environment="MYSQL_DSN=govcomms:password@tcp(127.0.0.1:3306)/govcomms"
-Environment="DISCORD_TOKEN=your-discord-token"
-Environment="GUILD_ID=your-guild-id"
-Environment="QA_ROLE_ID=role-id-for-qa"
-Environment="RESEARCH_ROLE_ID=role-id-for-research"
-Environment="FEEDBACK_ROLE_ID=role-id-for-feedback"
-Environment="OPENAI_API_KEY=sk-your-openai-key"
-Environment="ENABLE_FEEDBACK=1"
-
-# Optionally load overrides from an env file
-EnvironmentFile=-/opt/govcomms/.env.govcomms
-
-ExecStart=/opt/govcomms/bin/govcomms --enable-feedback
-
-Restart=always
-RestartSec=10
+# Core execution
+ExecStart=/opt/govcomms/bin/govcomms --enable-qa --enable-research --enable-feedback
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=60
 StartLimitBurst=5
-StartLimitIntervalSec=300
 
 # Hardening
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
+ProtectSystem=full
 ProtectHome=true
-ReadWritePaths=/opt/govcomms/logs
+ReadWritePaths=/opt/govcomms /var/log/govcomms
 
 # Resource limits
 LimitNOFILE=65536
@@ -47,3 +35,4 @@ SyslogIdentifier=govcomms
 
 [Install]
 WantedBy=multi-user.target
+
