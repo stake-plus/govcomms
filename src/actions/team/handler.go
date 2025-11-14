@@ -118,7 +118,7 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 
 	memberMessages := make(map[int]*discordgo.Message)
 	for i, member := range members {
-		memberBody := fmt.Sprintf("%s", member.Name)
+		memberBody := member.Name
 		if member.Role != "" {
 			memberBody += fmt.Sprintf(" (%s)", member.Role)
 		}
