@@ -1,6 +1,6 @@
 # Discord Modules
 
-This repository currently exposes three Discord-facing modules that all run inside the `govcomms` binary. Each module registers its own slash commands when the bot logs in and shares the same connection, database handle, and (optionally) Redis client.
+This repository currently exposes three Discord-facing modules that all run inside the `govcomms` binary. Each module registers its own slash commands when the bot logs in and shares the same connection and database handle.
 
 ## Module Summary
 
@@ -42,12 +42,12 @@ All commands must be invoked from an existing referendum thread that the bot can
 ### `/feedback`
 - **Module**: Feedback bot
 - **Role requirement**: `feedback_role_id`
-- Ensures the thread can be mapped to a `Ref` record, persists the message, publishes a Redis event (type `feedback_submitted`), and posts a Discord embed summarising the submission. Long messages include a `.txt` attachment.
+- Ensures the thread can be mapped to a `Ref` record, persists the message, and posts a Discord embed summarising the submission. Long messages include a `.txt` attachment. The bot also mirrors the first DAO comment to Polkassembly when credentials are configured.
 
 ## Configuration Checklist
 
-1. **Database & Redis**
-   - A MySQL DSN is required for all modules. The feedback module additionally needs Redis when enabled (`REDIS_URL`).
+1. **Database**
+   - A MySQL DSN is required for all modules.
    - `shared/config/services.go` outlines every field loaded from the database or environment.
    - Set `gc_url` in the `settings` table so feedback embeds can link back to your external discussion UI when mirroring to Polkassembly.
 
@@ -79,7 +79,6 @@ All commands must be invoked from an existing referendum thread that the bot can
 
 - Each module logs a startup message when it successfully registers slash commands.
 - Feedback embeds use a consistent colour (`0x5865F2`) and include the Discord user tag in the footer.
-- Redis publishes messages on the `govcomms.messages` stream. Downstream workers are expected to consume and dispatch those events.
 
 ## Updating Thread Mappings
 

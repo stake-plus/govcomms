@@ -6,7 +6,7 @@ GovComms currently ships as a single Go binary (`govcomms`) that can host up to 
 
 - **AI Q&A bot (`/question`, `/refresh`, `/context`)** – Answers referendum questions using the shared AI client.
 - **Research bot (`/research`, `/team`)** – Runs deeper AI-assisted analysis on proposals.
-- **Feedback bot (`/feedback`)** – Accepts feedback inside referendum threads, stores it in MySQL, publishes a Redis event, posts an embed back into the thread, and (when a Polkassembly seed is configured for the network) publishes the first reply on Polkassembly.
+- **Feedback bot (`/feedback`)** – Accepts feedback inside referendum threads, stores it in MySQL, posts an embed back into the thread, and (when a Polkassembly seed is configured for the network) publishes the first reply on Polkassembly.
 
 Each module is optional and can be toggled on or off at runtime. The codebase no longer includes the REST API or React UI that earlier documentation referenced.
 
@@ -23,7 +23,6 @@ Each module is optional and can be toggled on or off at runtime. The codebase no
 The services share:
 
 - One MySQL connection (GORM) for configuration and governance data
-- Optional Redis client (feedback bot only) for publishing queue events
 - Shared AI provider factory (OpenAI / Claude) and HTTP tooling
 
 ## Building & Running
@@ -67,7 +66,6 @@ Settings are read from the `settings` table first (via `shared/data/settings.go`
 | `ai_system_prompt` / `AI_SYSTEM_PROMPT` | Custom system prompt for AI responses |
 | `ai_enable_web_search` / `AI_ENABLE_WEB_SEARCH` | `"1"` to enable web search augmentation |
 | `ai_enable_deep_search` / `AI_ENABLE_DEEP_SEARCH` | `"1"` to enable deep search aggregation |
-| `redis_url` / `REDIS_URL` | Required only when `--enable-feedback` is true |
 | `indexer_workers` | Number of block indexer workers (feedback bot) |
 | `indexer_interval_minutes` | Interval for referendum sync (feedback bot) |
 | `gc_url` | Base URL used when linking back to the external discussion page |
@@ -95,7 +93,7 @@ The shared config loader (`shared/config/services.go`) can be consulted for the 
 | AI Q&A | `/context` | Display recent Q&A history |
 | Research | `/research` | Produce AI-generated claim verification inside the thread |
 | Research | `/team` | Produce AI-generated team analysis |
-| Feedback | `/feedback <message>` | Store feedback, publish a Redis event, and post an embed |
+| Feedback | `/feedback <message>` | Store feedback in MySQL and post an embed in the thread |
 
 ## Current Limitations
 
@@ -110,5 +108,4 @@ These gaps should be addressed before relying on the documentation for productio
 
 1. Review `docs/GCBot.md` for module-specific behavior and configuration notes.
 2. Update `docs/systemd/govcomms.service` with environment values appropriate for your deployment.
-3. Create a runbook describing any external processors that consume the Redis stream produced by `/feedback`.
-4. Reintroduce (or remove references to) the API/UI components if they are part of your target architecture.
+3. Reintroduce (or remove references to) the API/UI components if they are part of your target architecture.

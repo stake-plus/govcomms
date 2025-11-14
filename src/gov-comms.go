@@ -9,7 +9,6 @@ import (
 
 	aiqabot "github.com/stake-plus/govcomms/src/ai-qa/bot"
 	fbbot "github.com/stake-plus/govcomms/src/feedback/bot"
-	fbdata "github.com/stake-plus/govcomms/src/feedback/data"
 	rbbot "github.com/stake-plus/govcomms/src/research-bot/bot"
 	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
 	shareddata "github.com/stake-plus/govcomms/src/shared/data"
@@ -59,8 +58,7 @@ func main() {
 
 	if *enableFeedback {
 		cfg := sharedconfig.LoadFeedbackConfig(db)
-		rdb := fbdata.MustRedis(cfg.RedisURL)
-		feedback, err = fbbot.New(&cfg, db, rdb)
+		feedback, err = fbbot.New(&cfg, db)
 		if err != nil {
 			log.Fatalf("feedback bot: %v", err)
 		}

@@ -12,7 +12,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/redis/go-redis/v9"
 	"github.com/stake-plus/govcomms/src/feedback/data"
 	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
 	shareddata "github.com/stake-plus/govcomms/src/shared/data"
@@ -25,7 +24,6 @@ import (
 type Bot struct {
 	config         *sharedconfig.FeedbackConfig
 	db             *gorm.DB
-	redis          *redis.Client
 	session        *discordgo.Session
 	networkManager *sharedgov.NetworkManager
 	refManager     *sharedgov.ReferendumManager
@@ -54,7 +52,7 @@ func (b *Bot) ensureNetworkManager() error {
 	return nil
 }
 
-func New(cfg *sharedconfig.FeedbackConfig, db *gorm.DB, rdb *redis.Client) (*Bot, error) {
+func New(cfg *sharedconfig.FeedbackConfig, db *gorm.DB) (*Bot, error) {
 	session, err := discordgo.New("Bot " + cfg.Base.Token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Discord session: %w", err)
@@ -92,7 +90,6 @@ func New(cfg *sharedconfig.FeedbackConfig, db *gorm.DB, rdb *redis.Client) (*Bot
 	bot := &Bot{
 		config:         cfg,
 		db:             db,
-		redis:          rdb,
 		session:        session,
 		networkManager: networkManager,
 		refManager:     refManager,
@@ -194,9 +191,6 @@ func (b *Bot) Stop() {
 		}
 	}
 
-	if b.redis != nil {
-		b.redis.Close()
-	}
 }
 
 func (b *Bot) handleFeedbackSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -275,22 +269,6 @@ func (b *Bot) handleFeedbackSlash(s *discordgo.Session, i *discordgo.Interaction
 	}
 
 	b.schedulePolkassemblyFirstMessage(network, &ref)
-
-	if b.redis != nil {
-		payload := map[string]interface{}{
-			"type":             "feedback_submitted",
-			"network":          network.Name,
-			"network_id":       network.ID,
-			"ref_id":           ref.RefID,
-			"discord_user_id":  user.User.ID,
-			"discord_user_tag": authorTag,
-			"message":          message,
-			"timestamp":        time.Now().UTC().Format(time.RFC3339),
-		}
-		if err := data.PublishMessage(context.Background(), b.redis, payload); err != nil {
-			log.Printf("feedback: failed to publish redis payload: %v", err)
-		}
-	}
 
 	b.postFeedbackMessage(s, i.ChannelID, network, &ref, authorTag, message)
 
@@ -547,7 +525,7 @@ func (b *Bot) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 		}
 
 		createdAt := comment.ParsedCreatedAt()
-		msgRecord, err := data.SaveExternalPolkassemblyReply(
+		_, err := data.SaveExternalPolkassemblyReply(
 			b.db,
 			ref.ID,
 			comment.User.Username,
@@ -567,21 +545,6 @@ func (b *Bot) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 
 		b.announcePolkassemblyReply(threadInfo.ThreadID, network, ref, comment)
 
-		if b.redis != nil {
-			payload := map[string]interface{}{
-				"type":       "polkassembly_reply",
-				"network":    network.Name,
-				"network_id": network.ID,
-				"ref_id":     ref.RefID,
-				"comment_id": comment.ID,
-				"author":     comment.User.Username,
-				"message_id": msgRecord.ID,
-				"created_at": msgRecord.CreatedAt.UTC().Format(time.RFC3339),
-			}
-			if err := data.PublishMessage(context.Background(), b.redis, payload); err != nil {
-				log.Printf("feedback: failed to publish polkassembly reply payload: %v", err)
-			}
-		}
 	}
 
 	return nil

@@ -6,12 +6,10 @@ toolchain go1.24.2
 
 require (
 	// Crypto
-	github.com/ChainSafe/go-schnorrkel v1.1.0
+	github.com/ChainSafe/go-schnorrkel v1.1.0 // indirect
 	// Discord
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/mr-tron/base58 v1.2.0
-	// Cache
-	github.com/redis/go-redis/v9 v9.12.1
 	// Storage
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.30.1
@@ -26,12 +24,10 @@ require (
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
-	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cosmos/go-bip39 v1.0.0 // indirect
 	github.com/deckarep/golang-set v1.8.0 // indirect
 	github.com/decred/base58 v1.0.5 // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.1.0 // indirect
-	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/ethereum/go-ethereum v1.16.2 // indirect
 	github.com/go-sql-driver/mysql v1.9.3 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect

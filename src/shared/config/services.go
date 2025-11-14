@@ -1,7 +1,6 @@
 package config
 
 import (
-	"os"
 	"strconv"
 
 	shareddata "github.com/stake-plus/govcomms/src/shared/data"
@@ -109,7 +108,6 @@ func LoadResearchConfig(db *gorm.DB) ResearchConfig {
 type FeedbackConfig struct {
 	Base
 	FeedbackRoleID         string
-	RedisURL               string
 	IndexerWorkers         int
 	IndexerIntervalMinutes int
 	PolkassemblyEndpoint   string
@@ -119,7 +117,6 @@ type FeedbackConfig struct {
 func LoadFeedbackConfig(db *gorm.DB) FeedbackConfig {
 	base := LoadBase(db)
 	feedbackRoleID := GetSetting("feedback_role_id", "FEEDBACK_ROLE_ID", "")
-	redisURL := getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 	polkassemblyEndpoint := GetSetting("polkassembly_endpoint", "POLKASSEMBLY_ENDPOINT", "https://api.polkassembly.io/api/v1")
 
 	workers := 10
@@ -139,16 +136,8 @@ func LoadFeedbackConfig(db *gorm.DB) FeedbackConfig {
 	return FeedbackConfig{
 		Base:                   base,
 		FeedbackRoleID:         feedbackRoleID,
-		RedisURL:               redisURL,
 		IndexerWorkers:         workers,
 		IndexerIntervalMinutes: intervalMinutes,
 		PolkassemblyEndpoint:   polkassemblyEndpoint,
 	}
-}
-
-func getenv(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }

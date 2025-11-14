@@ -1,8 +1,8 @@
 [Unit]
 Description=GovComms Multi-Bot Service
 Documentation=https://github.com/stake-plus/govcomms
-After=network.target mysql.service redis.service
-Wants=mysql.service redis.service
+After=network.target mysql.service
+Wants=mysql.service
 
 [Service]
 Type=simple
@@ -12,7 +12,6 @@ WorkingDirectory=/opt/govcomms
 
 # Core configuration
 Environment="MYSQL_DSN=govcomms:password@tcp(127.0.0.1:3306)/govcomms"
-Environment="REDIS_URL=redis://127.0.0.1:6379/0"
 Environment="DISCORD_TOKEN=your-discord-token"
 Environment="GUILD_ID=your-guild-id"
 Environment="QA_ROLE_ID=role-id-for-qa"
