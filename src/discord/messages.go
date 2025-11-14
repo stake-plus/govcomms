@@ -2,55 +2,18 @@ package discord
 
 import (
 	"fmt"
-	"net/url"
 	"regexp"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/bwmarrin/discordgo"
-)
-
-type StyledProfile struct {
-	InnerWidth       int
-	Padding          int
-	TopPadding       int
-	BottomPadding    int
-	HorizontalMargin int
-	CenterTitle      bool
-}
-
-var (
-	StyledProfileDefault = StyledProfile{
-		InnerWidth: 72,
-		Padding:    1,
-	}
-	StyledProfileAnswer = StyledProfile{
-		InnerWidth:       100,
-		Padding:          1,
-		TopPadding:       1,
-		BottomPadding:    1,
-		HorizontalMargin: 4,
-	}
-	StyledProfileHeader = StyledProfile{
-		InnerWidth:       100,
-		Padding:          1,
-		TopPadding:       1,
-		BottomPadding:    1,
-		HorizontalMargin: 4,
-		CenterTitle:      true,
-	}
-	StyledProfileColumn = StyledProfile{
-		InnerWidth:       48,
-		Padding:          1,
-		TopPadding:       1,
-		BottomPadding:    1,
-		HorizontalMargin: 2,
-	}
 )
 
 const (
 	MaxDiscordMessageLen = 2000
 	SafeChunkLen         = 1900
+
+	maxLinkButtons     = 25
+	maxButtonLabelRune = 80
 )
 
 // BuildLongMessages formats a long message for Discord by chunking across messages.
@@ -217,29 +180,15 @@ func BeautifyForDiscord(text string) string {
 	return WrapURLsNoEmbed(result)
 }
 
-// StyledMessage represents a fully formatted Discord message plus optional components.
+// StyledMessage represents a formatted block plus optional link buttons.
 type StyledMessage struct {
 	Content    string
 	Components []discordgo.MessageComponent
-	BoxLines   []string
-	Profile    StyledProfile
 }
-
-const (
-	maxLinkButtons     = 25
-	maxButtonLabelRune = 80
-
-	boxColumnsGap    = "  "
-	maxComponentRows = 5
-
-	ansiDim   = "\u001b[2m"
-	ansiReset = "\u001b[0m"
-)
 
 var wrappedURLRegex = regexp.MustCompile(`<https?://[^\s<>]+>`)
 
-// BuildStyledMessages formats content with a consistent professional code-block style,
-// splits it into Discord-safe chunks, and attaches link buttons when URLs are detected.
+// BuildStyledMessages formats content with a consistent Markdown layout and splits it into Discord-safe chunks.
 func BuildStyledMessages(title string, body string, userID string) []StyledMessage {
 	body = strings.TrimSpace(body)
 	if body == "" {
@@ -294,9 +243,8 @@ func FormatStyledBlock(title string, body string) string {
 }
 
 type linkReference struct {
-	Index   int
-	URL     string
-	Display string
+	Index int
+	URL   string
 }
 
 func buildStyledMessageFromCleanChunk(title string, cleanedBody string) StyledMessage {
@@ -306,12 +254,11 @@ func buildStyledMessageFromCleanChunk(title string, cleanedBody string) StyledMe
 	}
 
 	withoutURLs, refs := replaceURLsWithReferences(trimmed)
-	boxLines := renderProfessionalBox(title, withoutURLs)
+	content := formatSimpleBlock(title, withoutURLs)
 
 	return StyledMessage{
-		Content:    wrapBoxLines(boxLines),
+		Content:    content,
 		Components: buildLinkButtons(refs),
-		BoxLines:   boxLines,
 	}
 }
 
@@ -337,17 +284,15 @@ func replaceURLsWithReferences(input string) (string, []linkReference) {
 		idx, exists := seen[urlStr]
 		if !exists {
 			ref := linkReference{
-				Index:   len(refOrder) + 1,
-				URL:     urlStr,
-				Display: summarizeURLDisplay(urlStr),
+				Index: len(refOrder) + 1,
+				URL:   urlStr,
 			}
 			refOrder = append(refOrder, ref)
 			idx = len(refOrder) - 1
 			seen[urlStr] = idx
 		}
 
-		_ = refOrder[idx]
-		builder.WriteString(fmt.Sprintf("[Source %d]", refOrder[idx].Index))
+		builder.WriteString(fmt.Sprintf("Source #%d", refOrder[idx].Index))
 		last = match[1]
 	}
 
@@ -371,7 +316,7 @@ func buildLinkButtons(refs []linkReference) []discordgo.MessageComponent {
 	for i := 0; i < limit; i++ {
 		ref := refs[i]
 		button := discordgo.Button{
-			Label: truncateForDiscord(fmt.Sprintf("Source %d · %s", ref.Index, ref.Display), maxButtonLabelRune),
+			Label: truncateForDiscord(fmt.Sprintf("Source #%d", ref.Index), maxButtonLabelRune),
 			Style: discordgo.LinkButton,
 			URL:   ref.URL,
 		}
@@ -389,217 +334,21 @@ func buildLinkButtons(refs []linkReference) []discordgo.MessageComponent {
 	return components
 }
 
-// CombineStyledGroup merges multiple StyledMessages into a single payload laid out horizontally.
-func CombineStyledGroup(group []StyledMessage) StyledMessage {
-	switch len(group) {
-	case 0:
-		return StyledMessage{}
-	case 1:
-		return group[0]
+func formatSimpleBlock(title string, body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		body = "_No content_"
 	}
 
-	combinedLines := combineBoxLineSets(group)
-	return StyledMessage{
-		Content:    wrapBoxLines(combinedLines),
-		Components: mergeComponentRows(group),
-		BoxLines:   combinedLines,
+	block := styleBlockquote(body)
+	var sb strings.Builder
+	if strings.TrimSpace(title) != "" {
+		sb.WriteString(fmt.Sprintf("**%s**\n", strings.TrimSpace(title)))
+		sb.WriteString(strings.Repeat("─", 24))
+		sb.WriteString("\n\n")
 	}
-}
-
-func renderProfessionalBox(title string, body string) []string {
-	bodyLines := wrapBodyLines(body, boxInnerWidth)
-	if len(bodyLines) == 0 {
-		bodyLines = []string{""}
-	}
-
-	innerWidth := boxInnerWidth + boxPadding*2
-	border := strings.Repeat("─", innerWidth+2)
-
-	var lines []string
-	lines = append(lines, "╭"+border+"╮")
-
-	if trimmedTitle := strings.TrimSpace(title); trimmedTitle != "" {
-		lines = append(lines, formatBoxLine(trimmedTitle, innerWidth))
-		lines = append(lines, "├"+border+"┤")
-	}
-
-	for _, line := range bodyLines {
-		lines = append(lines, formatBoxLine(line, innerWidth))
-	}
-
-	lines = append(lines, "╰"+border+"╯")
-	return lines
-}
-
-func wrapBoxLines(lines []string) string {
-	if len(lines) == 0 {
-		return "```ansi\n```"
-	}
-	content := strings.Join(lines, "\n")
-	return fmt.Sprintf("```ansi\n%s%s%s\n```", ansiDim, content, ansiReset)
-}
-
-func formatBoxLine(content string, innerWidth int) string {
-	padded := padRight(content, boxInnerWidth)
-	leftPad := strings.Repeat(" ", boxPadding)
-	rightPad := leftPad
-	return fmt.Sprintf("│ %s%s%s │", leftPad, padded, rightPad)
-}
-
-func wrapBodyLines(body string, width int) []string {
-	raw := strings.Split(body, "\n")
-	var lines []string
-	for _, line := range raw {
-		line = strings.TrimRight(line, " ")
-		if line == "" {
-			lines = append(lines, "")
-			continue
-		}
-		wrapped := wrapLine(line, width)
-		lines = append(lines, wrapped...)
-	}
-	return lines
-}
-
-func wrapLine(line string, width int) []string {
-	if width <= 0 {
-		return []string{line}
-	}
-
-	words := strings.Fields(line)
-	if len(words) == 0 {
-		return []string{""}
-	}
-
-	var temp []string
-	var current strings.Builder
-
-	for _, word := range words {
-		if current.Len() == 0 {
-			current.WriteString(word)
-			continue
-		}
-
-		if runeLen(current.String())+1+runeLen(word) > width {
-			temp = append(temp, current.String())
-			current.Reset()
-			current.WriteString(word)
-		} else {
-			current.WriteByte(' ')
-			current.WriteString(word)
-		}
-	}
-
-	if current.Len() > 0 {
-		temp = append(temp, current.String())
-	}
-
-	var lines []string
-	for _, entry := range temp {
-		if runeLen(entry) <= width {
-			lines = append(lines, entry)
-			continue
-		}
-		lines = append(lines, splitLongWord(entry, width)...)
-	}
-
-	return lines
-}
-
-func splitLongWord(text string, width int) []string {
-	if width <= 0 {
-		return []string{text}
-	}
-
-	var result []string
-	runes := []rune(text)
-	for len(runes) > width {
-		result = append(result, string(runes[:width]))
-		runes = runes[width:]
-	}
-	if len(runes) > 0 {
-		result = append(result, string(runes))
-	}
-	return result
-}
-
-func padRight(text string, width int) string {
-	runes := []rune(text)
-	if len(runes) >= width {
-		return string(runes[:width])
-	}
-	return text + strings.Repeat(" ", width-len(runes))
-}
-
-func runeLen(value string) int {
-	return utf8.RuneCountInString(value)
-}
-
-func combineBoxLineSets(group []StyledMessage) []string {
-	maxLines := 0
-	lineWidths := make([]int, len(group))
-	for idx, msg := range group {
-		if len(msg.BoxLines) > maxLines {
-			maxLines = len(msg.BoxLines)
-		}
-		if len(msg.BoxLines) > 0 {
-			lineWidths[idx] = len(msg.BoxLines[0])
-		} else {
-			lineWidths[idx] = boxLineWidth
-		}
-	}
-	if maxLines == 0 {
-		return nil
-	}
-
-	var combined []string
-	for lineIdx := 0; lineIdx < maxLines; lineIdx++ {
-		var segments []string
-		for colIdx, msg := range group {
-			if lineIdx < len(msg.BoxLines) {
-				segments = append(segments, msg.BoxLines[lineIdx])
-			} else {
-				segments = append(segments, strings.Repeat(" ", lineWidths[colIdx]))
-			}
-		}
-		combined = append(combined, strings.Join(segments, boxColumnsGap))
-	}
-	return combined
-}
-
-func mergeComponentRows(group []StyledMessage) []discordgo.MessageComponent {
-	var merged []discordgo.MessageComponent
-	for _, msg := range group {
-		if len(msg.Components) == 0 {
-			continue
-		}
-		for _, component := range msg.Components {
-			if len(merged) >= maxComponentRows {
-				return merged
-			}
-			merged = append(merged, component)
-		}
-	}
-	return merged
-}
-
-func summarizeURLDisplay(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" {
-		return raw
-	}
-
-	host := strings.TrimPrefix(parsed.Hostname(), "www.")
-	path := strings.Trim(parsed.EscapedPath(), "/")
-	if path == "" {
-		return host
-	}
-
-	segments := strings.Split(path, "/")
-	if len(segments) > 0 && segments[0] != "" {
-		return fmt.Sprintf("%s/%s", host, segments[0])
-	}
-	return host
+	sb.WriteString(block)
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 func truncateForDiscord(value string, limit int) string {
@@ -611,4 +360,20 @@ func truncateForDiscord(value string, limit int) string {
 		return string(runes[:limit])
 	}
 	return string(runes[:limit-1]) + "…"
+}
+
+func styleBlockquote(text string) string {
+	if text == "" {
+		return "> "
+	}
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			lines[i] = ">"
+		} else {
+			lines[i] = "> " + trimmed
+		}
+	}
+	return strings.Join(lines, "\n")
 }
