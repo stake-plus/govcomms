@@ -23,6 +23,17 @@ type Handler struct {
 	ClaimsAnalyzer *claims.Analyzer
 }
 
+type cardContent struct {
+	Title string
+	Body  string
+}
+
+type columnGroup struct {
+	MessageID string
+	ChannelID string
+	Indexes   []int
+}
+
 // HandleMessage processes the legacy message-based research command.
 func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 	if h == nil {
@@ -118,17 +129,26 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 		return
 	}
 
+	headerTitle := fmt.Sprintf("Claim Verification • %s #%d", network, refID)
 	headerBody := fmt.Sprintf("Found %d total historical claims, verifying top %d most important.", totalClaims, len(topClaims))
-	sendStyledMessage(s, channelID, fmt.Sprintf("Claim Verification • %s #%d", network, refID), headerBody)
+	headerHandle, err := shareddiscord.SendStyledHeaderMessage(s, channelID, headerTitle, headerBody)
+	if err != nil {
+		log.Printf("research: header send failed: %v", err)
+	}
 
-	claimMessages := make(map[int]*discordgo.Message)
-	for i, claim := range topClaims {
-		msgContent := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d", i+1), fmt.Sprintf("%s\n\n⏳ *Verifying...*", claim.Claim))
-		msg, err := shareddiscord.SendMessageNoEmbed(s, channelID, msgContent)
-		if err == nil {
-			claimMessages[i] = msg
+	claimCards := make([]cardContent, len(topClaims))
+	for idx, claim := range topClaims {
+		claimCards[idx] = cardContent{
+			Title: fmt.Sprintf("Claim %d", idx+1),
+			Body:  fmt.Sprintf("%s\n\n⏳ *Verifying...*", claim.Claim),
 		}
-		time.Sleep(100 * time.Millisecond)
+	}
+
+	claimGroups, claimLookup, err := sendColumnCardGroups(s, channelID, claimCards, 2)
+	if err != nil {
+		log.Printf("research: failed to send claim placeholders: %v", err)
+		sendStyledMessage(s, channelID, "Research", "Failed to prepare verification output. Please try again.")
+		return
 	}
 
 	results, err := h.ClaimsAnalyzer.VerifyClaims(ctx, topClaims)
@@ -154,22 +174,30 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 			unknownCount++
 		}
 
-		if msg, exists := claimMessages[i]; exists {
-			body := fmt.Sprintf("%s\n\n%s **%s** - %s",
-				topClaims[i].Claim,
-				statusEmoji,
-				result.Status,
-				result.Evidence)
+		body := fmt.Sprintf("%s\n\n%s **%s** - %s",
+			topClaims[i].Claim,
+			statusEmoji,
+			result.Status,
+			result.Evidence)
 
-			if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.SourceURLs); urls != "" {
-				body += "\n\n" + urls
-			}
-			editStyledMessage(s, channelID, msg.ID, fmt.Sprintf("Claim %d", i+1), body)
+		if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.SourceURLs); urls != "" {
+			body += "\n\n" + urls
 		}
+
+		claimCards[i].Body = body
+		updateColumnCardMessage(s, claimGroups, claimLookup, claimCards, i, "research")
 	}
 
 	summaryMsg := fmt.Sprintf("✅ Valid: %d\n❌ Rejected: %d\n❓ Unknown: %d", validCount, rejectedCount, unknownCount)
-	sendStyledMessage(s, channelID, "Claim Verification Complete", summaryMsg)
+	finalHeaderBody := fmt.Sprintf("%s\n\n%s", headerBody, summaryMsg)
+	if headerHandle != nil {
+		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
+			log.Printf("research: header update failed: %v", err)
+			sendStyledMessage(s, channelID, headerTitle, finalHeaderBody)
+		}
+	} else {
+		sendStyledMessage(s, channelID, headerTitle, finalHeaderBody)
+	}
 }
 
 func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.InteractionCreate, network string, refID uint32) {
@@ -202,17 +230,27 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 		return
 	}
 
+	headerTitle := fmt.Sprintf("Claim Verification • %s #%d", network, refID)
 	headerBody := fmt.Sprintf("Found %d total historical claims, verifying top %d most important.", totalClaims, len(topClaims))
-	sendStyledSlashResponse(s, i, fmt.Sprintf("Claim Verification • %s #%d", network, refID), headerBody)
+	headerHandle, err := shareddiscord.RespondStyledHeaderMessage(s, i.Interaction, headerTitle, headerBody)
+	if err != nil {
+		log.Printf("research: slash header send failed: %v", err)
+		return
+	}
 
-	claimMessages := make(map[int]*discordgo.Message)
+	claimCards := make([]cardContent, len(topClaims))
 	for idx, claim := range topClaims {
-		msgContent := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d", idx+1), fmt.Sprintf("%s\n\n⏳ *Verifying...*", claim.Claim))
-		msg, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, msgContent)
-		if err == nil {
-			claimMessages[idx] = msg
+		claimCards[idx] = cardContent{
+			Title: fmt.Sprintf("Claim %d", idx+1),
+			Body:  fmt.Sprintf("%s\n\n⏳ *Verifying...*", claim.Claim),
 		}
-		time.Sleep(100 * time.Millisecond)
+	}
+
+	claimGroups, claimLookup, err := sendColumnCardGroups(s, i.ChannelID, claimCards, 2)
+	if err != nil {
+		log.Printf("research: slash column send failed: %v", err)
+		sendStyledMessage(s, i.ChannelID, "Research", "Failed to prepare verification output. Please try again.")
+		return
 	}
 
 	results, err := h.ClaimsAnalyzer.VerifyClaims(ctx, topClaims)
@@ -238,23 +276,30 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 			unknownCount++
 		}
 
-		if msg, exists := claimMessages[idx]; exists {
-			body := fmt.Sprintf("%s\n\n%s **%s** - %s",
-				topClaims[idx].Claim,
-				statusEmoji,
-				result.Status,
-				result.Evidence)
+		body := fmt.Sprintf("%s\n\n%s **%s** - %s",
+			topClaims[idx].Claim,
+			statusEmoji,
+			result.Status,
+			result.Evidence)
 
-			if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.SourceURLs); urls != "" {
-				body += "\n\n" + urls
-			}
-
-			editStyledMessage(s, i.ChannelID, msg.ID, fmt.Sprintf("Claim %d", idx+1), body)
+		if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.SourceURLs); urls != "" {
+			body += "\n\n" + urls
 		}
+
+		claimCards[idx].Body = body
+		updateColumnCardMessage(s, claimGroups, claimLookup, claimCards, idx, "research")
 	}
 
 	summaryMsg := fmt.Sprintf("✅ Valid: %d\n❌ Rejected: %d\n❓ Unknown: %d", validCount, rejectedCount, unknownCount)
-	sendStyledMessage(s, i.ChannelID, "Claim Verification Complete", summaryMsg)
+	finalHeaderBody := fmt.Sprintf("%s\n\n%s", headerBody, summaryMsg)
+	if headerHandle != nil {
+		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
+			log.Printf("research: slash header update failed: %v", err)
+			sendStyledMessage(s, i.ChannelID, headerTitle, finalHeaderBody)
+		}
+	} else {
+		sendStyledMessage(s, i.ChannelID, headerTitle, finalHeaderBody)
+	}
 }
 
 func sendStyledMessage(s *discordgo.Session, channelID, title, body string) {
@@ -276,53 +321,112 @@ func sendStyledMessage(s *discordgo.Session, channelID, title, body string) {
 	}
 }
 
-func sendStyledSlashResponse(s *discordgo.Session, i *discordgo.InteractionCreate, title, body string) {
-	payloads := shareddiscord.BuildStyledMessages(title, body, "")
-	if len(payloads) == 0 {
-		empty := ""
-		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &empty})
-		return
+func sendColumnCardGroups(s *discordgo.Session, channelID string, cards []cardContent, columns int) ([]columnGroup, []int, error) {
+	if columns < 1 {
+		columns = 1
+	}
+	if len(cards) == 0 {
+		return nil, nil, nil
 	}
 
-	first := payloads[0]
-	edit := &discordgo.WebhookEdit{
-		Content: &first.Content,
-	}
-	if len(first.Components) > 0 {
-		components := first.Components
-		edit.Components = &components
-	}
-	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, edit); err != nil {
-		log.Printf("research: slash response failed: %v", err)
-		return
-	}
+	var groups []columnGroup
+	for start := 0; start < len(cards); start += columns {
+		end := start + columns
+		if end > len(cards) {
+			end = len(cards)
+		}
 
-	for _, payload := range payloads[1:] {
+		var (
+			indexes []int
+			payloads []shareddiscord.StyledMessage
+		)
+
+		for idx := start; idx < end; idx++ {
+			indexes = append(indexes, idx)
+			payloads = append(payloads, shareddiscord.BuildStyledMessage(cards[idx].Title, cards[idx].Body))
+		}
+
+		combined := shareddiscord.CombineStyledGroup(payloads)
 		msg := &discordgo.MessageSend{
-			Content: payload.Content,
+			Content: combined.Content,
 		}
-		if len(payload.Components) > 0 {
-			msg.Components = payload.Components
+		if len(combined.Components) > 0 {
+			msg.Components = combined.Components
 		}
-		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, i.ChannelID, msg); err != nil {
-			log.Printf("research: follow-up send failed: %v", err)
-			return
+
+		sent, err := shareddiscord.SendComplexMessageNoEmbed(s, channelID, msg)
+		if err != nil {
+			return nil, nil, err
 		}
+
+		groups = append(groups, columnGroup{
+			MessageID: sent.ID,
+			ChannelID: channelID,
+			Indexes:   indexes,
+		})
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	lookup := make([]int, len(cards))
+	for groupIdx, grp := range groups {
+		for _, cardIdx := range grp.Indexes {
+			lookup[cardIdx] = groupIdx
+		}
+	}
+
+	return groups, lookup, nil
+}
+
+func updateColumnCardMessage(s *discordgo.Session, groups []columnGroup, lookup []int, cards []cardContent, targetIdx int, prefix string) {
+	if targetIdx < 0 || targetIdx >= len(lookup) {
+		return
+	}
+	if len(groups) == 0 {
+		return
+	}
+
+	groupIdx := lookup[targetIdx]
+	if groupIdx < 0 || groupIdx >= len(groups) {
+		return
+	}
+
+	group := groups[groupIdx]
+	combined := combineCardGroup(cards, group.Indexes)
+
+	edit := &discordgo.MessageEdit{
+		ID:      group.MessageID,
+		Channel: group.ChannelID,
+		Content: &combined.Content,
+	}
+	if len(combined.Components) > 0 {
+		components := combined.Components
+		edit.Components = &components
+	} else {
+		empty := []discordgo.MessageComponent{}
+		edit.Components = &empty
+	}
+
+	if _, err := shareddiscord.EditMessageComplexNoEmbed(s, edit); err != nil {
+		log.Printf("%s: update column message failed: %v", prefix, err)
 	}
 }
 
-func editStyledMessage(s *discordgo.Session, channelID, messageID, title, body string) {
-	payload := shareddiscord.BuildStyledMessage(title, body)
-	edit := &discordgo.MessageEdit{
-		ID:      messageID,
-		Channel: channelID,
-		Content: &payload.Content,
+func combineCardGroup(cards []cardContent, indexes []int) shareddiscord.StyledMessage {
+	if len(indexes) == 0 {
+		return shareddiscord.StyledMessage{}
 	}
-	if len(payload.Components) > 0 {
-		components := payload.Components
-		edit.Components = &components
+	if len(indexes) == 1 {
+		card := cards[indexes[0]]
+		return shareddiscord.BuildStyledMessage(card.Title, card.Body)
 	}
-	if _, err := shareddiscord.EditMessageComplexNoEmbed(s, edit); err != nil {
-		log.Printf("research: edit failed: %v", err)
+
+	var payloads []shareddiscord.StyledMessage
+	for _, idx := range indexes {
+		if idx < 0 || idx >= len(cards) {
+			continue
+		}
+		payloads = append(payloads, shareddiscord.BuildStyledMessage(cards[idx].Title, cards[idx].Body))
 	}
+	return shareddiscord.CombineStyledGroup(payloads)
 }
