@@ -168,8 +168,15 @@ func (ni *NetworkIndexer) indexOnce(ctx context.Context) {
 
 	log.Printf("%s indexer: Chain has %d total referenda", ni.networkName, refCount)
 
+	if err := ni.ensureFinalizedDefaults(); err != nil {
+		log.Printf("%s indexer: failed to normalize finalized flags: %v", ni.networkName, err)
+	}
+
 	var ongoingRefs []sharedgov.Ref
-	if err := ni.db.Where("network_id = ? AND finalized = ?", ni.networkID, false).Find(&ongoingRefs).Error; err != nil {
+	if err := ni.db.
+		Where("network_id = ?", ni.networkID).
+		Where("(finalized IS NULL OR finalized = ?)", false).
+		Find(&ongoingRefs).Error; err != nil {
 		log.Printf("%s indexer: failed to load ongoing referenda: %v", ni.networkName, err)
 	} else {
 		log.Printf("%s indexer: Found %d ongoing referenda in database", ni.networkName, len(ongoingRefs))
@@ -268,6 +275,7 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 				Submitter: "Unknown",
 				Status:    &unknownStatus,
 				Submitted: 0,
+				Finalized: false,
 				CreatedAt: time.Now(),
 				UpdatedAt: time.Now(),
 			}
@@ -286,6 +294,7 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 	// Successfully decoded referendum
 	if dbErr == gorm.ErrRecordNotFound {
 		// Create new referendum
+		isOngoing := refInfo.Status == "Ongoing"
 		ref = sharedgov.Ref{
 			NetworkID: ni.networkID,
 			RefID:     refID,
@@ -295,6 +304,8 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 			Origin:    &refInfo.Origin,
 			Enactment: &refInfo.Enactment,
 			Submitted: uint64(refInfo.Submitted),
+			Finalized: !isOngoing,
+			Approved:  refInfo.Status == "Approved",
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
@@ -350,9 +361,7 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 			}
 		}
 
-		if refInfo.Status != "Ongoing" {
-			ref.Finalized = true
-			ref.Approved = refInfo.Status == "Approved"
+		if !isOngoing {
 			now := uint64(time.Now().Unix())
 			switch refInfo.Status {
 			case "Approved":
@@ -415,7 +424,8 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 			}
 		}
 
-		if refInfo.Status != "Ongoing" && !ref.Finalized {
+		isOngoing := refInfo.Status == "Ongoing"
+		if !isOngoing && !ref.Finalized {
 			updates["finalized"] = true
 			updates["approved"] = refInfo.Status == "Approved"
 			now := uint64(time.Now().Unix())
@@ -452,6 +462,12 @@ func (ni *NetworkIndexer) processReferendum(refID uint64) {
 	} else {
 		log.Printf("Database error for %s ref #%d: %v", ni.networkName, refID, dbErr)
 	}
+}
+
+func (ni *NetworkIndexer) ensureFinalizedDefaults() error {
+	return ni.db.Model(&sharedgov.Ref{}).
+		Where("network_id = ? AND finalized IS NULL", ni.networkID).
+		Update("finalized", false).Error
 }
 
 func IndexerService(ctx context.Context, db *gorm.DB, interval time.Duration, workers int) {
