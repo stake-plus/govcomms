@@ -1,4 +1,4 @@
-package errorsx
+package logging
 
 import "strings"
 
