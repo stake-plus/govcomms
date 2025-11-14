@@ -142,22 +142,20 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 		}
 		assessmentLine := fmt.Sprintf("Assessment:\n\n%s", assessmentText)
 
-		statusParts := []string{}
 		if result.IsReal {
 			realCount++
-			statusParts = append(statusParts, "Verified Real Person")
-		} else {
-			statusParts = append(statusParts, "Verification Failed")
 		}
 		if result.HasStatedSkills {
 			skilledCount++
-			statusParts = append(statusParts, "Has Stated Skills")
-		} else {
-			statusParts = append(statusParts, "Skills Unverified")
 		}
-		statusLine := fmt.Sprintf("Verification Status: %s", strings.Join(statusParts, " • "))
 
-		body := strings.Join([]string{nameLine, assessmentLine, statusLine}, "\n\n")
+		verificationStatus, verificationEmoji := determineVerificationDisplay(result)
+		workSkillsStatus, workSkillsEmoji := determineWorkSkillsDisplay(result)
+
+		verificationLine := fmt.Sprintf("Verification Status: %s %s", verificationEmoji, verificationStatus)
+		workSkillsLine := fmt.Sprintf("Work Skills: %s %s", workSkillsEmoji, workSkillsStatus)
+
+		body := strings.Join([]string{nameLine, assessmentLine, verificationLine, workSkillsLine}, "\n\n")
 		panel := shareddiscord.BuildStyledMessage("", body)
 		memberPanels = append(memberPanels, panel)
 	}
@@ -237,22 +235,20 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 		}
 		assessmentLine := fmt.Sprintf("Assessment:\n\n%s", assessmentText)
 
-		statusParts := []string{}
 		if result.IsReal {
 			realCount++
-			statusParts = append(statusParts, "Verified Real Person")
-		} else {
-			statusParts = append(statusParts, "Verification Failed")
 		}
 		if result.HasStatedSkills {
 			skilledCount++
-			statusParts = append(statusParts, "Has Stated Skills")
-		} else {
-			statusParts = append(statusParts, "Skills Unverified")
 		}
-		statusLine := fmt.Sprintf("Verification Status: %s", strings.Join(statusParts, " • "))
 
-		body := strings.Join([]string{nameLine, assessmentLine, statusLine}, "\n\n")
+		verificationStatus, verificationEmoji := determineVerificationDisplay(result)
+		workSkillsStatus, workSkillsEmoji := determineWorkSkillsDisplay(result)
+
+		verificationLine := fmt.Sprintf("Verification Status: %s %s", verificationEmoji, verificationStatus)
+		workSkillsLine := fmt.Sprintf("Work Skills: %s %s", workSkillsEmoji, workSkillsStatus)
+
+		body := strings.Join([]string{nameLine, assessmentLine, verificationLine, workSkillsLine}, "\n\n")
 		panel := shareddiscord.BuildStyledMessage("", body)
 		memberPanels = append(memberPanels, panel)
 	}
@@ -324,4 +320,47 @@ func dispatchPanels(s *discordgo.Session, channelID string, panels []shareddisco
 			return
 		}
 	}
+}
+
+func determineVerificationDisplay(result teams.TeamAnalysisResult) (string, string) {
+	if result.IsReal {
+		return "Valid", "✅"
+	}
+	if isInconclusiveCapability(result.Capability) {
+		return "Unknown", "❓"
+	}
+	return "Rejected", "❌"
+}
+
+func determineWorkSkillsDisplay(result teams.TeamAnalysisResult) (string, string) {
+	if result.HasStatedSkills {
+		return "Verified", "✅"
+	}
+	if isInconclusiveCapability(result.Capability) {
+		return "Unknown", "❓"
+	}
+	return "Unverified", "⚠️"
+}
+
+func isInconclusiveCapability(capability string) bool {
+	lowered := strings.ToLower(strings.TrimSpace(capability))
+	if lowered == "" {
+		return true
+	}
+
+	keywords := []string{
+		"analysis timeout",
+		"analysis timed out",
+		"failed to analyze",
+		"failed to analyse",
+		"no response",
+		"unable to assess",
+		"unable to verify",
+	}
+	for _, keyword := range keywords {
+		if strings.Contains(lowered, keyword) {
+			return true
+		}
+	}
+	return false
 }
