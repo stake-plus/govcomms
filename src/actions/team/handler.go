@@ -158,7 +158,7 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 		}
 
 		body := strings.Join(sections, "\n\n")
-		memberBlocks = append(memberBlocks, formatAnsiPanel(fmt.Sprintf("Member %d • %s", i+1, header), body))
+		memberBlocks = append(memberBlocks, shareddiscord.FormatStyledBlock(fmt.Sprintf("Member %d • %s", i+1, header), body))
 	}
 
 	teamAssessment := "❌ Team unlikely to complete the proposed task"
@@ -260,7 +260,7 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 		}
 
 		body := strings.Join(sections, "\n\n")
-		memberBlocks = append(memberBlocks, formatAnsiPanel(fmt.Sprintf("Member %d • %s", idx+1, header), body))
+		memberBlocks = append(memberBlocks, shareddiscord.FormatStyledBlock(fmt.Sprintf("Member %d • %s", idx+1, header), body))
 	}
 
 	teamAssessment := "❌ Team unlikely to complete the proposed task"
@@ -315,33 +315,4 @@ func sendTeamWebhookEdit(s *discordgo.Session, interaction *discordgo.Interactio
 		edit.Components = &components
 	}
 	shareddiscord.InteractionResponseEditNoEmbed(s, interaction, edit)
-}
-
-func formatAnsiPanel(title, body string) string {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		body = "_No content_"
-	}
-
-	var sb strings.Builder
-	sb.WriteString("```ansi\n")
-	if strings.TrimSpace(title) != "" {
-		sb.WriteString(title)
-		sb.WriteString("\n")
-		sb.WriteString(strings.Repeat("─", maxLine(len([]rune(title))+2, 6)))
-		sb.WriteString("\n\n")
-	}
-	sb.WriteString(body)
-	if !strings.HasSuffix(body, "\n") {
-		sb.WriteString("\n")
-	}
-	sb.WriteString("```")
-	return sb.String()
-}
-
-func maxLine(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

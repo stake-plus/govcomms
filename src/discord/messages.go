@@ -340,15 +340,18 @@ func formatSimpleBlock(title string, body string) string {
 		body = "_No content_"
 	}
 
-	block := styleBlockquote(body)
 	var sb strings.Builder
-	if strings.TrimSpace(title) != "" {
-		sb.WriteString(fmt.Sprintf("**%s**\n", strings.TrimSpace(title)))
-		sb.WriteString(strings.Repeat("─", 24))
+	sb.WriteString("```\n")
+	if trimmedTitle := strings.TrimSpace(title); trimmedTitle != "" {
+		sb.WriteString(trimmedTitle)
 		sb.WriteString("\n\n")
 	}
-	sb.WriteString(block)
-	return strings.TrimRight(sb.String(), "\n")
+	sb.WriteString(body)
+	if !strings.HasSuffix(body, "\n") {
+		sb.WriteString("\n")
+	}
+	sb.WriteString("```")
+	return sb.String()
 }
 
 func truncateForDiscord(value string, limit int) string {
@@ -363,17 +366,5 @@ func truncateForDiscord(value string, limit int) string {
 }
 
 func styleBlockquote(text string) string {
-	if text == "" {
-		return "> "
-	}
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			lines[i] = ">"
-		} else {
-			lines[i] = "> " + trimmed
-		}
-	}
-	return strings.Join(lines, "\n")
+	return text
 }

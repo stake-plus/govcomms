@@ -160,7 +160,7 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 		}
 
 		statusLabel := strings.ToUpper(string(result.Status))
-		block := formatAnsiPanel(fmt.Sprintf("Claim %d • %s", i+1, statusLabel), body)
+		block := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d • %s", i+1, statusLabel), body)
 		claimBlocks = append(claimBlocks, block)
 	}
 
@@ -253,7 +253,7 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 		}
 
 		statusLabel := strings.ToUpper(string(result.Status))
-		block := formatAnsiPanel(fmt.Sprintf("Claim %d • %s", idx+1, statusLabel), body)
+		block := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d • %s", idx+1, statusLabel), body)
 		claimBlocks = append(claimBlocks, block)
 	}
 
@@ -306,33 +306,4 @@ func editStyledMessage(s *discordgo.Session, channelID, messageID, title, body s
 	if _, err := shareddiscord.EditMessageComplexNoEmbed(s, edit); err != nil {
 		log.Printf("research: edit failed: %v", err)
 	}
-}
-
-func formatAnsiPanel(title, body string) string {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		body = "_No content_"
-	}
-
-	var sb strings.Builder
-	sb.WriteString("```ansi\n")
-	if strings.TrimSpace(title) != "" {
-		sb.WriteString(title)
-		sb.WriteString("\n")
-		sb.WriteString(strings.Repeat("─", maxInt(6, len([]rune(title))+2)))
-		sb.WriteString("\n\n")
-	}
-	sb.WriteString(body)
-	if !strings.HasSuffix(body, "\n") {
-		sb.WriteString("\n")
-	}
-	sb.WriteString("```")
-	return sb.String()
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
