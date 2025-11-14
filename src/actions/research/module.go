@@ -63,8 +63,14 @@ func NewModule(cfg *sharedconfig.ResearchConfig, db *gorm.DB) (*Module, error) {
 		return nil, fmt.Errorf("research: cache manager: %w", err)
 	}
 
-	claimsAnalyzer := claims.NewAnalyzer(cfg.OpenAIKey)
-	teamsAnalyzer := teams.NewAnalyzer(cfg.OpenAIKey)
+	claimsAnalyzer, err := claims.NewAnalyzer(cfg.OpenAIKey)
+	if err != nil {
+		return nil, fmt.Errorf("research: claims analyzer: %w", err)
+	}
+	teamsAnalyzer, err := teams.NewAnalyzer(cfg.OpenAIKey)
+	if err != nil {
+		return nil, fmt.Errorf("research: teams analyzer: %w", err)
+	}
 
 	researchHandler := &Handler{
 		Config:         cfg,

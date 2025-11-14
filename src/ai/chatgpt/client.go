@@ -1,4 +1,4 @@
-package ai
+package chatgpt
 
 import (
 	"bytes"
@@ -9,29 +9,39 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/stake-plus/govcomms/src/ai/core"
 	"github.com/stake-plus/govcomms/src/shared/httpx"
 )
 
-type openAIClient struct {
-	apiKey     string
-	httpClient *http.Client
-	defaults   Options
+func init() {
+	core.RegisterProvider("openai", newClient)
+	core.RegisterProvider("chatgpt", newClient)
 }
 
-func newOpenAIClient(cfg FactoryConfig) *openAIClient {
-	return &openAIClient{
+type client struct {
+	apiKey     string
+	httpClient *http.Client
+	defaults   core.Options
+}
+
+func newClient(cfg core.FactoryConfig) (core.Client, error) {
+	if cfg.OpenAIKey == "" {
+		return nil, fmt.Errorf("chatgpt: OpenAI API key not configured")
+	}
+
+	return &client{
 		apiKey:     cfg.OpenAIKey,
 		httpClient: httpx.NewDefault(300 * time.Second),
-		defaults: Options{
+		defaults: core.Options{
 			Model:               valueOrDefault(cfg.Model, "gpt-4o-mini"),
 			Temperature:         orFloat(cfg.Temperature, 1),
 			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, 50000),
 			SystemPrompt:        cfg.SystemPrompt,
 		},
-	}
+	}, nil
 }
 
-func (c *openAIClient) AnswerQuestion(ctx context.Context, content string, question string, opts Options) (string, error) {
+func (c *client) AnswerQuestion(ctx context.Context, content string, question string, opts core.Options) (string, error) {
 	// Use Chat Completions
 	merged := c.merge(opts)
 	messages := []map[string]string{
@@ -66,7 +76,7 @@ func (c *openAIClient) AnswerQuestion(ctx context.Context, content string, quest
 		return resp.StatusCode, b, nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("openAI API error: %w", err)
+		return "", fmt.Errorf("chatgpt API error: %w", err)
 	}
 	var result struct {
 		Choices []struct {
@@ -84,7 +94,7 @@ func (c *openAIClient) AnswerQuestion(ctx context.Context, content string, quest
 	return result.Choices[0].Message.Content, nil
 }
 
-func (c *openAIClient) Respond(ctx context.Context, input string, tools []Tool, opts Options) (string, error) {
+func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, opts core.Options) (string, error) {
 	// Use Responses API with optional tools like web_search
 	merged := c.merge(opts)
 	payload := map[string]interface{}{
@@ -124,7 +134,7 @@ func (c *openAIClient) Respond(ctx context.Context, input string, tools []Tool, 
 		return resp.StatusCode, b, nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("openAI API error: %w", err)
+		return "", fmt.Errorf("chatgpt API error: %w", err)
 	}
 	// Tolerate multiple shapes by extracting text fields
 	var result struct {
@@ -150,10 +160,10 @@ func (c *openAIClient) Respond(ctx context.Context, input string, tools []Tool, 
 	if err := json.Unmarshal(body, &alt); err == nil && alt.OutputText != "" {
 		return alt.OutputText, nil
 	}
-	return "", fmt.Errorf("failed to parse OpenAI response")
+	return "", fmt.Errorf("failed to parse ChatGPT response")
 }
 
-func (c *openAIClient) merge(opts Options) Options {
+func (c *client) merge(opts core.Options) core.Options {
 	out := c.defaults
 	if opts.Model != "" {
 		out.Model = opts.Model

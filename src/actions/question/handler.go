@@ -8,8 +8,8 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/core"
+	aicore "github.com/stake-plus/govcomms/src/ai/core"
 	cache "github.com/stake-plus/govcomms/src/cache"
-	sharedai "github.com/stake-plus/govcomms/src/shared/ai"
 	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
 	shareddiscord "github.com/stake-plus/govcomms/src/shared/discord"
 	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
@@ -27,7 +27,7 @@ type Module struct {
 	session        *discordgo.Session
 	cacheManager   *cache.Manager
 	contextStore   *cache.ContextStore
-	aiClient       sharedai.Client
+	aiClient       aicore.Client
 	networkManager *sharedgov.NetworkManager
 	refManager     *sharedgov.ReferendumManager
 	cancel         context.CancelFunc
@@ -56,7 +56,7 @@ func NewModule(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Module, error) {
 	if cfg.AIConfig.OpenAIKey == "" && cfg.AIConfig.ClaudeKey == "" {
 		return nil, fmt.Errorf("question: no AI provider configured")
 	}
-	aiClient := sharedai.NewClient(sharedai.FactoryConfig{
+	aiClient, err := aicore.NewClient(aicore.FactoryConfig{
 		Provider:     cfg.AIConfig.AIProvider,
 		OpenAIKey:    cfg.AIConfig.OpenAIKey,
 		ClaudeKey:    cfg.AIConfig.ClaudeKey,
@@ -64,6 +64,9 @@ func NewModule(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Module, error) {
 		Model:        cfg.AIConfig.AIModel,
 		Temperature:  0,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("question: AI client init: %w", err)
+	}
 
 	cacheManager, err := cache.NewManager(cfg.TempDir)
 	if err != nil {
@@ -204,13 +207,13 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 
 	fullContent := content + qaContext
 	ctx := context.Background()
-	opts := sharedai.Options{
+	opts := aicore.Options{
 		Model:        m.cfg.AIModel,
 		SystemPrompt: m.cfg.AISystemPrompt,
 	}
 
 	input := "Context:\n" + fullContent + "\n\nQuestion:\n" + question + "\n\nUse web search as needed to ensure the answer reflects the latest information."
-	answer, err := m.aiClient.Respond(ctx, input, []sharedai.Tool{{Type: "web_search"}}, opts)
+	answer, err := m.aiClient.Respond(ctx, input, []aicore.Tool{{Type: "web_search"}}, opts)
 	if err != nil {
 		log.Printf("question: web search failed, fallback: %v", err)
 		answer, err = m.aiClient.AnswerQuestion(ctx, fullContent, question, opts)

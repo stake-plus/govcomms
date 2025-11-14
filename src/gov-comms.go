@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/stake-plus/govcomms/src/actions"
+	_ "github.com/stake-plus/govcomms/src/ai/providers"
 	shareddata "github.com/stake-plus/govcomms/src/shared/data"
 )
 
