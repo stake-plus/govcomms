@@ -111,5 +111,5 @@ Ensure the service account running GovComms can read/write these directories.
 3. Use Discord to invoke `/question`, `/research`, and `/feedback` inside a referendum thread. Confirm:
    - AI answers appear with cached context.
    - Research module posts interim and final updates.
-   - Feedback embed includes file attachments for long bodies and Polkassembly mirror IDs when applicable.
+   - Feedback responses are split into styled Discord messages and include Polkassembly mirror IDs when applicable.
 

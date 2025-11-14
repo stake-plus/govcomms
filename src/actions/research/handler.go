@@ -319,35 +319,6 @@ func formatAnsiPanel(title, body string) string {
 	if strings.TrimSpace(title) != "" {
 		sb.WriteString(title)
 		sb.WriteString("\n")
-		sb.WriteString(strings.Repeat("─", maxLineWidth(len([]rune(title))+2, 6)))
-		sb.WriteString("\n\n")
-	}
-	sb.WriteString(body)
-	if !strings.HasSuffix(body, "\n") {
-		sb.WriteString("\n")
-	}
-	sb.WriteString("```")
-	return sb.String()
-}
-
-func maxLineWidth(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func formatAnsiPanel(title, body string) string {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		body = "_No content_"
-	}
-
-	var sb strings.Builder
-	sb.WriteString("```ansi\n")
-	if strings.TrimSpace(title) != "" {
-		sb.WriteString(title)
-		sb.WriteString("\n")
 		sb.WriteString(strings.Repeat("─", maxInt(6, len([]rune(title))+2)))
 		sb.WriteString("\n\n")
 	}
