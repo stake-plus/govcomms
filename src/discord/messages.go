@@ -375,6 +375,3 @@ func truncateForDiscord(value string, limit int) string {
 	return string(runes[:limit-1]) + "…"
 }
 
-func styleBlockquote(text string) string {
-	return text
-}
