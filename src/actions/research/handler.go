@@ -30,19 +30,19 @@ func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate
 	}
 
 	if h.Config.ResearchRoleID != "" && !shareddiscord.HasRole(s, h.Config.GuildID, m.Author.ID, h.Config.ResearchRoleID) {
-		s.ChannelMessageSend(m.ChannelID, "You don't have permission to use this command.")
+		sendStyledMessage(s, m.ChannelID, "Research", "You don't have permission to use this command.")
 		return
 	}
 
 	threadInfo, err := h.RefManager.FindThread(m.ChannelID)
 	if err != nil || threadInfo == nil {
-		s.ChannelMessageSend(m.ChannelID, "This command must be used in a referendum thread.")
+		sendStyledMessage(s, m.ChannelID, "Research", "This command must be used in a referendum thread.")
 		return
 	}
 
 	network := h.NetworkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
-		s.ChannelMessageSend(m.ChannelID, "Failed to identify network.")
+		sendStyledMessage(s, m.ChannelID, "Research", "Failed to identify network.")
 		return
 	}
 
@@ -102,28 +102,27 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 
 	proposalContent, err := h.Cache.GetProposalContent(network, refID)
 	if err != nil {
-		s.ChannelMessageSend(channelID, "Proposal content not found. Please run !refresh first.")
+		sendStyledMessage(s, channelID, "Research", "Proposal content not found. Please run !refresh first.")
 		return
 	}
 
 	topClaims, totalClaims, err := h.ClaimsAnalyzer.ExtractTopClaims(ctx, proposalContent)
 	if err != nil {
-		s.ChannelMessageSend(channelID, fmt.Sprintf("Error extracting claims: %v", err))
+		sendStyledMessage(s, channelID, "Research", fmt.Sprintf("Error extracting claims: %v", err))
 		return
 	}
 
 	if len(topClaims) == 0 {
-		s.ChannelMessageSend(channelID, "No verifiable historical claims found in the proposal.")
+		sendStyledMessage(s, channelID, "Research", "No verifiable historical claims found in the proposal.")
 		return
 	}
 
-	headerMsg := fmt.Sprintf("🔍 **Verifying Historical Claims for %s Referendum #%d**\n", network, refID)
-	headerMsg += fmt.Sprintf("Found %d total historical claims, verifying top %d most important:\n", totalClaims, len(topClaims))
-	s.ChannelMessageSend(channelID, headerMsg)
+	headerBody := fmt.Sprintf("Found %d total historical claims, verifying top %d most important.", totalClaims, len(topClaims))
+	sendStyledMessage(s, channelID, fmt.Sprintf("Claim Verification • %s #%d", network, refID), headerBody)
 
 	claimMessages := make(map[int]*discordgo.Message)
 	for i, claim := range topClaims {
-		msgContent := fmt.Sprintf("**Claim %d:** %s\n⏳ *Verifying...*", i+1, claim.Claim)
+		msgContent := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d", i+1), fmt.Sprintf("%s\n\n⏳ *Verifying...*", claim.Claim))
 		msg, err := s.ChannelMessageSend(channelID, msgContent)
 		if err == nil {
 			claimMessages[i] = msg
@@ -155,24 +154,21 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 		}
 
 		if msg, exists := claimMessages[i]; exists {
-			updatedContent := fmt.Sprintf("**Claim %d:** %s\n%s **%s** - %s",
-				i+1,
+			body := fmt.Sprintf("%s\n\n%s **%s** - %s",
 				topClaims[i].Claim,
 				statusEmoji,
 				result.Status,
 				result.Evidence)
 
 			if len(result.SourceURLs) > 0 {
-				updatedContent += fmt.Sprintf("\n📌 Sources: %s", shareddiscord.FormatURLsNoEmbed(result.SourceURLs))
+				body += fmt.Sprintf("\n📌 Sources: %s", shareddiscord.FormatURLsNoEmbed(result.SourceURLs))
 			}
-			updatedContent = shareddiscord.WrapURLsNoEmbed(updatedContent)
-			s.ChannelMessageEdit(channelID, msg.ID, updatedContent)
+			editStyledMessage(s, channelID, msg.ID, fmt.Sprintf("Claim %d", i+1), body)
 		}
 	}
 
-	summaryMsg := fmt.Sprintf("\n📊 **Verification Complete**\n✅ Valid: %d | ❌ Rejected: %d | ❓ Unknown: %d",
-		validCount, rejectedCount, unknownCount)
-	s.ChannelMessageSend(channelID, summaryMsg)
+	summaryMsg := fmt.Sprintf("✅ Valid: %d\n❌ Rejected: %d\n❓ Unknown: %d", validCount, rejectedCount, unknownCount)
+	sendStyledMessage(s, channelID, "Claim Verification Complete", summaryMsg)
 }
 
 func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.InteractionCreate, network string, refID uint32) {

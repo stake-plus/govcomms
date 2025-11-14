@@ -174,3 +174,85 @@ func BeautifyForDiscord(text string) string {
 	result = strings.TrimSpace(result)
 	return WrapURLsNoEmbed(result)
 }
+
+// BuildStyledMessages formats content with a consistent header + blockquote aesthetic
+// and chunks it into Discord-safe messages.
+func BuildStyledMessages(title string, body string, userID string) []string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return nil
+	}
+
+	cleaned := BeautifyForDiscord(body)
+	chunks := splitMessage(cleaned, "")
+	if len(chunks) == 0 {
+		chunks = []string{cleaned}
+	}
+
+	var messages []string
+	for idx, chunk := range chunks {
+		currentTitle := title
+		if idx > 0 {
+			currentTitle = ""
+		}
+		content := FormatStyledBlock(currentTitle, chunk)
+
+		if len(chunks) > 1 {
+			if idx < len(chunks)-1 {
+				content += "\n*(continued...)*"
+			} else {
+				content += "\n*(end of response)*"
+			}
+		}
+
+		if idx == 0 && userID != "" {
+			content = fmt.Sprintf("<@%s>\n%s", userID, content)
+		}
+
+		messages = append(messages, content)
+	}
+
+	return messages
+}
+
+// FormatStyledBlock returns a single styled block suitable for shorter Discord messages.
+func FormatStyledBlock(title string, body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		body = "_No content_"
+	}
+	body = BeautifyForDiscord(body)
+
+	var sb strings.Builder
+	if strings.TrimSpace(title) != "" {
+		sb.WriteString(fmt.Sprintf("**%s**\n%s\n", title, dividerForTitle(title)))
+	}
+	sb.WriteString(styleBlockquote(body))
+	return sb.String()
+}
+
+func dividerForTitle(title string) string {
+	clean := strings.TrimSpace(title)
+	clean = strings.Trim(clean, "*_` ")
+	length := len([]rune(clean))
+	if length < 6 {
+		length = 6
+	}
+	return strings.Repeat("─", length+2)
+}
+
+func styleBlockquote(text string) string {
+	if text == "" {
+		return "> "
+	}
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			lines[i] = ">"
+		} else {
+			lines[i] = "> " + trimmed
+		}
+	}
+	return strings.Join(lines, "\n")
+}

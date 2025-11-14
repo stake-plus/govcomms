@@ -336,83 +336,26 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 		userID = interaction.User.ID
 	}
 
-	answer := shareddiscord.BeautifyForDiscord(message)
-	formatted := answer
-	if strings.TrimSpace(question) != "" {
-		formatted = fmt.Sprintf("> **Question:** %s\n\n%s", question, answer)
+	title := "Answer"
+	if questionTitle := strings.TrimSpace(question); questionTitle != "" {
+		title = fmt.Sprintf("Answer • %s", questionTitle)
 	}
 
-	mentionPrefix := ""
-	mentionContent := ""
-	if userID != "" {
-		mentionPrefix = fmt.Sprintf("<@%s> ", userID)
-		mentionContent = fmt.Sprintf("<@%s>", userID)
-	}
-
-	msgs := shareddiscord.BuildLongMessages(formatted, userID)
-	if len(msgs) == 0 {
+	chunks := shareddiscord.BuildStyledMessages(title, message, userID)
+	if len(chunks) == 0 {
 		return
 	}
 
-	flags := discordgo.MessageFlagsSuppressEmbeds
-	first := msgs[0]
-	firstBody := strings.TrimSpace(strings.TrimPrefix(first, mentionPrefix))
-
-	embedSent := false
-	if firstBody != "" && len(firstBody) <= 4000 {
-		embed := &discordgo.MessageEmbed{
-			Description: firstBody,
-			Color:       answerEmbedColor,
-		}
-		if questionTitle := strings.TrimSpace(question); questionTitle != "" {
-			title := fmt.Sprintf("Answer • %s", questionTitle)
-			if len(title) > 256 {
-				title = title[:253] + "..."
-			}
-			embed.Title = title
-		} else {
-			embed.Title = "AI Answer"
-		}
-		var contentPtr *string
-		if mentionContent != "" {
-			contentPtr = &mentionContent
-		}
-		if _, err := s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{
-			Content: contentPtr,
-			Embeds:  &[]*discordgo.MessageEmbed{embed},
-		}); err == nil {
-			embedSent = true
-		} else {
-			log.Printf("question: embed response failed: %v", err)
-		}
+	first := chunks[0]
+	if _, err := s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{
+		Content: &first,
+	}); err != nil {
+		log.Printf("question: response send failed: %v", err)
+		return
 	}
 
-	if !embedSent {
-		resp, err := s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{
-			Content: &first,
-		})
-		if err != nil {
-			log.Printf("question: follow-up failed: %v", err)
-			return
-		}
-		if resp != nil && resp.ChannelID != "" && resp.ID != "" {
-			content := resp.Content
-			if _, err := s.ChannelMessageEditComplex(&discordgo.MessageEdit{
-				ID:      resp.ID,
-				Channel: resp.ChannelID,
-				Content: &content,
-				Flags:   flags,
-			}); err != nil {
-				log.Printf("question: suppress embeds failed: %v", err)
-			}
-		}
-	}
-
-	for idx := 1; idx < len(msgs); idx++ {
-		if _, err := s.ChannelMessageSendComplex(interaction.ChannelID, &discordgo.MessageSend{
-			Content: msgs[idx],
-			Flags:   flags,
-		}); err != nil {
+	for idx := 1; idx < len(chunks); idx++ {
+		if _, err := s.ChannelMessageSend(interaction.ChannelID, chunks[idx]); err != nil {
 			log.Printf("question: follow-up send failed: %v", err)
 			return
 		}
