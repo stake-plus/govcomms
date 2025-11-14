@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"time"
+	"strings"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/research/components/claims"
@@ -125,16 +125,6 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 		log.Printf("research: header send failed: %v", err)
 	}
 
-	claimMessages := make(map[int]*discordgo.Message)
-	for idx, claim := range topClaims {
-		msgContent := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d", idx+1), fmt.Sprintf("%s\n\n⏳ *Verifying...*", claim.Claim))
-		msg, err := shareddiscord.SendMessageNoEmbed(s, channelID, msgContent)
-		if err == nil {
-			claimMessages[idx] = msg
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
 	results, err := h.ClaimsAnalyzer.VerifyClaims(ctx, topClaims)
 	if err != nil && err != context.DeadlineExceeded {
 		log.Printf("research: verification error: %v", err)
@@ -144,6 +134,7 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 	rejectedCount := 0
 	unknownCount := 0
 
+	var claimBlocks []string
 	for i, result := range results {
 		statusEmoji := "❓"
 		switch result.Status {
@@ -158,23 +149,30 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 			unknownCount++
 		}
 
-		if msg, exists := claimMessages[i]; exists {
-			body := fmt.Sprintf("%s\n\n%s **%s** - %s",
-				topClaims[i].Claim,
-				statusEmoji,
-				result.Status,
-				result.Evidence)
+		body := fmt.Sprintf("%s\n\n%s **%s** - %s",
+			topClaims[i].Claim,
+			statusEmoji,
+			result.Status,
+			result.Evidence)
 
-			if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.SourceURLs); urls != "" {
-				body += "\n\n" + urls
-			}
-
-			editStyledMessage(s, channelID, msg.ID, fmt.Sprintf("Claim %d", i+1), body)
+		if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.SourceURLs); urls != "" {
+			body += "\n\n" + urls
 		}
+
+		statusLabel := strings.ToUpper(string(result.Status))
+		block := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d • %s", i+1, statusLabel), body)
+		claimBlocks = append(claimBlocks, block)
 	}
 
 	summaryMsg := fmt.Sprintf("✅ Valid: %d\n❌ Rejected: %d\n❓ Unknown: %d", validCount, rejectedCount, unknownCount)
-	finalHeaderBody := fmt.Sprintf("%s\n\n%s", headerBody, summaryMsg)
+	finalText := headerBody
+	if summaryMsg != "" {
+		finalText += "\n\n" + summaryMsg
+	}
+	if len(claimBlocks) > 0 {
+		finalText += "\n\n" + strings.Join(claimBlocks, "\n\n")
+	}
+	finalHeaderBody := finalText
 	if headerHandle != nil {
 		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
 			log.Printf("research: header update failed: %v", err)
@@ -223,16 +221,6 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 		return
 	}
 
-	claimMessages := make(map[int]*discordgo.Message)
-	for idx, claim := range topClaims {
-		msgContent := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d", idx+1), fmt.Sprintf("%s\n\n⏳ *Verifying...*", claim.Claim))
-		msg, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, msgContent)
-		if err == nil {
-			claimMessages[idx] = msg
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
 	results, err := h.ClaimsAnalyzer.VerifyClaims(ctx, topClaims)
 	if err != nil && err != context.DeadlineExceeded {
 		log.Printf("research: verification error: %v", err)
@@ -242,6 +230,7 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 	rejectedCount := 0
 	unknownCount := 0
 
+	var claimBlocks []string
 	for idx, result := range results {
 		statusEmoji := "❓"
 		switch result.Status {
@@ -256,23 +245,30 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 			unknownCount++
 		}
 
-		if msg, exists := claimMessages[idx]; exists {
-			body := fmt.Sprintf("%s\n\n%s **%s** - %s",
-				topClaims[idx].Claim,
-				statusEmoji,
-				result.Status,
-				result.Evidence)
+		body := fmt.Sprintf("%s\n\n%s **%s** - %s",
+			topClaims[idx].Claim,
+			statusEmoji,
+			result.Status,
+			result.Evidence)
 
-			if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.SourceURLs); urls != "" {
-				body += "\n\n" + urls
-			}
-
-			editStyledMessage(s, i.ChannelID, msg.ID, fmt.Sprintf("Claim %d", idx+1), body)
+		if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.SourceURLs); urls != "" {
+			body += "\n\n" + urls
 		}
+
+		statusLabel := strings.ToUpper(string(result.Status))
+		block := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d • %s", idx+1, statusLabel), body)
+		claimBlocks = append(claimBlocks, block)
 	}
 
 	summaryMsg := fmt.Sprintf("✅ Valid: %d\n❌ Rejected: %d\n❓ Unknown: %d", validCount, rejectedCount, unknownCount)
-	finalHeaderBody := fmt.Sprintf("%s\n\n%s", headerBody, summaryMsg)
+	finalText := headerBody
+	if summaryMsg != "" {
+		finalText += "\n\n" + summaryMsg
+	}
+	if len(claimBlocks) > 0 {
+		finalText += "\n\n" + strings.Join(claimBlocks, "\n\n")
+	}
+	finalHeaderBody := finalText
 	if headerHandle != nil {
 		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
 			log.Printf("research: slash header update failed: %v", err)

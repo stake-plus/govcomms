@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/research/components/teams"
@@ -120,22 +119,6 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 		log.Printf("team: header send failed: %v", err)
 	}
 
-	memberMessages := make(map[int]*discordgo.Message)
-	for i, member := range members {
-		body := member.Name
-		if member.Role != "" {
-			body += fmt.Sprintf(" (%s)", member.Role)
-		}
-		body += "\n⏳ *Analyzing...*"
-
-		content := shareddiscord.FormatStyledBlock(fmt.Sprintf("Member %d", i+1), body)
-		msg, err := shareddiscord.SendMessageNoEmbed(s, channelID, content)
-		if err == nil {
-			memberMessages[i] = msg
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
 	results, err := h.TeamsAnalyzer.AnalyzeTeamMembers(ctx, members)
 	if err != nil && err != context.DeadlineExceeded {
 		log.Printf("team: analysis error: %v", err)
@@ -144,6 +127,7 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 	realCount := 0
 	skilledCount := 0
 
+	var memberBlocks []string
 	for i, result := range results {
 		statusIcons := ""
 		if result.IsReal {
@@ -160,34 +144,21 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 			statusIcons += " | ⚠️ Skills Unverified"
 		}
 
-		if msg, exists := memberMessages[i]; exists {
-			var sections []string
-			header := result.Name
-			if result.Role != "" {
-				header += fmt.Sprintf(" (%s)", result.Role)
-			}
-			sections = append(sections, header)
-			sections = append(sections, statusIcons)
-			if strings.TrimSpace(result.Capability) != "" {
-				sections = append(sections, fmt.Sprintf("💼 %s", result.Capability))
-			}
-			if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.VerifiedURLs); urls != "" {
-				sections = append(sections, urls)
-			}
-
-			body := strings.Join(sections, "\n\n")
-			payload := shareddiscord.BuildStyledMessage(fmt.Sprintf("Member %d", i+1), body)
-			edit := &discordgo.MessageEdit{
-				ID:      msg.ID,
-				Channel: channelID,
-				Content: &payload.Content,
-			}
-			if len(payload.Components) > 0 {
-				components := payload.Components
-				edit.Components = &components
-			}
-			shareddiscord.EditMessageComplexNoEmbed(s, edit)
+		var sections []string
+		header := result.Name
+		if result.Role != "" {
+			header += fmt.Sprintf(" (%s)", result.Role)
 		}
+		sections = append(sections, statusIcons)
+		if strings.TrimSpace(result.Capability) != "" {
+			sections = append(sections, fmt.Sprintf("💼 %s", result.Capability))
+		}
+		if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.VerifiedURLs); urls != "" {
+			sections = append(sections, urls)
+		}
+
+		body := strings.Join(sections, "\n\n")
+		memberBlocks = append(memberBlocks, shareddiscord.FormatStyledBlock(fmt.Sprintf("Member %d • %s", i+1, header), body))
 	}
 
 	teamAssessment := "❌ Team unlikely to complete the proposed task"
@@ -199,7 +170,11 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 
 	summaryBody := fmt.Sprintf("👤 Real People: %d/%d | 🎯 Verified Skills: %d/%d\n\n**Assessment:** %s",
 		realCount, len(results), skilledCount, len(results), teamAssessment)
-	finalHeaderBody := fmt.Sprintf("%s\n\n%s", headerBody, summaryBody)
+	finalText := headerBody + "\n\n" + summaryBody
+	if len(memberBlocks) > 0 {
+		finalText += "\n\n" + strings.Join(memberBlocks, "\n\n")
+	}
+	finalHeaderBody := finalText
 	if headerHandle != nil {
 		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
 			log.Printf("team: header update failed: %v", err)
@@ -239,22 +214,6 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 		return
 	}
 
-	memberMessages := make(map[int]*discordgo.Message)
-	for idx, member := range members {
-		body := member.Name
-		if member.Role != "" {
-			body += fmt.Sprintf(" (%s)", member.Role)
-		}
-		body += "\n⏳ *Analyzing...*"
-
-		content := shareddiscord.FormatStyledBlock(fmt.Sprintf("Member %d", idx+1), body)
-		msg, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, content)
-		if err == nil {
-			memberMessages[idx] = msg
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
 	results, err := h.TeamsAnalyzer.AnalyzeTeamMembers(ctx, members)
 	if err != nil {
 		sendTeamWebhookEdit(s, i.Interaction, "Team", fmt.Sprintf("Error analyzing team members: %v", err))
@@ -264,6 +223,7 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 	realCount := 0
 	skilledCount := 0
 
+	var memberBlocks []string
 	for idx, result := range results {
 		if result.IsReal {
 			realCount++
@@ -272,48 +232,35 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 			skilledCount++
 		}
 
-		if msg, exists := memberMessages[idx]; exists {
-			var sections []string
-			header := result.Name
-			if result.Role != "" {
-				header += fmt.Sprintf(" (%s)", result.Role)
-			}
-			sections = append(sections, header)
-
-			if strings.TrimSpace(result.Capability) != "" {
-				sections = append(sections, fmt.Sprintf("Assessment: %s", result.Capability))
-			}
-
-			status := ""
-			if result.IsReal {
-				status += "👤 Verified Real Person"
-			} else {
-				status += "❓ Verification Failed"
-			}
-			if result.HasStatedSkills {
-				status += " • 🎯 Has Stated Skills"
-			}
-			if status != "" {
-				sections = append(sections, status)
-			}
-
-			if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.VerifiedURLs); urls != "" {
-				sections = append(sections, urls)
-			}
-
-			body := strings.Join(sections, "\n\n")
-			payload := shareddiscord.BuildStyledMessage(fmt.Sprintf("Member %d", idx+1), body)
-			edit := &discordgo.MessageEdit{
-				ID:      msg.ID,
-				Channel: i.ChannelID,
-				Content: &payload.Content,
-			}
-			if len(payload.Components) > 0 {
-				components := payload.Components
-				edit.Components = &components
-			}
-			shareddiscord.EditMessageComplexNoEmbed(s, edit)
+		var sections []string
+		header := result.Name
+		if result.Role != "" {
+			header += fmt.Sprintf(" (%s)", result.Role)
 		}
+
+		if strings.TrimSpace(result.Capability) != "" {
+			sections = append(sections, fmt.Sprintf("Assessment: %s", result.Capability))
+		}
+
+		status := ""
+		if result.IsReal {
+			status += "👤 Verified Real Person"
+		} else {
+			status += "❓ Verification Failed"
+		}
+		if result.HasStatedSkills {
+			status += " • 🎯 Has Stated Skills"
+		}
+		if status != "" {
+			sections = append(sections, status)
+		}
+
+		if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.VerifiedURLs); urls != "" {
+			sections = append(sections, urls)
+		}
+
+		body := strings.Join(sections, "\n\n")
+		memberBlocks = append(memberBlocks, shareddiscord.FormatStyledBlock(fmt.Sprintf("Member %d • %s", idx+1, header), body))
 	}
 
 	teamAssessment := "❌ Team unlikely to complete the proposed task"
@@ -323,8 +270,12 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 		teamAssessment = "⚠️ Team may be capable but has some concerns"
 	}
 
-	finalHeaderBody := fmt.Sprintf("%s\n\n👤 Real People: %d/%d | 🎯 Verified Skills: %d/%d\n\n**Assessment:** %s",
+	finalText := fmt.Sprintf("%s\n\n👤 Real People: %d/%d | 🎯 Verified Skills: %d/%d\n\n**Assessment:** %s",
 		headerBody, realCount, len(results), skilledCount, len(results), teamAssessment)
+	if len(memberBlocks) > 0 {
+		finalText += "\n\n" + strings.Join(memberBlocks, "\n\n")
+	}
+	finalHeaderBody := finalText
 	if headerHandle != nil {
 		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
 			log.Printf("team: slash header update failed: %v", err)
