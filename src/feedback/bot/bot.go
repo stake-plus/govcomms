@@ -685,8 +685,8 @@ func (b *Bot) postFirstMessageIfNeeded(network *sharedgov.Network, ref *sharedgo
 		return err
 	}
 
-	if commentID != 0 {
-		if err := data.UpdateFeedbackMessagePolkassembly(b.db, firstMsg.ID, fmt.Sprintf("%d", commentID), nil, ""); err != nil {
+	if commentID != "" {
+		if err := data.UpdateFeedbackMessagePolkassembly(b.db, firstMsg.ID, commentID, nil, ""); err != nil {
 			return fmt.Errorf("update feedback message polkassembly id: %w", err)
 		}
 	}

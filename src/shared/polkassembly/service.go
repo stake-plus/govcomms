@@ -82,14 +82,14 @@ func (s *Service) ListComments(network string, postID int) ([]Comment, error) {
 }
 
 // PostFirstMessage posts the first feedback message to Polkassembly and returns the comment ID.
-func (s *Service) PostFirstMessage(network string, refID int, message, link string) (int, error) {
+func (s *Service) PostFirstMessage(network string, refID int, message, link string) (string, error) {
 	key := strings.ToLower(network)
 
 	s.mu.Lock()
 	client, ok := s.clients[key]
 	s.mu.Unlock()
 	if !ok {
-		return 0, fmt.Errorf("polkassembly: no client configured for network %s", network)
+		return "", fmt.Errorf("polkassembly: no client configured for network %s", network)
 	}
 
 	content := fmt.Sprintf("%s\n\n[Continue discussion with the DAO](%s)", message, link)
@@ -98,18 +98,18 @@ func (s *Service) PostFirstMessage(network string, refID int, message, link stri
 		s.logger.Printf("polkassembly: authenticating for %s", key)
 		if err := client.Signup(key); err != nil {
 			if err := client.Login(); err != nil {
-				return 0, fmt.Errorf("polkassembly: authentication failed for %s: %w", network, err)
+				return "", fmt.Errorf("polkassembly: authentication failed for %s: %w", network, err)
 			}
 		}
 	}
 
 	commentID, err := client.PostComment(content, refID, key)
 	if err != nil {
-		return 0, fmt.Errorf("polkassembly: post comment failed for %s ref %d: %w", network, refID, err)
+		return "", fmt.Errorf("polkassembly: post comment failed for %s ref %d: %w", network, refID, err)
 	}
 
-	if commentID != 0 {
-		s.logger.Printf("polkassembly: posted comment %d for %s ref #%d", commentID, key, refID)
+	if commentID != "" {
+		s.logger.Printf("polkassembly: posted comment %s for %s ref #%d", commentID, key, refID)
 	} else {
 		s.logger.Printf("polkassembly: posted comment for %s ref #%d (no id returned)", key, refID)
 	}

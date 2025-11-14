@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/cookiejar"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -224,9 +225,9 @@ func (c *Client) Signup(network string) error {
 }
 
 // PostComment posts a comment to a referendum
-func (c *Client) PostComment(content string, postID int, network string) (int, error) {
+func (c *Client) PostComment(content string, postID int, network string) (string, error) {
 	if c.loginData == nil {
-		return 0, fmt.Errorf("not logged in")
+		return "", fmt.Errorf("not logged in")
 	}
 
 	network = strings.ToLower(strings.TrimSpace(network))
@@ -234,13 +235,13 @@ func (c *Client) PostComment(content string, postID int, network string) (int, e
 		network = c.network
 	}
 	if network == "" {
-		return 0, fmt.Errorf("post comment: network not specified")
+		return "", fmt.Errorf("post comment: network not specified")
 	}
 	c.network = network
 
 	if c.loginData.Network != network {
 		if err := c.Signup(network); err != nil {
-			return 0, fmt.Errorf("switch network failed: %w", err)
+			return "", fmt.Errorf("switch network failed: %w", err)
 		}
 	}
 
@@ -253,7 +254,7 @@ func (c *Client) PostComment(content string, postID int, network string) (int, e
 
 		userID, err := c.fetchUserID(network)
 		if err != nil {
-			return 0, fmt.Errorf("fetch user ID: %w", err)
+			return "", fmt.Errorf("fetch user ID: %w", err)
 		}
 
 		body := map[string]interface{}{
@@ -277,7 +278,7 @@ func (c *Client) PostComment(content string, postID int, network string) (int, e
 				c.Logout()
 				if signupErr := c.Signup(network); signupErr != nil {
 					if loginErr := c.Login(); loginErr != nil {
-						return 0, fmt.Errorf("reauthenticate: %w", signupErr)
+						return "", fmt.Errorf("reauthenticate: %w", signupErr)
 					}
 				}
 				continue
@@ -285,10 +286,10 @@ func (c *Client) PostComment(content string, postID int, network string) (int, e
 			if httpErr != nil && len(httpErr.Body) > 0 {
 				msg := strings.TrimSpace(string(httpErr.Body))
 				if msg != "" {
-					return 0, fmt.Errorf("post comment failed: %w: %s", err, msg)
+					return "", fmt.Errorf("post comment failed: %w: %s", err, msg)
 				}
 			}
-			return 0, fmt.Errorf("post comment failed: %w", err)
+			return "", fmt.Errorf("post comment failed: %w", err)
 		}
 
 		var commentResp struct {
@@ -299,22 +300,22 @@ func (c *Client) PostComment(content string, postID int, network string) (int, e
 		}
 		if err := json.Unmarshal(resp, &commentResp); err == nil {
 			if commentResp.Comment.ID != 0 {
-				return commentResp.Comment.ID, nil
+				return strconv.Itoa(commentResp.Comment.ID), nil
 			}
 			if commentResp.ID != 0 {
-				return commentResp.ID, nil
+				return strconv.Itoa(commentResp.ID), nil
 			}
 		}
 
-		if id := extractCommentID(resp); id != 0 {
+		if id := extractCommentID(resp); id != "" {
 			return id, nil
 		}
 
 		log.Printf("polkassembly: post comment response without ID: %s", strings.TrimSpace(string(resp)))
-		return 0, fmt.Errorf("post comment: missing comment id in response")
+		return "", fmt.Errorf("post comment: missing comment id in response")
 	}
 
-	return 0, fmt.Errorf("post comment failed: unauthorized after retry")
+	return "", fmt.Errorf("post comment failed: unauthorized after retry")
 }
 
 // ListComments returns the comments for a referendum post.
@@ -520,49 +521,54 @@ func (c *Client) get(path string, headers map[string]string) ([]byte, error) {
 	return respBody, nil
 }
 
-func extractCommentID(body []byte) int {
+func extractCommentID(body []byte) string {
 	var generic interface{}
 	if err := json.Unmarshal(body, &generic); err != nil {
-		return 0
+		return ""
 	}
 	return findID(generic)
 }
 
-func findID(v interface{}) int {
+func findID(v interface{}) string {
 	switch val := v.(type) {
 	case map[string]interface{}:
-		if id := numberToInt(val["id"]); id != 0 {
+		if id := numberToString(val["id"]); id != "" {
 			return id
 		}
-		if id := numberToInt(val["comment_id"]); id != 0 {
+		if id := numberToString(val["comment_id"]); id != "" {
 			return id
 		}
-		if id := findID(val["comment"]); id != 0 {
+		if id := findID(val["comment"]); id != "" {
 			return id
 		}
-		if id := findID(val["data"]); id != 0 {
+		if id := findID(val["data"]); id != "" {
 			return id
 		}
 	case []interface{}:
 		for _, item := range val {
-			if id := findID(item); id != 0 {
+			if id := findID(item); id != "" {
 				return id
 			}
 		}
 	}
-	return 0
+	return ""
 }
 
-func numberToInt(v interface{}) int {
+func numberToString(v interface{}) string {
 	switch val := v.(type) {
+	case string:
+		val = strings.TrimSpace(val)
+		if val != "" {
+			return val
+		}
 	case float64:
 		if val > 0 {
-			return int(val)
+			return strconv.Itoa(int(val))
 		}
 	case int:
 		if val > 0 {
-			return val
+			return strconv.Itoa(val)
 		}
 	}
-	return 0
+	return ""
 }
