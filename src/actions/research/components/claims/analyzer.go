@@ -52,7 +52,7 @@ INSTEAD, focus on PAST ACTIVITIES and ACHIEVEMENTS that the team claims to have 
 
 For each claim, extract ALL URLs mentioned in the proposal that could help verify it (can be multiple).
 
-Count total verifiable HISTORICAL claims, then select the 5 MOST IMPORTANT based on:
+Count total verifiable HISTORICAL claims, then order them based on significance and importance based on:
 1. Past deliverables with public proof (videos, code, documents)
 2. Team member credentials and past experience
 3. Historical metrics that can be independently checked
