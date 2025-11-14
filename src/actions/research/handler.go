@@ -337,7 +337,7 @@ func sendColumnCardGroups(s *discordgo.Session, channelID string, cards []cardCo
 		}
 
 		var (
-			indexes []int
+			indexes  []int
 			payloads []shareddiscord.StyledMessage
 		)
 
