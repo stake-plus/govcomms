@@ -206,12 +206,16 @@ func (c *Client) Signup(network string) error {
 		return fmt.Errorf("parse signup response: %w", err)
 	}
 
-	c.loginData = &LoginData{
-		Token:   signupResp.Token,
-		Network: c.network,
+	if signupResp.Token != "" {
+		c.loginData = &LoginData{
+			Token:   signupResp.Token,
+			Network: c.network,
+		}
+		return nil
 	}
 
-	return nil
+	// Some API responses omit the token; follow up with a login to acquire one.
+	return c.Login()
 }
 
 // PostComment posts a comment to a referendum
