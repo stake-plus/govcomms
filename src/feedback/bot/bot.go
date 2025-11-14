@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -32,7 +33,10 @@ type Bot struct {
 	cancelFunc     context.CancelFunc
 }
 
-const feedbackEmbedColor = 0x5865F2
+const (
+	feedbackEmbedColor     = 0x5865F2
+	polkassemblyReplyColor = 0xF39C12
+)
 
 func (b *Bot) ensureNetworkManager() error {
 	if b.networkManager != nil {
@@ -470,6 +474,10 @@ func (b *Bot) startPolkassemblyMonitor(ctx context.Context) {
 }
 
 func (b *Bot) refreshPolkassemblyCheck() error {
+	if b.polkassembly == nil {
+		return nil
+	}
+
 	const batchSize = 50
 	cutoff := time.Now().Add(-12 * time.Hour)
 
@@ -479,14 +487,162 @@ func (b *Bot) refreshPolkassemblyCheck() error {
 		return err
 	}
 
-	now := time.Now()
 	for _, ref := range refs {
+		if err := b.processPolkassemblyReplies(&ref); err != nil {
+			log.Printf("feedback: polkassembly reply sync failed for ref %d: %v", ref.RefID, err)
+		}
+
+		checkTime := time.Now()
 		if err := b.db.Model(&sharedgov.Ref{}).
 			Where("id = ?", ref.ID).
-			Update("last_reply_check", now).Error; err != nil {
+			Update("last_reply_check", checkTime).Error; err != nil {
 			log.Printf("feedback: failed to update last_reply_check for ref %d: %v", ref.ID, err)
 		}
 	}
 
 	return nil
+}
+
+func (b *Bot) processPolkassemblyReplies(ref *sharedgov.Ref) error {
+	if b.polkassembly == nil {
+		return nil
+	}
+	if err := b.ensureNetworkManager(); err != nil {
+		return err
+	}
+
+	network := b.networkManager.GetByID(ref.NetworkID)
+	if network == nil {
+		return fmt.Errorf("no network configured for id %d", ref.NetworkID)
+	}
+
+	messages, err := data.GetPolkassemblyMessages(b.db, ref.ID)
+	if err != nil {
+		return err
+	}
+	if len(messages) == 0 {
+		return nil
+	}
+
+	knownIDs := make(map[string]struct{}, len(messages))
+	parentCommentIDs := make(map[int]struct{}, len(messages))
+	for _, msg := range messages {
+		if msg.PolkassemblyCommentID == nil || *msg.PolkassemblyCommentID == "" {
+			continue
+		}
+		id := *msg.PolkassemblyCommentID
+		knownIDs[id] = struct{}{}
+		if parsed, err := strconv.Atoi(id); err == nil {
+			parentCommentIDs[parsed] = struct{}{}
+		}
+	}
+
+	if len(parentCommentIDs) == 0 {
+		return nil
+	}
+
+	comments, err := b.polkassembly.ListComments(network.Name, int(ref.RefID))
+	if err != nil {
+		return err
+	}
+
+	threadInfo, err := b.refManager.GetThreadInfo(network.ID, uint32(ref.RefID))
+	if err != nil {
+		return fmt.Errorf("thread mapping not found for network %d ref %d", network.ID, ref.RefID)
+	}
+
+	for _, comment := range comments {
+		if comment.ParentID == nil {
+			continue
+		}
+		if _, ok := parentCommentIDs[*comment.ParentID]; !ok {
+			continue
+		}
+
+		idStr := strconv.Itoa(comment.ID)
+		if _, exists := knownIDs[idStr]; exists {
+			continue
+		}
+
+		var userID *int
+		if comment.User.ID > 0 {
+			uid := comment.User.ID
+			userID = &uid
+		}
+
+		createdAt := comment.ParsedCreatedAt()
+		msgRecord, err := data.SaveExternalPolkassemblyReply(
+			b.db,
+			ref.ID,
+			comment.User.Username,
+			comment.Content,
+			userID,
+			comment.User.Username,
+			idStr,
+			createdAt,
+		)
+		if err != nil {
+			log.Printf("feedback: failed to store polkassembly reply %d: %v", comment.ID, err)
+			continue
+		}
+
+		knownIDs[idStr] = struct{}{}
+		parentCommentIDs[comment.ID] = struct{}{}
+
+		b.announcePolkassemblyReply(threadInfo.ThreadID, network, ref, comment)
+
+		if b.redis != nil {
+			payload := map[string]interface{}{
+				"type":       "polkassembly_reply",
+				"network":    network.Name,
+				"network_id": network.ID,
+				"ref_id":     ref.RefID,
+				"comment_id": comment.ID,
+				"author":     comment.User.Username,
+				"message_id": msgRecord.ID,
+				"created_at": msgRecord.CreatedAt.UTC().Format(time.RFC3339),
+			}
+			if err := data.PublishMessage(context.Background(), b.redis, payload); err != nil {
+				log.Printf("feedback: failed to publish polkassembly reply payload: %v", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (b *Bot) announcePolkassemblyReply(threadID string, network *sharedgov.Network, ref *sharedgov.Ref, comment sharedpolkassembly.Comment) {
+	if b.session == nil || threadID == "" {
+		return
+	}
+
+	content := strings.TrimSpace(comment.Content)
+	if content == "" {
+		content = "_(no content)_"
+	}
+	content = shareddiscord.WrapURLsNoEmbed(content)
+
+	embed := &discordgo.MessageEmbed{
+		Title:       fmt.Sprintf("Polkassembly reply from %s", comment.User.Username),
+		Description: content,
+		Color:       polkassemblyReplyColor,
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: "Polkassembly",
+		},
+	}
+
+	if ts := comment.ParsedCreatedAt(); !ts.IsZero() {
+		embed.Timestamp = ts.UTC().Format(time.RFC3339)
+	} else {
+		embed.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+
+	embed.URL = fmt.Sprintf("https://%s.polkassembly.io/referendum/%d?commentId=%d",
+		strings.ToLower(network.Name), ref.RefID, comment.ID)
+
+	if _, err := b.session.ChannelMessageSendComplex(threadID, &discordgo.MessageSend{
+		Embeds: []*discordgo.MessageEmbed{embed},
+	}); err != nil {
+		log.Printf("feedback: failed to post polkassembly reply to Discord: %v", err)
+	}
 }

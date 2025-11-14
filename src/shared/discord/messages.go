@@ -2,6 +2,7 @@ package discord
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -86,7 +87,7 @@ func splitMessage(message string, userID string) []string {
 			if currentMessage.Len()+len(paragraph)+4 > effectiveMaxLength {
 				if currentMessage.Len() > 0 {
 					if isFirst {
-						messages = append(messages, fmt.Sprintf("<@%s> %s", userID, currentMessage.String()))
+						messages = append(messages, mention+currentMessage.String())
 						isFirst = false
 					} else {
 						messages = append(messages, currentMessage.String())
@@ -145,4 +146,31 @@ func splitBySentences(text string) []string {
 		return chunks
 	}
 	return sentences
+}
+
+var newlineCollapse = regexp.MustCompile(`\n{3,}`)
+
+// BeautifyForDiscord normalizes AI-responses for improved readability.
+func BeautifyForDiscord(text string) string {
+	if text == "" {
+		return text
+	}
+
+	normalized := strings.ReplaceAll(text, "\r\n", "\n")
+	normalized = newlineCollapse.ReplaceAllString(normalized, "\n\n")
+
+	lines := strings.Split(normalized, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "- "):
+			lines[i] = strings.Replace(line, "- ", "• ", 1)
+		case strings.HasPrefix(trimmed, "* "):
+			lines[i] = strings.Replace(line, "* ", "• ", 1)
+		}
+	}
+
+	result := strings.Join(lines, "\n")
+	result = strings.TrimSpace(result)
+	return WrapURLsNoEmbed(result)
 }

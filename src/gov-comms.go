@@ -18,7 +18,7 @@ import (
 func main() {
 	enableQA := flag.Bool("enable-qa", envBool("ENABLE_QA", true), "Enable AI Q&A bot")
 	enableResearch := flag.Bool("enable-research", envBool("ENABLE_RESEARCH", true), "Enable Research bot")
-	enableFeedback := flag.Bool("enable-feedback", envBool("ENABLE_FEEDBACK", false), "Enable Feedback bot")
+	enableFeedback := flag.Bool("enable-feedback", envBool("ENABLE_FEEDBACK", true), "Enable Feedback bot")
 	flag.Parse()
 
 	// Use a single DB connection for all modules

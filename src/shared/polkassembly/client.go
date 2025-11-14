@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -18,6 +19,35 @@ type Client struct {
 	httpClient *http.Client
 	signer     Signer
 	loginData  *LoginData
+	network    string
+}
+
+// Comment represents a comment returned by the Polkassembly API.
+type Comment struct {
+	ID        int    `json:"id"`
+	ParentID  *int   `json:"parent_id"`
+	Content   string `json:"content"`
+	CreatedAt string `json:"created_at"`
+	User      struct {
+		ID       int    `json:"id"`
+		Username string `json:"username"`
+	} `json:"user"`
+}
+
+// ParsedCreatedAt converts the comment timestamp into time.Time when possible.
+func (c Comment) ParsedCreatedAt() time.Time {
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05.999999",
+		"2006-01-02T15:04:05",
+	}
+	for _, layout := range layouts {
+		if ts, err := time.Parse(layout, c.CreatedAt); err == nil {
+			return ts
+		}
+	}
+	return time.Time{}
 }
 
 // LoginData holds authentication information
@@ -33,18 +63,23 @@ type Signer interface {
 }
 
 // NewClient creates a new Polkassembly client
-func NewClient(endpoint string, signer Signer) *Client {
+func NewClient(endpoint string, signer Signer, network string) *Client {
 	return &Client{
 		endpoint: endpoint,
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
 		},
-		signer: signer,
+		signer:  signer,
+		network: strings.ToLower(strings.TrimSpace(network)),
 	}
 }
 
 // Login authenticates the user with Polkassembly
 func (c *Client) Login() error {
+	if c.network == "" {
+		return fmt.Errorf("login: network not configured")
+	}
+
 	loginStartReq := map[string]string{
 		"address": c.signer.Address(),
 		"wallet":  "polkadot-js",
@@ -52,6 +87,7 @@ func (c *Client) Login() error {
 
 	headers := map[string]string{
 		"Content-Type": "application/json",
+		"x-network":    c.network,
 	}
 
 	resp, err := c.post("/auth/actions/addressLoginStart", loginStartReq, headers)
@@ -86,12 +122,25 @@ func (c *Client) Login() error {
 	if err := json.Unmarshal(resp, &c.loginData); err != nil {
 		return fmt.Errorf("parse login response: %w", err)
 	}
+	if c.loginData != nil && c.loginData.Network == "" {
+		c.loginData.Network = c.network
+	}
 
 	return nil
 }
 
 // Signup registers a new user with Polkassembly
 func (c *Client) Signup(network string) error {
+	if network != "" {
+		network = strings.ToLower(strings.TrimSpace(network))
+	}
+	if network != "" {
+		c.network = network
+	}
+	if c.network == "" {
+		return fmt.Errorf("signup: network not specified")
+	}
+
 	if c.loginData != nil && c.loginData.Network == network {
 		return nil
 	}
@@ -102,7 +151,7 @@ func (c *Client) Signup(network string) error {
 
 	headers := map[string]string{
 		"Content-Type": "application/json",
-		"x-network":    network,
+		"x-network":    c.network,
 	}
 
 	signupStartReq := map[string]string{
@@ -158,7 +207,7 @@ func (c *Client) Signup(network string) error {
 
 	c.loginData = &LoginData{
 		Token:   signupResp.Token,
-		Network: network,
+		Network: c.network,
 	}
 
 	return nil
@@ -169,6 +218,15 @@ func (c *Client) PostComment(content string, postID int, network string) (int, e
 	if c.loginData == nil {
 		return 0, fmt.Errorf("not logged in")
 	}
+
+	network = strings.ToLower(strings.TrimSpace(network))
+	if network == "" {
+		network = c.network
+	}
+	if network == "" {
+		return 0, fmt.Errorf("post comment: network not specified")
+	}
+	c.network = network
 
 	if c.loginData.Network != network {
 		if err := c.Signup(network); err != nil {
@@ -182,7 +240,7 @@ func (c *Client) PostComment(content string, postID int, network string) (int, e
 		"x-network":     network,
 	}
 
-	userID, err := c.fetchUserID()
+	userID, err := c.fetchUserID(network)
 	if err != nil {
 		return 0, fmt.Errorf("fetch user ID: %w", err)
 	}
@@ -219,6 +277,56 @@ func (c *Client) PostComment(content string, postID int, network string) (int, e
 	return 0, nil
 }
 
+// ListComments returns the comments for a referendum post.
+func (c *Client) ListComments(postID int, network string) ([]Comment, error) {
+	if postID <= 0 {
+		return nil, fmt.Errorf("list comments: invalid post id")
+	}
+
+	if network != "" {
+		network = strings.ToLower(strings.TrimSpace(network))
+	}
+
+	if c.network == "" && network != "" {
+		c.network = network
+	}
+	if c.network == "" {
+		return nil, fmt.Errorf("list comments: network not specified")
+	}
+
+	headers := map[string]string{
+		"x-network": c.network,
+	}
+	if c.loginData != nil && c.loginData.Token != "" {
+		headers["Authorization"] = fmt.Sprintf("Bearer %s", c.loginData.Token)
+	}
+
+	path := fmt.Sprintf("/comments/listing/on-chain-post?postId=%d&page=1&pageSize=50&proposalType=referendums_v2", postID)
+	body, err := c.get(path, headers)
+	if err != nil {
+		return nil, fmt.Errorf("list comments failed: %w", err)
+	}
+
+	var results struct {
+		Comments []Comment `json:"comments"`
+	}
+
+	if err := json.Unmarshal(body, &results); err != nil {
+		var fallback []Comment
+		if errAlt := json.Unmarshal(body, &fallback); errAlt == nil {
+			results.Comments = fallback
+		} else {
+			return nil, fmt.Errorf("parse comments response: %w", err)
+		}
+	}
+
+	for i := range results.Comments {
+		results.Comments[i].Content = strings.TrimSpace(results.Comments[i].Content)
+	}
+
+	return results.Comments, nil
+}
+
 // Logout clears authentication state
 func (c *Client) Logout() {
 	c.loginData = nil
@@ -229,11 +337,27 @@ func (c *Client) IsLoggedIn() bool {
 	return c.loginData != nil
 }
 
-// fetchUserID retrieves the user ID for the current address
-func (c *Client) fetchUserID() (int, error) {
+func (c *Client) fetchUserID(network string) (int, error) {
+	if network != "" {
+		c.network = strings.ToLower(strings.TrimSpace(network))
+	}
+
+	if c.network == "" && c.loginData != nil {
+		c.network = c.loginData.Network
+	}
+	if c.network == "" {
+		return 0, fmt.Errorf("fetch profile: network not specified")
+	}
+
 	url := fmt.Sprintf("%s/auth/data/profileWithAddress?address=%s", c.endpoint, c.signer.Address())
 
-	resp, err := c.httpClient.Get(url)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return 0, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("x-network", c.network)
+
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("fetch profile failed: %w", err)
 	}
@@ -279,6 +403,37 @@ func (c *Client) postWithStatus(path string, body interface{}, headers map[strin
 	}
 
 	req, err := http.NewRequest("POST", c.endpoint+path, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, &HTTPError{
+			StatusCode: resp.StatusCode,
+			Body:       respBody,
+		}
+	}
+
+	return respBody, nil
+}
+
+func (c *Client) get(path string, headers map[string]string) ([]byte, error) {
+	req, err := http.NewRequest("GET", c.endpoint+path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

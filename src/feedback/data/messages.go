@@ -53,3 +53,47 @@ func CountFeedbackMessages(db *gorm.DB, refDBID uint64) (int64, error) {
 	}
 	return count, nil
 }
+
+// GetPolkassemblyMessages returns all messages that have a Polkassembly comment ID.
+func GetPolkassemblyMessages(db *gorm.DB, refDBID uint64) ([]sharedgov.RefMessage, error) {
+	var messages []sharedgov.RefMessage
+	if err := db.Where("ref_id = ? AND polkassembly_comment_id IS NOT NULL AND polkassembly_comment_id <> ''", refDBID).
+		Find(&messages).Error; err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+// SaveExternalPolkassemblyReply persists a reply that originated on Polkassembly.
+func SaveExternalPolkassemblyReply(db *gorm.DB, refDBID uint64, author, body string, userID *int, username string, commentID string, createdAt time.Time) (*sharedgov.RefMessage, error) {
+	if commentID == "" {
+		return nil, fmt.Errorf("comment ID cannot be empty")
+	}
+
+	msg := sharedgov.RefMessage{
+		RefID:                refDBID,
+		Author:               author,
+		Body:                 body,
+		Internal:             true,
+		PolkassemblyUsername: username,
+		CreatedAt:            createdAt,
+	}
+
+	if createdAt.IsZero() {
+		msg.CreatedAt = time.Now()
+	}
+
+	if userID != nil {
+		val := uint32(*userID)
+		msg.PolkassemblyUserID = &val
+	}
+
+	msgID := commentID
+	msg.PolkassemblyCommentID = &msgID
+
+	if err := db.Create(&msg).Error; err != nil {
+		return nil, err
+	}
+
+	return &msg, nil
+}

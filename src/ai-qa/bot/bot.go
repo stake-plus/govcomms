@@ -27,6 +27,8 @@ type Bot struct {
 	cancelFunc     context.CancelFunc
 }
 
+const answerEmbedColor = 0x3B82F6
+
 func New(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Bot, error) {
 	session, err := discordgo.New("Bot " + cfg.Base.Token)
 	if err != nil {
@@ -222,22 +224,70 @@ func (b *Bot) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.
 		userID = interaction.User.ID
 	}
 
-	formatted := message
+	answer := shareddiscord.BeautifyForDiscord(message)
+
+	formatted := answer
 	if strings.TrimSpace(question) != "" {
-		formatted = fmt.Sprintf("> **Question:** %s\n\n%s", question, message)
+		formatted = fmt.Sprintf("> **Question:** %s\n\n%s", question, answer)
+	}
+
+	mentionPrefix := ""
+	mentionContent := ""
+	if userID != "" {
+		mentionPrefix = fmt.Sprintf("<@%s> ", userID)
+		mentionContent = fmt.Sprintf("<@%s>", userID)
 	}
 
 	msgs := shareddiscord.BuildLongMessages(formatted, userID)
-	if len(msgs) > 0 {
-		// Edit the deferred response with the first chunk
+	if len(msgs) == 0 {
+		return
+	}
+
+	flags := discordgo.MessageFlagsSuppressEmbeds
+	first := msgs[0]
+	firstBody := strings.TrimSpace(strings.TrimPrefix(first, mentionPrefix))
+
+	embedSent := false
+	if firstBody != "" && len(firstBody) <= 4000 {
+		embed := &discordgo.MessageEmbed{
+			Description: firstBody,
+			Color:       answerEmbedColor,
+		}
+
+		if questionTitle := strings.TrimSpace(question); questionTitle != "" {
+			title := fmt.Sprintf("Answer • %s", questionTitle)
+			if len(title) > 256 {
+				title = title[:253] + "..."
+			}
+			embed.Title = title
+		} else {
+			embed.Title = "AI Answer"
+		}
+
+		var contentPtr *string
+		if mentionContent != "" {
+			contentPtr = &mentionContent
+		}
+
+		if _, err := s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{
+			Content: contentPtr,
+			Embeds:  &[]*discordgo.MessageEmbed{embed},
+		}); err == nil {
+			embedSent = true
+		} else {
+			log.Printf("Failed to send embed response; falling back to text: %v", err)
+		}
+	}
+
+	if !embedSent {
 		resp, err := s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{
-			Content: &msgs[0],
+			Content: &first,
 		})
 		if err != nil {
 			log.Printf("Failed to send interaction response: %v", err)
 			return
 		}
-		flags := discordgo.MessageFlagsSuppressEmbeds
+
 		if resp != nil && resp.ChannelID != "" && resp.ID != "" {
 			content := resp.Content
 			if _, err := s.ChannelMessageEditComplex(&discordgo.MessageEdit{
@@ -249,15 +299,15 @@ func (b *Bot) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.
 				log.Printf("Failed to suppress embeds on response: %v", err)
 			}
 		}
-		// Send additional chunks as regular messages
-		for idx := 1; idx < len(msgs); idx++ {
-			if _, err := s.ChannelMessageSendComplex(interaction.ChannelID, &discordgo.MessageSend{
-				Content: msgs[idx],
-				Flags:   flags,
-			}); err != nil {
-				log.Printf("Failed to send follow-up message: %v", err)
-				return
-			}
+	}
+
+	for idx := 1; idx < len(msgs); idx++ {
+		if _, err := s.ChannelMessageSendComplex(interaction.ChannelID, &discordgo.MessageSend{
+			Content: msgs[idx],
+			Flags:   flags,
+		}); err != nil {
+			log.Printf("Failed to send follow-up message: %v", err)
+			return
 		}
 	}
 }
@@ -385,7 +435,8 @@ func (b *Bot) handleRefreshSlash(s *discordgo.Session, i *discordgo.InteractionC
 }
 
 func (b *Bot) sendLongMessage(s *discordgo.Session, channelID string, userID string, message string) {
-	msgs := shareddiscord.BuildLongMessages(message, userID)
+	formatted := shareddiscord.BeautifyForDiscord(message)
+	msgs := shareddiscord.BuildLongMessages(formatted, userID)
 	for i, msg := range msgs {
 		if i > 0 {
 			s.ChannelTyping(channelID)

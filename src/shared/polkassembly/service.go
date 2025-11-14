@@ -51,11 +51,12 @@ func NewService(cfg ServiceConfig, networks map[uint8]*sharedgov.Network) (*Serv
 
 		signer, err := NewPolkadotSignerFromSeed(seed, prefix)
 		if err != nil {
-			return nil, fmt.Errorf("create signer for network %s: %w", net.Name, err)
+			svc.logger.Printf("polkassembly: unable to configure signer for %s: %v", net.Name, err)
+			continue
 		}
 
 		key := strings.ToLower(net.Name)
-		svc.clients[key] = NewClient(cfg.Endpoint, signer)
+		svc.clients[key] = NewClient(cfg.Endpoint, signer, key)
 		svc.logger.Printf("polkassembly: configured client for %s (address: %s)", key, signer.Address())
 	}
 
@@ -64,6 +65,21 @@ func NewService(cfg ServiceConfig, networks map[uint8]*sharedgov.Network) (*Serv
 	}
 
 	return svc, nil
+}
+
+// ListComments retrieves all comments for a referendum post.
+func (s *Service) ListComments(network string, postID int) ([]Comment, error) {
+	key := strings.ToLower(network)
+
+	s.mu.Lock()
+	client, ok := s.clients[key]
+	s.mu.Unlock()
+
+	if !ok {
+		return nil, fmt.Errorf("polkassembly: no client configured for network %s", network)
+	}
+
+	return client.ListComments(postID, key)
 }
 
 // PostFirstMessage posts the first feedback message to Polkassembly and returns the comment ID.

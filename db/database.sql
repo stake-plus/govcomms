@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS `networks` (
   `symbol` varchar(8) NOT NULL,
   `url` varchar(256) NOT NULL,
   `discord_channel_id` varchar(64) DEFAULT NULL,
+  `polkassembly_seed` varchar(512) DEFAULT NULL,
+  `ss58_prefix` smallint unsigned DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `idx_network_name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
