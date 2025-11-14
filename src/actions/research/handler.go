@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/research/components/claims"
@@ -149,8 +150,12 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 		}
 
 		title := fmt.Sprintf("Claim: %s", topClaims[i].Claim)
+		assessmentText := strings.TrimSpace(result.Evidence)
+		if assessmentText == "" {
+			assessmentText = "_No assessment provided_"
+		}
 		body := fmt.Sprintf("Assessment:\n\n%s\n\nVerification Status: %s %s",
-			result.Evidence,
+			indentMultilineText(assessmentText, "    "),
 			statusEmoji,
 			result.Status)
 
@@ -235,8 +240,12 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 		}
 
 		title := fmt.Sprintf("Claim: %s", topClaims[idx].Claim)
+		assessmentText := strings.TrimSpace(result.Evidence)
+		if assessmentText == "" {
+			assessmentText = "_No assessment provided_"
+		}
 		body := fmt.Sprintf("Assessment:\n\n%s\n\nVerification Status: %s %s",
-			result.Evidence,
+			indentMultilineText(assessmentText, "    "),
 			statusEmoji,
 			result.Status)
 
@@ -310,4 +319,20 @@ func dispatchPanels(s *discordgo.Session, channelID string, panels []shareddisco
 			return
 		}
 	}
+}
+
+func indentMultilineText(text string, indent string) string {
+	if text == "" {
+		return ""
+	}
+
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			lines[i] = ""
+			continue
+		}
+		lines[i] = indent + line
+	}
+	return strings.Join(lines, "\n")
 }
