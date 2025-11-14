@@ -306,7 +306,12 @@ func (c *Client) PostComment(content string, postID int, network string) (int, e
 			}
 		}
 
-		return 0, nil
+		if id := extractCommentID(resp); id != 0 {
+			return id, nil
+		}
+
+		log.Printf("polkassembly: post comment response without ID: %s", strings.TrimSpace(string(resp)))
+		return 0, fmt.Errorf("post comment: missing comment id in response")
 	}
 
 	return 0, fmt.Errorf("post comment failed: unauthorized after retry")
@@ -513,4 +518,51 @@ func (c *Client) get(path string, headers map[string]string) ([]byte, error) {
 	}
 
 	return respBody, nil
+}
+
+func extractCommentID(body []byte) int {
+	var generic interface{}
+	if err := json.Unmarshal(body, &generic); err != nil {
+		return 0
+	}
+	return findID(generic)
+}
+
+func findID(v interface{}) int {
+	switch val := v.(type) {
+	case map[string]interface{}:
+		if id := numberToInt(val["id"]); id != 0 {
+			return id
+		}
+		if id := numberToInt(val["comment_id"]); id != 0 {
+			return id
+		}
+		if id := findID(val["comment"]); id != 0 {
+			return id
+		}
+		if id := findID(val["data"]); id != 0 {
+			return id
+		}
+	case []interface{}:
+		for _, item := range val {
+			if id := findID(item); id != 0 {
+				return id
+			}
+		}
+	}
+	return 0
+}
+
+func numberToInt(v interface{}) int {
+	switch val := v.(type) {
+	case float64:
+		if val > 0 {
+			return int(val)
+		}
+	case int:
+		if val > 0 {
+			return val
+		}
+	}
+	return 0
 }
