@@ -2,7 +2,6 @@ package discord
 
 import (
 	"fmt"
-	"net/url"
 	"regexp"
 	"strings"
 
@@ -398,4 +397,23 @@ func truncateForDiscord(value string, limit int) string {
 		return string(runes[:limit])
 	}
 	return string(runes[:limit-1]) + "…"
+}
+
+func summarizeURLDisplay(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		return raw
+	}
+
+	host := strings.TrimPrefix(parsed.Hostname(), "www.")
+	path := strings.Trim(parsed.EscapedPath(), "/")
+	if path == "" {
+		return host
+	}
+
+	segments := strings.Split(path, "/")
+	if len(segments) > 0 && segments[0] != "" {
+		return fmt.Sprintf("%s/%s", host, segments[0])
+	}
+	return host
 }
