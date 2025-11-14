@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
@@ -140,7 +141,7 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 		if assessmentText == "" {
 			assessmentText = "_No assessment provided_"
 		}
-		assessmentLine := fmt.Sprintf("Assessment:\n\n%s", assessmentText)
+		assessmentLine := fmt.Sprintf("Assessment:\n\n%s", indentMultilineText(assessmentText, "    "))
 
 		if result.IsReal {
 			realCount++
@@ -151,11 +152,17 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 
 		verificationStatus, verificationEmoji := determineVerificationDisplay(result)
 		workSkillsStatus, workSkillsEmoji := determineWorkSkillsDisplay(result)
-
 		verificationLine := fmt.Sprintf("Verification Status: %s %s", verificationEmoji, verificationStatus)
 		workSkillsLine := fmt.Sprintf("Work Skills: %s %s", workSkillsEmoji, workSkillsStatus)
 
-		body := strings.Join([]string{nameLine, assessmentLine, verificationLine, workSkillsLine}, "\n\n")
+		infoBlock := fmt.Sprintf("%s\n%s", verificationLine, workSkillsLine)
+
+		bodyParts := []string{nameLine, assessmentLine, infoBlock}
+		if sourcesLine := formatSourcesSection(result.VerifiedURLs); sourcesLine != "" {
+			bodyParts = append(bodyParts, sourcesLine)
+		}
+
+		body := strings.Join(bodyParts, "\n\n")
 		panel := shareddiscord.BuildStyledMessage("", body)
 		memberPanels = append(memberPanels, panel)
 	}
@@ -233,7 +240,7 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 		if assessmentText == "" {
 			assessmentText = "_No assessment provided_"
 		}
-		assessmentLine := fmt.Sprintf("Assessment:\n\n%s", assessmentText)
+		assessmentLine := fmt.Sprintf("Assessment:\n\n%s", indentMultilineText(assessmentText, "    "))
 
 		if result.IsReal {
 			realCount++
@@ -244,11 +251,17 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 
 		verificationStatus, verificationEmoji := determineVerificationDisplay(result)
 		workSkillsStatus, workSkillsEmoji := determineWorkSkillsDisplay(result)
-
 		verificationLine := fmt.Sprintf("Verification Status: %s %s", verificationEmoji, verificationStatus)
 		workSkillsLine := fmt.Sprintf("Work Skills: %s %s", workSkillsEmoji, workSkillsStatus)
 
-		body := strings.Join([]string{nameLine, assessmentLine, verificationLine, workSkillsLine}, "\n\n")
+		infoBlock := fmt.Sprintf("%s\n%s", verificationLine, workSkillsLine)
+
+		bodyParts := []string{nameLine, assessmentLine, infoBlock}
+		if sourcesLine := formatSourcesSection(result.VerifiedURLs); sourcesLine != "" {
+			bodyParts = append(bodyParts, sourcesLine)
+		}
+
+		body := strings.Join(bodyParts, "\n\n")
 		panel := shareddiscord.BuildStyledMessage("", body)
 		memberPanels = append(memberPanels, panel)
 	}
