@@ -281,7 +281,7 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 		sendTeamStyledMessage(s, i.ChannelID, headerTitle, finalHeaderBody)
 	}
 
-	dispatchPanels(s, channelIDOrInteraction(i), memberPanels, "team")
+	dispatchPanels(s, i.ChannelID, memberPanels, "team")
 }
 
 func sendTeamStyledMessage(s *discordgo.Session, channelID, title, body string) {
@@ -313,4 +313,22 @@ func sendTeamWebhookEdit(s *discordgo.Session, interaction *discordgo.Interactio
 		edit.Components = &components
 	}
 	shareddiscord.InteractionResponseEditNoEmbed(s, interaction, edit)
+}
+
+func dispatchPanels(s *discordgo.Session, channelID string, panels []shareddiscord.StyledMessage, prefix string) {
+	if len(panels) == 0 {
+		return
+	}
+	for _, panel := range panels {
+		msg := &discordgo.MessageSend{
+			Content: panel.Content,
+		}
+		if len(panel.Components) > 0 {
+			msg.Components = panel.Components
+		}
+		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, channelID, msg); err != nil {
+			log.Printf("%s: panel send failed: %v", prefix, err)
+			return
+		}
+	}
 }
