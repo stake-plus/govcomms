@@ -179,7 +179,8 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 				Content: &payload.Content,
 			}
 			if len(payload.Components) > 0 {
-				edit.Components = payload.Components
+				components := payload.Components
+				edit.Components = &components
 			}
 			shareddiscord.EditMessageComplexNoEmbed(s, edit)
 		}
@@ -283,7 +284,8 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 				Content: &payload.Content,
 			}
 			if len(payload.Components) > 0 {
-				edit.Components = payload.Components
+				components := payload.Components
+				edit.Components = &components
 			}
 			shareddiscord.EditMessageComplexNoEmbed(s, edit)
 		}
