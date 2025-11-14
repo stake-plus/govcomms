@@ -266,7 +266,7 @@ func (b *Bot) handleFeedbackSlash(s *discordgo.Session, i *discordgo.Interaction
 
 	authorTag := fmt.Sprintf("%s#%s", user.User.Username, user.User.Discriminator)
 
-	msgRecord, err := data.SaveFeedbackMessage(b.db, &ref, authorTag, message)
+	_, err = data.SaveFeedbackMessage(b.db, &ref, authorTag, message)
 	if err != nil {
 		log.Printf("feedback: failed to persist message: %v", err)
 		msg := "Failed to store feedback. Please try again later."
