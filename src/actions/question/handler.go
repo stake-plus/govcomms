@@ -360,9 +360,9 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 		msg := &discordgo.MessageSend{
 			Content: payload.Content,
 		}
-		if len(refs) > 0 {
-			msg.Components = shareddiscord.BuildLinkButtons(refs)
-		}
+	if len(refs) > 0 {
+		msg.Components = shareddiscord.BuildLinkButtons(refs)
+	}
 		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, interaction.ChannelID, msg); err != nil {
 			log.Printf("question: follow-up send failed: %v", err)
 			return
