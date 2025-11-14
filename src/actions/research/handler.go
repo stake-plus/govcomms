@@ -165,18 +165,25 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 	}
 
 	summaryMsg := fmt.Sprintf("✅ Valid: %d\n❌ Rejected: %d\n❓ Unknown: %d", validCount, rejectedCount, unknownCount)
-	finalText := headerBody
-	if summaryMsg != "" {
-		finalText += "\n\n" + summaryMsg
-	}
-	if len(claimBlocks) > 0 {
-		finalText += "\n\n" + strings.Join(claimBlocks, "\n\n")
-	}
-	finalHeaderBody := finalText
+	finalHeaderBody := fmt.Sprintf("%s\n\n%s", headerBody, summaryMsg)
 	if headerHandle != nil {
 		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
 			log.Printf("research: header update failed: %v", err)
 			sendStyledMessage(s, channelID, headerTitle, finalHeaderBody)
+			claimText := strings.Join(claimBlocks, "\n\n")
+			if claimText != "" {
+				chunks := shareddiscord.BuildStyledMessages("", claimText, "")
+				for _, chunk := range chunks {
+					msg := &discordgo.MessageSend{Content: chunk.Content}
+					if len(chunk.Components) > 0 {
+						msg.Components = chunk.Components
+					}
+					if _, err := shareddiscord.SendComplexMessageNoEmbed(s, channelID, msg); err != nil {
+						log.Printf("research: claim block send failed: %v", err)
+						break
+					}
+				}
+			}
 		}
 	} else {
 		sendStyledMessage(s, channelID, headerTitle, finalHeaderBody)
@@ -261,18 +268,25 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 	}
 
 	summaryMsg := fmt.Sprintf("✅ Valid: %d\n❌ Rejected: %d\n❓ Unknown: %d", validCount, rejectedCount, unknownCount)
-	finalText := headerBody
-	if summaryMsg != "" {
-		finalText += "\n\n" + summaryMsg
-	}
-	if len(claimBlocks) > 0 {
-		finalText += "\n\n" + strings.Join(claimBlocks, "\n\n")
-	}
-	finalHeaderBody := finalText
+	finalHeaderBody := fmt.Sprintf("%s\n\n%s", headerBody, summaryMsg)
 	if headerHandle != nil {
 		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
 			log.Printf("research: slash header update failed: %v", err)
 			sendStyledMessage(s, i.ChannelID, headerTitle, finalHeaderBody)
+			claimText := strings.Join(claimBlocks, "\n\n")
+			if claimText != "" {
+				chunks := shareddiscord.BuildStyledMessages("", claimText, "")
+				for _, chunk := range chunks {
+					msg := &discordgo.MessageSend{Content: chunk.Content}
+					if len(chunk.Components) > 0 {
+						msg.Components = chunk.Components
+					}
+					if _, err := shareddiscord.SendComplexMessageNoEmbed(s, i.ChannelID, msg); err != nil {
+						log.Printf("research: claim block send failed: %v", err)
+						break
+					}
+				}
+			}
 		}
 	} else {
 		sendStyledMessage(s, i.ChannelID, headerTitle, finalHeaderBody)
