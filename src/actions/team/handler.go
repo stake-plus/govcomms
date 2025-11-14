@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/url"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
@@ -376,4 +375,64 @@ func isInconclusiveCapability(capability string) bool {
 		}
 	}
 	return false
+}
+
+func indentMultilineText(text string, indent string) string {
+	if text == "" {
+		return ""
+	}
+
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			lines[i] = ""
+			continue
+		}
+		lines[i] = indent + line
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatSourcesSection(urls []string) string {
+	seen := make(map[string]struct{})
+	var lines []string
+
+	index := 1
+	for _, raw := range urls {
+		clean := strings.TrimSpace(raw)
+		if clean == "" {
+			continue
+		}
+		if _, exists := seen[clean]; exists {
+			continue
+		}
+		seen[clean] = struct{}{}
+
+		if index == 1 {
+			lines = append(lines, "Sources:")
+		}
+
+		display := summarizeSourceDisplay(clean)
+		lines = append(lines, fmt.Sprintf("- Source #%d: [%s](%s)", index, display, clean))
+		index++
+	}
+
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "\n")
+}
+
+func summarizeSourceDisplay(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		return strings.TrimPrefix(raw, "https://")
+	}
+
+	host := strings.TrimPrefix(parsed.Hostname(), "www.")
+	path := strings.Trim(parsed.EscapedPath(), "/")
+	if path == "" {
+		return host
+	}
+	return fmt.Sprintf("%s/%s", host, path)
 }
