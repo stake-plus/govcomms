@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/url"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
@@ -157,13 +156,11 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 
 		infoBlock := fmt.Sprintf("%s\n%s", verificationLine, workSkillsLine)
 
-		bodyParts := []string{nameLine, assessmentLine, infoBlock}
-		if sourcesLine := formatSourcesSection(result.VerifiedURLs); sourcesLine != "" {
-			bodyParts = append(bodyParts, sourcesLine)
-		}
-
-		body := strings.Join(bodyParts, "\n\n")
+		body := strings.Join([]string{nameLine, assessmentLine, infoBlock}, "\n\n")
 		panel := shareddiscord.BuildStyledMessage("", body)
+		if components := buildSourceButtons(result.VerifiedURLs); len(components) > 0 {
+			panel.Components = components
+		}
 		memberPanels = append(memberPanels, panel)
 	}
 
@@ -256,13 +253,11 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 
 		infoBlock := fmt.Sprintf("%s\n%s", verificationLine, workSkillsLine)
 
-		bodyParts := []string{nameLine, assessmentLine, infoBlock}
-		if sourcesLine := formatSourcesSection(result.VerifiedURLs); sourcesLine != "" {
-			bodyParts = append(bodyParts, sourcesLine)
-		}
-
-		body := strings.Join(bodyParts, "\n\n")
+		body := strings.Join([]string{nameLine, assessmentLine, infoBlock}, "\n\n")
 		panel := shareddiscord.BuildStyledMessage("", body)
+		if components := buildSourceButtons(result.VerifiedURLs); len(components) > 0 {
+			panel.Components = components
+		}
 		memberPanels = append(memberPanels, panel)
 	}
 
@@ -394,11 +389,24 @@ func indentMultilineText(text string, indent string) string {
 	return strings.Join(lines, "\n")
 }
 
-func formatSourcesSection(urls []string) string {
-	seen := make(map[string]struct{})
-	var lines []string
+func buildSourceButtons(urls []string) []discordgo.MessageComponent {
+	unique := dedupeVerifiedURLs(urls)
+	if len(unique) == 0 {
+		return nil
+	}
 
-	index := 1
+	joined := strings.Join(unique, "\n")
+	_, refs := shareddiscord.ReplaceURLsAndCollect(joined)
+	if len(refs) == 0 {
+		return nil
+	}
+
+	return shareddiscord.BuildLinkButtons(refs)
+}
+
+func dedupeVerifiedURLs(urls []string) []string {
+	seen := make(map[string]struct{})
+	var unique []string
 	for _, raw := range urls {
 		clean := strings.TrimSpace(raw)
 		if clean == "" {
@@ -408,32 +416,7 @@ func formatSourcesSection(urls []string) string {
 			continue
 		}
 		seen[clean] = struct{}{}
-
-		if index == 1 {
-			lines = append(lines, "Sources:")
-		}
-
-		display := summarizeSourceDisplay(clean)
-		lines = append(lines, fmt.Sprintf("- Source #%d: [%s](%s)", index, display, clean))
-		index++
+		unique = append(unique, clean)
 	}
-
-	if len(lines) == 0 {
-		return ""
-	}
-	return strings.Join(lines, "\n")
-}
-
-func summarizeSourceDisplay(raw string) string {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Host == "" {
-		return strings.TrimPrefix(raw, "https://")
-	}
-
-	host := strings.TrimPrefix(parsed.Hostname(), "www.")
-	path := strings.Trim(parsed.EscapedPath(), "/")
-	if path == "" {
-		return host
-	}
-	return fmt.Sprintf("%s/%s", host, path)
+	return unique
 }
