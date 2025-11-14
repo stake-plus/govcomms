@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"strings"
@@ -267,6 +268,11 @@ func (c *Client) PostComment(content string, postID int, network string) (int, e
 		resp, err := c.post("/auth/actions/addPostComment", body, headers)
 		if err != nil {
 			var httpErr *HTTPError
+			logCtx := fmt.Sprintf("status=%v", "unknown")
+			if errors.As(err, &httpErr) {
+				logCtx = fmt.Sprintf("status=%d body=%s", httpErr.StatusCode, strings.TrimSpace(string(httpErr.Body)))
+			}
+			log.Printf("polkassembly: addPostComment failed (%s)", logCtx)
 			if errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden) && attempt == 0 {
 				c.Logout()
 				if signupErr := c.Signup(network); signupErr != nil {
