@@ -2,8 +2,11 @@ package discord
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/bwmarrin/discordgo"
 )
 
 const (
@@ -175,9 +178,22 @@ func BeautifyForDiscord(text string) string {
 	return WrapURLsNoEmbed(result)
 }
 
-// BuildStyledMessages formats content with a consistent header + blockquote aesthetic
-// and chunks it into Discord-safe messages.
-func BuildStyledMessages(title string, body string, userID string) []string {
+// StyledMessage represents a fully formatted Discord message plus optional components.
+type StyledMessage struct {
+	Content    string
+	Components []discordgo.MessageComponent
+}
+
+const (
+	maxLinkButtons     = 25
+	maxButtonLabelRune = 80
+)
+
+var wrappedURLRegex = regexp.MustCompile(`<https?://[^\s<>]+>`)
+
+// BuildStyledMessages formats content with a consistent professional code-block style,
+// splits it into Discord-safe chunks, and attaches link buttons when URLs are detected.
+func BuildStyledMessages(title string, body string, userID string) []StyledMessage {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return nil
@@ -189,46 +205,45 @@ func BuildStyledMessages(title string, body string, userID string) []string {
 		chunks = []string{cleaned}
 	}
 
-	var messages []string
+	var messages []StyledMessage
 	for idx, chunk := range chunks {
 		currentTitle := title
 		if idx > 0 {
 			currentTitle = ""
 		}
-		content := FormatStyledBlock(currentTitle, chunk)
+
+		payload := buildStyledMessageFromCleanChunk(currentTitle, chunk)
 
 		if len(chunks) > 1 {
 			if idx < len(chunks)-1 {
-				content += "\n*(continued...)*"
+				payload.Content += "\n*(continued...)*"
 			} else {
-				content += "\n*(end of response)*"
+				payload.Content += "\n*(end of response)*"
 			}
 		}
 
 		if idx == 0 && userID != "" {
-			content = fmt.Sprintf("<@%s>\n%s", userID, content)
+			payload.Content = fmt.Sprintf("<@%s>\n%s", userID, payload.Content)
 		}
 
-		messages = append(messages, content)
+		messages = append(messages, payload)
 	}
 
 	return messages
 }
 
+// BuildStyledMessage produces a single styled message (no chunking) with optional link buttons.
+func BuildStyledMessage(title string, body string) StyledMessage {
+	cleaned := BeautifyForDiscord(strings.TrimSpace(body))
+	if cleaned == "" {
+		cleaned = "_No content_"
+	}
+	return buildStyledMessageFromCleanChunk(title, cleaned)
+}
+
 // FormatStyledBlock returns a single styled block suitable for shorter Discord messages.
 func FormatStyledBlock(title string, body string) string {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		body = "_No content_"
-	}
-	body = BeautifyForDiscord(body)
-
-	var sb strings.Builder
-	if strings.TrimSpace(title) != "" {
-		sb.WriteString(fmt.Sprintf("**%s**\n%s\n", title, dividerForTitle(title)))
-	}
-	sb.WriteString(styleBlockquote(body))
-	return sb.String()
+	return BuildStyledMessage(title, body).Content
 }
 
 func dividerForTitle(title string) string {
@@ -241,18 +256,165 @@ func dividerForTitle(title string) string {
 	return strings.Repeat("─", length+2)
 }
 
-func styleBlockquote(text string) string {
-	if text == "" {
-		return "> "
+type linkReference struct {
+	Index   int
+	URL     string
+	Display string
+}
+
+func buildStyledMessageFromCleanChunk(title string, cleanedBody string) StyledMessage {
+	trimmed := strings.TrimSpace(cleanedBody)
+	if trimmed == "" {
+		trimmed = "_No content_"
 	}
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			lines[i] = ">"
-		} else {
-			lines[i] = "> " + trimmed
+
+	withoutURLs, refs := replaceURLsWithReferences(trimmed)
+	if len(refs) > 0 {
+		withoutURLs = strings.TrimSpace(withoutURLs)
+		withoutURLs += "\n\n" + buildSourceSummary(refs)
+	}
+
+	content := renderProfessionalBlock(title, withoutURLs)
+
+	return StyledMessage{
+		Content:    content,
+		Components: buildLinkButtons(refs),
+	}
+}
+
+func replaceURLsWithReferences(input string) (string, []linkReference) {
+	matches := wrappedURLRegex.FindAllStringIndex(input, -1)
+	if len(matches) == 0 {
+		return input, nil
+	}
+
+	var builder strings.Builder
+	builder.Grow(len(input) + len(matches)*8)
+
+	refOrder := make([]linkReference, 0, len(matches))
+	seen := make(map[string]int)
+	last := 0
+
+	for _, match := range matches {
+		builder.WriteString(input[last:match[0]])
+
+		raw := input[match[0]:match[1]]
+		urlStr := strings.Trim(raw, "<>")
+
+		idx, exists := seen[urlStr]
+		if !exists {
+			ref := linkReference{
+				Index:   len(refOrder) + 1,
+				URL:     urlStr,
+				Display: summarizeURLDisplay(urlStr),
+			}
+			refOrder = append(refOrder, ref)
+			idx = len(refOrder) - 1
+			seen[urlStr] = idx
+		}
+
+		ref := refOrder[idx]
+		builder.WriteString(fmt.Sprintf("%s [Source %d]", ref.Display, ref.Index))
+		last = match[1]
+	}
+
+	builder.WriteString(input[last:])
+	return builder.String(), refOrder
+}
+
+func buildSourceSummary(refs []linkReference) string {
+	if len(refs) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, ref := range refs {
+		parts = append(parts, fmt.Sprintf("Source %d · %s", ref.Index, ref.Display))
+	}
+	return "Sources: " + strings.Join(parts, " | ")
+}
+
+func buildLinkButtons(refs []linkReference) []discordgo.MessageComponent {
+	if len(refs) == 0 {
+		return nil
+	}
+
+	limit := len(refs)
+	if limit > maxLinkButtons {
+		limit = maxLinkButtons
+	}
+
+	var components []discordgo.MessageComponent
+	var currentRow []discordgo.MessageComponent
+
+	for i := 0; i < limit; i++ {
+		ref := refs[i]
+		button := discordgo.Button{
+			Label: truncateForDiscord(fmt.Sprintf("Source %d · %s", ref.Index, ref.Display), maxButtonLabelRune),
+			Style: discordgo.LinkButton,
+			URL:   ref.URL,
+		}
+		currentRow = append(currentRow, button)
+		if len(currentRow) == 5 {
+			components = append(components, discordgo.ActionsRow{Components: currentRow})
+			currentRow = nil
 		}
 	}
-	return strings.Join(lines, "\n")
+
+	if len(currentRow) > 0 {
+		components = append(components, discordgo.ActionsRow{Components: currentRow})
+	}
+
+	return components
+}
+
+func renderProfessionalBlock(title string, body string) string {
+	var sb strings.Builder
+	sb.Grow(len(body) + 64)
+
+	sb.WriteString("```\n")
+
+	if trimmedTitle := strings.TrimSpace(title); trimmedTitle != "" {
+		sb.WriteString(trimmedTitle)
+		sb.WriteString("\n")
+		sb.WriteString(dividerForTitle(trimmedTitle))
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString(body)
+	if !strings.HasSuffix(body, "\n") {
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString("```")
+	return sb.String()
+}
+
+func summarizeURLDisplay(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		return raw
+	}
+
+	host := strings.TrimPrefix(parsed.Hostname(), "www.")
+	path := strings.Trim(parsed.EscapedPath(), "/")
+	if path == "" {
+		return host
+	}
+
+	segments := strings.Split(path, "/")
+	if len(segments) > 0 && segments[0] != "" {
+		return fmt.Sprintf("%s/%s", host, segments[0])
+	}
+	return host
+}
+
+func truncateForDiscord(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	if limit <= 1 {
+		return string(runes[:limit])
+	}
+	return string(runes[:limit-1]) + "…"
 }

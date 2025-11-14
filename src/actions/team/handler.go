@@ -31,19 +31,19 @@ func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate
 	}
 
 	if h.Config.ResearchRoleID != "" && !shareddiscord.HasRole(s, h.Config.Base.GuildID, m.Author.ID, h.Config.ResearchRoleID) {
-		shareddiscord.SendMessageNoEmbed(s, m.ChannelID, "You don't have permission to use this command.")
+		sendTeamStyledMessage(s, m.ChannelID, "Team", "You don't have permission to use this command.")
 		return
 	}
 
 	threadInfo, err := h.RefManager.FindThread(m.ChannelID)
 	if err != nil || threadInfo == nil {
-		shareddiscord.SendMessageNoEmbed(s, m.ChannelID, "This command must be used in a referendum thread.")
+		sendTeamStyledMessage(s, m.ChannelID, "Team", "This command must be used in a referendum thread.")
 		return
 	}
 
 	network := h.NetworkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
-		shareddiscord.SendMessageNoEmbed(s, m.ChannelID, "Failed to identify network.")
+		sendTeamStyledMessage(s, m.ChannelID, "Team", "Failed to identify network.")
 		return
 	}
 
@@ -59,10 +59,11 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 	}
 
 	if h.Config.ResearchRoleID != "" && !shareddiscord.HasRole(s, h.Config.Base.GuildID, i.Member.User.ID, h.Config.ResearchRoleID) {
+		formatted := shareddiscord.FormatStyledBlock("Team", "You don't have permission to use this command.")
 		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "You don't have permission to use this command.",
+				Content: formatted,
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -78,19 +79,13 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 
 	threadInfo, err := h.RefManager.FindThread(i.ChannelID)
 	if err != nil || threadInfo == nil {
-		msg := "This command must be used in a referendum thread."
-		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
-			Content: &msg,
-		})
+		sendTeamWebhookEdit(s, i.Interaction, "Team", "This command must be used in a referendum thread.")
 		return
 	}
 
 	network := h.NetworkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
-		msg := "Failed to identify network."
-		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
-			Content: &msg,
-		})
+		sendTeamWebhookEdit(s, i.Interaction, "Team", "Failed to identify network.")
 		return
 	}
 
@@ -103,33 +98,33 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 
 	proposalContent, err := h.Cache.GetProposalContent(network, refID)
 	if err != nil {
-		shareddiscord.SendMessageNoEmbed(s, channelID, "Proposal content not found. Please run !refresh first.")
+		sendTeamStyledMessage(s, channelID, "Team", "Proposal content not found. Please run !refresh first.")
 		return
 	}
 
 	members, err := h.TeamsAnalyzer.ExtractTeamMembers(ctx, proposalContent)
 	if err != nil {
-		shareddiscord.SendMessageNoEmbed(s, channelID, fmt.Sprintf("Error extracting team members: %v", err))
+		sendTeamStyledMessage(s, channelID, "Team", fmt.Sprintf("Error extracting team members: %v", err))
 		return
 	}
 
 	if len(members) == 0 {
-		shareddiscord.SendMessageNoEmbed(s, channelID, "No team members found in the proposal.")
+		sendTeamStyledMessage(s, channelID, "Team", "No team members found in the proposal.")
 		return
 	}
 
-	headerMsg := fmt.Sprintf("👥 **Team Analysis for %s Referendum #%d**\n", network, refID)
-	headerMsg += fmt.Sprintf("Found %d team members to analyze:\n", len(members))
-	shareddiscord.SendMessageNoEmbed(s, channelID, headerMsg)
+	headerBody := fmt.Sprintf("Found %d team members to analyze for %s referendum #%d.", len(members), network, refID)
+	sendTeamStyledMessage(s, channelID, "Team Analysis", headerBody)
 
 	memberMessages := make(map[int]*discordgo.Message)
 	for i, member := range members {
-		msgContent := fmt.Sprintf("**Member %d:** %s", i+1, member.Name)
+		memberBody := fmt.Sprintf("%s", member.Name)
 		if member.Role != "" {
-			msgContent += fmt.Sprintf(" (%s)", member.Role)
+			memberBody += fmt.Sprintf(" (%s)", member.Role)
 		}
-		msgContent += "\n⏳ *Analyzing...*"
+		memberBody += "\n⏳ *Analyzing...*"
 
+		msgContent := shareddiscord.FormatStyledBlock(fmt.Sprintf("Member %d", i+1), memberBody)
 		msg, err := shareddiscord.SendMessageNoEmbed(s, channelID, msgContent)
 		if err == nil {
 			memberMessages[i] = msg
@@ -162,18 +157,31 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 		}
 
 		if msg, exists := memberMessages[i]; exists {
-			updatedContent := fmt.Sprintf("**Member %d:** %s", i+1, result.Name)
+			var sections []string
+			header := result.Name
 			if result.Role != "" {
-				updatedContent += fmt.Sprintf(" (%s)", result.Role)
+				header += fmt.Sprintf(" (%s)", result.Role)
 			}
-			updatedContent += fmt.Sprintf("\n%s\n💼 %s", statusIcons, result.Capability)
-
+			sections = append(sections, header)
+			sections = append(sections, statusIcons)
+			if strings.TrimSpace(result.Capability) != "" {
+				sections = append(sections, fmt.Sprintf("💼 %s", result.Capability))
+			}
 			if len(result.VerifiedURLs) > 0 {
-				updatedContent += fmt.Sprintf("\n📌 Verified profiles: %s", shareddiscord.FormatURLsNoEmbed(result.VerifiedURLs))
+				sections = append(sections, "📌 Verified profiles:\n"+strings.Join(result.VerifiedURLs, "\n"))
 			}
 
-			updatedContent = shareddiscord.WrapURLsNoEmbed(updatedContent)
-			shareddiscord.EditMessageNoEmbed(s, channelID, msg.ID, updatedContent)
+			body := strings.Join(sections, "\n\n")
+			payload := shareddiscord.BuildStyledMessage(fmt.Sprintf("Member %d", i+1), body)
+			edit := &discordgo.MessageEdit{
+				ID:      msg.ID,
+				Channel: channelID,
+				Content: &payload.Content,
+			}
+			if len(payload.Components) > 0 {
+				edit.Components = payload.Components
+			}
+			shareddiscord.EditMessageComplexNoEmbed(s, edit)
 		}
 	}
 
@@ -184,12 +192,9 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 		teamAssessment = "⚠️ Team may be capable but has some concerns"
 	}
 
-	summaryMsg := "\n📊 **Team Analysis Complete**\n"
-	summaryMsg += fmt.Sprintf("👤 Real People: %d/%d | 🎯 Verified Skills: %d/%d\n",
-		realCount, len(results), skilledCount, len(results))
-	summaryMsg += fmt.Sprintf("**Assessment:** %s", teamAssessment)
-
-	shareddiscord.SendMessageNoEmbed(s, channelID, summaryMsg)
+	summaryBody := fmt.Sprintf("👤 Real People: %d/%d | 🎯 Verified Skills: %d/%d\n\n**Assessment:** %s",
+		realCount, len(results), skilledCount, len(results), teamAssessment)
+	sendTeamStyledMessage(s, channelID, "Team Analysis Complete", summaryBody)
 }
 
 func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.InteractionCreate, network string, refID uint32) {
@@ -198,42 +203,31 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 
 	proposalContent, err := h.Cache.GetProposalContent(network, refID)
 	if err != nil {
-		msg := "Proposal content not found. Please run /refresh first."
-		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
-			Content: &msg,
-		})
+		sendTeamWebhookEdit(s, i.Interaction, "Team", "Proposal content not found. Please run /refresh first.")
 		return
 	}
 
 	members, err := h.TeamsAnalyzer.ExtractTeamMembers(ctx, proposalContent)
 	if err != nil {
-		msg := fmt.Sprintf("Error extracting team members: %v", err)
-		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
-			Content: &msg,
-		})
+		sendTeamWebhookEdit(s, i.Interaction, "Team", fmt.Sprintf("Error extracting team members: %v", err))
 		return
 	}
 
 	if len(members) == 0 {
-		msg := "No team members found in the proposal."
-		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
-			Content: &msg,
-		})
+		sendTeamWebhookEdit(s, i.Interaction, "Team", "No team members found in the proposal.")
 		return
 	}
 
 	results, err := h.TeamsAnalyzer.AnalyzeTeamMembers(ctx, members)
 	if err != nil {
-		msg := fmt.Sprintf("Error analyzing team members: %v", err)
-		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
-			Content: &msg,
-		})
+		sendTeamWebhookEdit(s, i.Interaction, "Team", fmt.Sprintf("Error analyzing team members: %v", err))
 		return
 	}
 
 	claimMessages := make(map[int]*discordgo.Message)
 	for idx := range members {
-		msgContent := fmt.Sprintf("**Member %d:** %s\n⏳ *Analyzing...*", idx+1, members[idx].Name)
+		memberBody := fmt.Sprintf("%s\n⏳ *Analyzing...*", members[idx].Name)
+		msgContent := shareddiscord.FormatStyledBlock(fmt.Sprintf("Member %d", idx+1), memberBody)
 		msg, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, msgContent)
 		if err == nil {
 			claimMessages[idx] = msg
@@ -241,31 +235,99 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 		time.Sleep(100 * time.Millisecond)
 	}
 
+	realCount := 0
+	skilledCount := 0
+
 	for idx, result := range results {
+		if result.IsReal {
+			realCount++
+		}
+		if result.HasStatedSkills {
+			skilledCount++
+		}
+
 		if msg, exists := claimMessages[idx]; exists {
-			updatedContent := fmt.Sprintf("**Member %d:** %s\n", idx+1, result.Name)
+			var sections []string
+			header := result.Name
 			if result.Role != "" {
-				updatedContent += fmt.Sprintf("**Role:** %s\n", result.Role)
+				header += fmt.Sprintf(" (%s)", result.Role)
 			}
-			if result.Capability != "" {
-				updatedContent += fmt.Sprintf("**Assessment:** %s\n", result.Capability)
-			}
-			if len(result.VerifiedURLs) > 0 {
-				updatedContent += fmt.Sprintf("**Verified URLs:** %s\n", strings.Join(result.VerifiedURLs, ", "))
-			}
-			if result.IsReal {
-				updatedContent += "✅ **Verified Real Person**\n"
-			} else {
-				updatedContent += "❓ **Verification Failed**\n"
-			}
-			if result.HasStatedSkills {
-				updatedContent += "✅ **Has Stated Skills**\n"
+			sections = append(sections, header)
+
+			if strings.TrimSpace(result.Capability) != "" {
+				sections = append(sections, fmt.Sprintf("Assessment: %s", result.Capability))
 			}
 
-			shareddiscord.EditMessageNoEmbed(s, i.ChannelID, msg.ID, updatedContent)
+			status := ""
+			if result.IsReal {
+				status += "👤 Verified Real Person"
+			} else {
+				status += "❓ Verification Failed"
+			}
+			if result.HasStatedSkills {
+				status += " • 🎯 Has Stated Skills"
+			}
+			if status != "" {
+				sections = append(sections, status)
+			}
+
+			if len(result.VerifiedURLs) > 0 {
+				sections = append(sections, "Verified URLs:\n"+strings.Join(result.VerifiedURLs, "\n"))
+			}
+
+			body := strings.Join(sections, "\n\n")
+			payload := shareddiscord.BuildStyledMessage(fmt.Sprintf("Member %d", idx+1), body)
+			edit := &discordgo.MessageEdit{
+				ID:      msg.ID,
+				Channel: i.ChannelID,
+				Content: &payload.Content,
+			}
+			if len(payload.Components) > 0 {
+				edit.Components = payload.Components
+			}
+			shareddiscord.EditMessageComplexNoEmbed(s, edit)
 		}
 	}
 
-	summaryMsg := "\n📊 **Team Analysis Complete**\n"
-	shareddiscord.SendMessageNoEmbed(s, i.ChannelID, summaryMsg)
+	teamAssessment := "❌ Team unlikely to complete the proposed task"
+	if len(results) > 0 && realCount == len(results) && skilledCount >= len(results)*3/4 {
+		teamAssessment = "✅ Team appears capable of completing the proposed task"
+	} else if realCount >= len(results)/2 && skilledCount >= len(results)/2 {
+		teamAssessment = "⚠️ Team may be capable but has some concerns"
+	}
+
+	summaryBody := fmt.Sprintf("👤 Real People: %d/%d | 🎯 Verified Skills: %d/%d\n\n**Assessment:** %s",
+		realCount, len(results), skilledCount, len(results), teamAssessment)
+	sendTeamStyledMessage(s, i.ChannelID, "Team Analysis Complete", summaryBody)
+}
+
+func sendTeamStyledMessage(s *discordgo.Session, channelID, title, body string) {
+	payloads := shareddiscord.BuildStyledMessages(title, body, "")
+	if len(payloads) == 0 {
+		return
+	}
+	for _, payload := range payloads {
+		msg := &discordgo.MessageSend{
+			Content: payload.Content,
+		}
+		if len(payload.Components) > 0 {
+			msg.Components = payload.Components
+		}
+		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, channelID, msg); err != nil {
+			log.Printf("team: send failed: %v", err)
+			return
+		}
+	}
+}
+
+func sendTeamWebhookEdit(s *discordgo.Session, interaction *discordgo.Interaction, title, body string) {
+	payload := shareddiscord.BuildStyledMessage(title, body)
+	edit := &discordgo.WebhookEdit{
+		Content: &payload.Content,
+	}
+	if len(payload.Components) > 0 {
+		components := payload.Components
+		edit.Components = &components
+	}
+	shareddiscord.InteractionResponseEditNoEmbed(s, interaction, edit)
 }

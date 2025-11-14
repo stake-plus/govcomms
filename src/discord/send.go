@@ -16,6 +16,23 @@ func EditMessageNoEmbed(s *discordgo.Session, channelID, messageID, content stri
 	return s.ChannelMessageEdit(channelID, messageID, WrapURLsNoEmbed(content))
 }
 
+// EditMessageComplexNoEmbed edits an existing message and supports components/attachments.
+func EditMessageComplexNoEmbed(s *discordgo.Session, edit *discordgo.MessageEdit) (*discordgo.Message, error) {
+	if edit == nil {
+		return nil, errors.New("discord: message edit payload cannot be nil")
+	}
+
+	if edit.Content != nil {
+		cleaned := WrapURLsNoEmbed(*edit.Content)
+		edit.Content = &cleaned
+	}
+
+	if edit.Embeds != nil {
+		sanitizeEmbeds(*edit.Embeds)
+	}
+	return s.ChannelMessageEditComplex(edit)
+}
+
 // SendComplexMessageNoEmbed sends a complex message payload with sanitized embeds/content.
 func SendComplexMessageNoEmbed(s *discordgo.Session, channelID string, msg *discordgo.MessageSend) (*discordgo.Message, error) {
 	if msg == nil {

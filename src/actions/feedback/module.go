@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/core"
@@ -37,10 +36,7 @@ type Module struct {
 	polkassemblyMu sync.Mutex
 }
 
-const (
-	feedbackEmbedColor     = 0x5865F2
-	polkassemblyReplyColor = 0xF39C12
-)
+const polkassemblyReplyColor = 0xF39C12
 
 func (b *Module) ensureNetworkManager() error {
 	if b.networkManager != nil {
@@ -214,40 +210,29 @@ func (b *Module) postFeedbackMessage(s *discordgo.Session, threadID string, netw
 	if network == nil || ref == nil {
 		return
 	}
+	title := fmt.Sprintf("Feedback • %s #%d", network.Name, ref.RefID)
+	body := fmt.Sprintf("%s\n\nSubmitted by %s\n🕒 %s UTC",
+		strings.TrimSpace(message),
+		authorTag,
+		time.Now().UTC().Format(time.RFC822),
+	)
 
-	const maxEmbedDescriptionLen = 4000
-	desc := message
-	if utf8.RuneCountInString(desc) > maxEmbedDescriptionLen {
-		runes := []rune(desc)
-		desc = string(runes[:maxEmbedDescriptionLen-1]) + "…"
+	payloads := shareddiscord.BuildStyledMessages(title, body, "")
+	if len(payloads) == 0 {
+		return
 	}
 
-	embed := &discordgo.MessageEmbed{
-		Title:       fmt.Sprintf("Feedback for %s Referendum #%d", network.Name, ref.RefID),
-		Description: desc,
-		Color:       feedbackEmbedColor,
-		Footer: &discordgo.MessageEmbedFooter{
-			Text: fmt.Sprintf("Submitted by %s", authorTag),
-		},
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-	}
-
-	messageSend := &discordgo.MessageSend{Embeds: []*discordgo.MessageEmbed{embed}}
-
-	if utf8.RuneCountInString(message) > maxEmbedDescriptionLen {
-		messageSend.Files = []*discordgo.File{
-			{
-				Name:   fmt.Sprintf("feedback-%d.txt", ref.RefID),
-				Reader: strings.NewReader(message),
-			},
+	for _, payload := range payloads {
+		msg := &discordgo.MessageSend{
+			Content: payload.Content,
 		}
-		if embed.Footer != nil {
-			embed.Footer.Text += " • Full text attached"
+		if len(payload.Components) > 0 {
+			msg.Components = payload.Components
 		}
-	}
-
-	if _, err := shareddiscord.SendComplexMessageNoEmbed(s, threadID, messageSend); err != nil {
-		log.Printf("feedback: failed to post feedback message: %v", err)
+		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, threadID, msg); err != nil {
+			log.Printf("feedback: failed to post feedback message: %v", err)
+			return
+		}
 	}
 }
 

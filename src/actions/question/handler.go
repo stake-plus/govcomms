@@ -146,10 +146,11 @@ func (m *Module) initHandlers() {
 
 func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	if m.cfg.QARoleID != "" && !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID) {
+		formatted := shareddiscord.FormatStyledBlock("Question", "You don't have permission to use this command.")
 		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "You don't have permission to use this command.",
+				Content: formatted,
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -236,27 +237,23 @@ func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.Interacti
 	}
 
 	if m.cfg.QARoleID != "" && !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID) {
-		msg := "You don't have permission to use this command."
-		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		sendStyledWebhookEdit(s, i.Interaction, "Context", "You don't have permission to use this command.")
 		return
 	}
 
 	threadInfo, err := m.refManager.FindThread(i.ChannelID)
 	if err != nil || threadInfo == nil {
-		msg := "This command must be used in a referendum thread."
-		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		sendStyledWebhookEdit(s, i.Interaction, "Context", "This command must be used in a referendum thread.")
 		return
 	}
 
 	qas, err := m.contextStore.GetRecentQAs(threadInfo.NetworkID, uint32(threadInfo.RefID), 10)
 	if err != nil {
-		msg := "Failed to retrieve context."
-		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		sendStyledWebhookEdit(s, i.Interaction, "Context", "Failed to retrieve context.")
 		return
 	}
 	if len(qas) == 0 {
-		msg := "No previous Q&A found for this referendum."
-		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		sendStyledWebhookEdit(s, i.Interaction, "Context", "No previous Q&A found for this referendum.")
 		return
 	}
 
@@ -276,15 +273,16 @@ func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.Interacti
 		}
 	}
 	content := response.String()
-	shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &content})
+	sendStyledWebhookEdit(s, i.Interaction, "Context", content)
 }
 
 func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	if m.cfg.QARoleID != "" && !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID) {
+		formatted := shareddiscord.FormatStyledBlock("Refresh", "You don't have permission to use this command.")
 		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "You don't have permission to use this command.",
+				Content: formatted,
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -300,27 +298,24 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 
 	threadInfo, err := m.refManager.FindThread(i.ChannelID)
 	if err != nil || threadInfo == nil {
-		msg := "This command must be used in a referendum thread."
-		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		sendStyledWebhookEdit(s, i.Interaction, "Refresh", "This command must be used in a referendum thread.")
 		return
 	}
 
 	network := m.networkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
-		msg := "Failed to identify network."
-		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		sendStyledWebhookEdit(s, i.Interaction, "Refresh", "Failed to identify network.")
 		return
 	}
 
 	if _, err := m.cacheManager.Refresh(network.Name, uint32(threadInfo.RefID)); err != nil {
 		log.Printf("question: refresh failed: %v", err)
-		msg := "Failed to refresh proposal content."
-		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		sendStyledWebhookEdit(s, i.Interaction, "Refresh", "Failed to refresh proposal content.")
 		return
 	}
 
 	msg := fmt.Sprintf("✅ Refreshed content for %s referendum #%d", network.Name, threadInfo.RefID)
-	shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+	sendStyledWebhookEdit(s, i.Interaction, "Refresh", msg)
 }
 
 func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.Interaction, question string, message string) {
@@ -336,21 +331,33 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 		title = fmt.Sprintf("Answer • %s", questionTitle)
 	}
 
-	chunks := shareddiscord.BuildStyledMessages(title, message, userID)
-	if len(chunks) == 0 {
+	payloads := shareddiscord.BuildStyledMessages(title, message, userID)
+	if len(payloads) == 0 {
 		return
 	}
 
-	first := chunks[0]
-	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, interaction, &discordgo.WebhookEdit{
-		Content: &first,
-	}); err != nil {
+	first := payloads[0]
+	edit := &discordgo.WebhookEdit{
+		Content: &first.Content,
+	}
+	if len(first.Components) > 0 {
+		components := first.Components
+		edit.Components = &components
+	}
+	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, interaction, edit); err != nil {
 		log.Printf("question: response send failed: %v", err)
 		return
 	}
 
-	for idx := 1; idx < len(chunks); idx++ {
-		if _, err := shareddiscord.SendMessageNoEmbed(s, interaction.ChannelID, chunks[idx]); err != nil {
+	for idx := 1; idx < len(payloads); idx++ {
+		payload := payloads[idx]
+		msg := &discordgo.MessageSend{
+			Content: payload.Content,
+		}
+		if len(payload.Components) > 0 {
+			msg.Components = payload.Components
+		}
+		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, interaction.ChannelID, msg); err != nil {
 			log.Printf("question: follow-up send failed: %v", err)
 			return
 		}
@@ -358,6 +365,13 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 }
 
 func sendStyledWebhookEdit(s *discordgo.Session, interaction *discordgo.Interaction, title, body string) {
-	formatted := shareddiscord.FormatStyledBlock(title, body)
-	shareddiscord.InteractionResponseEditNoEmbed(s, interaction, &discordgo.WebhookEdit{Content: &formatted})
+	payload := shareddiscord.BuildStyledMessage(title, body)
+	edit := &discordgo.WebhookEdit{
+		Content: &payload.Content,
+	}
+	if len(payload.Components) > 0 {
+		components := payload.Components
+		edit.Components = &components
+	}
+	shareddiscord.InteractionResponseEditNoEmbed(s, interaction, edit)
 }

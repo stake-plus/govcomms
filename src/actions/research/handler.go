@@ -58,10 +58,11 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 	}
 
 	if h.Config.ResearchRoleID != "" && !shareddiscord.HasRole(s, h.Config.Base.GuildID, i.Member.User.ID, h.Config.ResearchRoleID) {
+		formatted := shareddiscord.FormatStyledBlock("Research", "You don't have permission to use this command.")
 		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
-				Content: "You don't have permission to use this command.",
+				Content: formatted,
 				Flags:   discordgo.MessageFlagsEphemeral,
 			},
 		})
@@ -257,12 +258,18 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 }
 
 func sendStyledMessage(s *discordgo.Session, channelID, title, body string) {
-	chunks := shareddiscord.BuildStyledMessages(title, body, "")
-	if len(chunks) == 0 {
+	payloads := shareddiscord.BuildStyledMessages(title, body, "")
+	if len(payloads) == 0 {
 		return
 	}
-	for _, chunk := range chunks {
-		if _, err := shareddiscord.SendMessageNoEmbed(s, channelID, chunk); err != nil {
+	for _, payload := range payloads {
+		msg := &discordgo.MessageSend{
+			Content: payload.Content,
+		}
+		if len(payload.Components) > 0 {
+			msg.Components = payload.Components
+		}
+		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, channelID, msg); err != nil {
 			log.Printf("research: send failed: %v", err)
 			return
 		}
@@ -270,21 +277,34 @@ func sendStyledMessage(s *discordgo.Session, channelID, title, body string) {
 }
 
 func sendStyledSlashResponse(s *discordgo.Session, i *discordgo.InteractionCreate, title, body string) {
-	chunks := shareddiscord.BuildStyledMessages(title, body, "")
-	if len(chunks) == 0 {
+	payloads := shareddiscord.BuildStyledMessages(title, body, "")
+	if len(payloads) == 0 {
 		empty := ""
 		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &empty})
 		return
 	}
 
-	first := chunks[0]
-	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &first}); err != nil {
+	first := payloads[0]
+	edit := &discordgo.WebhookEdit{
+		Content: &first.Content,
+	}
+	if len(first.Components) > 0 {
+		components := first.Components
+		edit.Components = &components
+	}
+	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, edit); err != nil {
 		log.Printf("research: slash response failed: %v", err)
 		return
 	}
 
-	for _, chunk := range chunks[1:] {
-		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, chunk); err != nil {
+	for _, payload := range payloads[1:] {
+		msg := &discordgo.MessageSend{
+			Content: payload.Content,
+		}
+		if len(payload.Components) > 0 {
+			msg.Components = payload.Components
+		}
+		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, i.ChannelID, msg); err != nil {
 			log.Printf("research: follow-up send failed: %v", err)
 			return
 		}
@@ -292,8 +312,17 @@ func sendStyledSlashResponse(s *discordgo.Session, i *discordgo.InteractionCreat
 }
 
 func editStyledMessage(s *discordgo.Session, channelID, messageID, title, body string) {
-	content := shareddiscord.FormatStyledBlock(title, body)
-	if _, err := shareddiscord.EditMessageNoEmbed(s, channelID, messageID, content); err != nil {
+	payload := shareddiscord.BuildStyledMessage(title, body)
+	edit := &discordgo.MessageEdit{
+		ID:      messageID,
+		Channel: channelID,
+		Content: &payload.Content,
+	}
+	if len(payload.Components) > 0 {
+		components := payload.Components
+		edit.Components = &components
+	}
+	if _, err := shareddiscord.EditMessageComplexNoEmbed(s, edit); err != nil {
 		log.Printf("research: edit failed: %v", err)
 	}
 }
