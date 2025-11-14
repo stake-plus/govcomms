@@ -331,11 +331,11 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 		title = fmt.Sprintf("Question: %s", questionTitle)
 	}
 
-	answerBody := strings.TrimSpace(message)
-	if answerBody == "" {
-		answerBody = "_No content_"
+	answerCleaned, refs := shareddiscord.ReplaceURLsAndCollect(message)
+	if strings.TrimSpace(answerCleaned) == "" {
+		answerCleaned = "_No content_"
 	}
-	answerBody = fmt.Sprintf("Answer:\n\n%s", answerBody)
+	answerBody := fmt.Sprintf("Answer:\n\n%s", strings.TrimSpace(answerCleaned))
 
 	payloads := shareddiscord.BuildStyledMessages(title, answerBody, userID)
 	if len(payloads) == 0 {
@@ -346,8 +346,8 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 	edit := &discordgo.WebhookEdit{
 		Content: &first.Content,
 	}
-	if len(first.Components) > 0 {
-		components := first.Components
+	if len(refs) > 0 {
+		components := shareddiscord.BuildLinkButtons(refs)
 		edit.Components = &components
 	}
 	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, interaction, edit); err != nil {
@@ -360,8 +360,8 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 		msg := &discordgo.MessageSend{
 			Content: payload.Content,
 		}
-		if len(payload.Components) > 0 {
-			msg.Components = payload.Components
+		if len(refs) > 0 {
+			msg.Components = shareddiscord.BuildLinkButtons(refs)
 		}
 		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, interaction.ChannelID, msg); err != nil {
 			log.Printf("question: follow-up send failed: %v", err)
@@ -371,12 +371,13 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 }
 
 func sendStyledWebhookEdit(s *discordgo.Session, interaction *discordgo.Interaction, title, body string) {
-	payload := shareddiscord.BuildStyledMessage(title, body)
+	cleaned, refs := shareddiscord.ReplaceURLsAndCollect(body)
+	payload := shareddiscord.BuildStyledMessage(title, cleaned)
 	edit := &discordgo.WebhookEdit{
 		Content: &payload.Content,
 	}
-	if len(payload.Components) > 0 {
-		components := payload.Components
+	if len(refs) > 0 {
+		components := shareddiscord.BuildLinkButtons(refs)
 		edit.Components = &components
 	}
 	shareddiscord.InteractionResponseEditNoEmbed(s, interaction, edit)

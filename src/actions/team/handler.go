@@ -315,9 +315,9 @@ func dispatchPanels(s *discordgo.Session, channelID string, panels []shareddisco
 	var content strings.Builder
 	var allComponents []discordgo.MessageComponent
 
-	for idx, panel := range panels {
-		if idx > 0 {
-			content.WriteString("\n\n")
+	for _, panel := range panels {
+		if content.Len() > 0 {
+			content.WriteString("\n")
 		}
 		content.WriteString(panel.Content)
 
@@ -326,6 +326,9 @@ func dispatchPanels(s *discordgo.Session, channelID string, panels []shareddisco
 				break
 			}
 			allComponents = append(allComponents, component)
+		}
+		if len(allComponents) >= 5 {
+			break
 		}
 	}
 
