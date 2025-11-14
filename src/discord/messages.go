@@ -2,6 +2,7 @@ package discord
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -248,8 +249,9 @@ func FormatStyledBlock(title string, body string) string {
 }
 
 type linkReference struct {
-	Index int
-	URL   string
+	Index   int
+	URL     string
+	Display string
 }
 
 // ReplaceURLsAndCollect strips URLs or markdown links from text and returns cleaned text plus references.
@@ -282,13 +284,18 @@ func replaceURLsWithReferences(input string) (string, []linkReference) {
 			return match
 		}
 		label := submatches[1]
-		url := submatches[2]
-		if urlIdx, ok := seen[url]; ok {
-			_ = urlIdx
-		} else {
-			ref := linkReference{Index: len(refs) + 1, URL: url}
+		urlStr := strings.TrimSpace(submatches[2])
+		if urlStr == "" {
+			return label
+		}
+		if _, ok := seen[urlStr]; !ok {
+			ref := linkReference{
+				Index:   len(refs) + 1,
+				URL:     urlStr,
+				Display: summarizeURLDisplay(urlStr),
+			}
 			refs = append(refs, ref)
-			seen[url] = len(refs) - 1
+			seen[urlStr] = len(refs) - 1
 		}
 		return label
 	})
@@ -298,11 +305,17 @@ func replaceURLsWithReferences(input string) (string, []linkReference) {
 	matches := bareURLRegex.FindAllStringIndex(text, -1)
 	for _, match := range matches {
 		builder.WriteString(text[last:match[0]])
-		url := text[match[0]:match[1]]
-		if _, ok := seen[url]; !ok {
-			ref := linkReference{Index: len(refs) + 1, URL: url}
-			refs = append(refs, ref)
-			seen[url] = len(refs) - 1
+		urlStr := strings.TrimSpace(text[match[0]:match[1]])
+		if urlStr != "" {
+			if _, ok := seen[urlStr]; !ok {
+				ref := linkReference{
+					Index:   len(refs) + 1,
+					URL:     urlStr,
+					Display: summarizeURLDisplay(urlStr),
+				}
+				refs = append(refs, ref)
+				seen[urlStr] = len(refs) - 1
+			}
 		}
 		last = match[1]
 	}
@@ -328,8 +341,12 @@ func buildLinkButtons(refs []linkReference) []discordgo.MessageComponent {
 
 	for i := 0; i < limit; i++ {
 		ref := refs[i]
+		label := fmt.Sprintf("Source #%d", ref.Index)
+		if ref.Display != "" {
+			label = fmt.Sprintf("%s • %s", label, ref.Display)
+		}
 		button := discordgo.Button{
-			Label: truncateForDiscord(fmt.Sprintf("Source #%d", ref.Index), maxButtonLabelRune),
+			Label: truncateForDiscord(label, maxButtonLabelRune),
 			Style: discordgo.LinkButton,
 			URL:   ref.URL,
 		}
