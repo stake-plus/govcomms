@@ -58,7 +58,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 	}
 
 	if h.Config.ResearchRoleID != "" && !shareddiscord.HasRole(s, h.Config.Base.GuildID, i.Member.User.ID, h.Config.ResearchRoleID) {
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
 				Content: "You don't have permission to use this command.",
@@ -68,7 +68,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 		return
 	}
 
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	}); err != nil {
 		log.Printf("research: slash ack failed: %v", err)
@@ -78,7 +78,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 	threadInfo, err := h.RefManager.FindThread(i.ChannelID)
 	if err != nil || threadInfo == nil {
 		formatted := shareddiscord.FormatStyledBlock("Research", "This command must be used in a referendum thread.")
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
 			Content: &formatted,
 		})
 		return
@@ -87,7 +87,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 	network := h.NetworkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
 		formatted := shareddiscord.FormatStyledBlock("Research", "Failed to identify network.")
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
 			Content: &formatted,
 		})
 		return
@@ -123,7 +123,7 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 	claimMessages := make(map[int]*discordgo.Message)
 	for i, claim := range topClaims {
 		msgContent := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d", i+1), fmt.Sprintf("%s\n\n⏳ *Verifying...*", claim.Claim))
-		msg, err := s.ChannelMessageSend(channelID, msgContent)
+		msg, err := shareddiscord.SendMessageNoEmbed(s, channelID, msgContent)
 		if err == nil {
 			claimMessages[i] = msg
 		}
@@ -178,7 +178,7 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 	proposalContent, err := h.Cache.GetProposalContent(network, refID)
 	if err != nil {
 		formatted := shareddiscord.FormatStyledBlock("Research", "Proposal content not found. Please run /refresh first.")
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
 			Content: &formatted,
 		})
 		return
@@ -187,7 +187,7 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 	topClaims, totalClaims, err := h.ClaimsAnalyzer.ExtractTopClaims(ctx, proposalContent)
 	if err != nil {
 		formatted := shareddiscord.FormatStyledBlock("Research", fmt.Sprintf("Error extracting claims: %v", err))
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
 			Content: &formatted,
 		})
 		return
@@ -195,7 +195,7 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 
 	if len(topClaims) == 0 {
 		formatted := shareddiscord.FormatStyledBlock("Research", "No verifiable historical claims found in the proposal.")
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
 			Content: &formatted,
 		})
 		return
@@ -207,7 +207,7 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 	claimMessages := make(map[int]*discordgo.Message)
 	for idx, claim := range topClaims {
 		msgContent := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d", idx+1), fmt.Sprintf("%s\n\n⏳ *Verifying...*", claim.Claim))
-		msg, err := s.ChannelMessageSend(i.ChannelID, msgContent)
+		msg, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, msgContent)
 		if err == nil {
 			claimMessages[idx] = msg
 		}
@@ -262,7 +262,7 @@ func sendStyledMessage(s *discordgo.Session, channelID, title, body string) {
 		return
 	}
 	for _, chunk := range chunks {
-		if _, err := s.ChannelMessageSend(channelID, chunk); err != nil {
+		if _, err := shareddiscord.SendMessageNoEmbed(s, channelID, chunk); err != nil {
 			log.Printf("research: send failed: %v", err)
 			return
 		}
@@ -273,18 +273,18 @@ func sendStyledSlashResponse(s *discordgo.Session, i *discordgo.InteractionCreat
 	chunks := shareddiscord.BuildStyledMessages(title, body, "")
 	if len(chunks) == 0 {
 		empty := ""
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &empty})
+	shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &empty})
 		return
 	}
 
 	first := chunks[0]
-	if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &first}); err != nil {
+	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &first}); err != nil {
 		log.Printf("research: slash response failed: %v", err)
 		return
 	}
 
 	for _, chunk := range chunks[1:] {
-		if _, err := s.ChannelMessageSend(i.ChannelID, chunk); err != nil {
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, chunk); err != nil {
 			log.Printf("research: follow-up send failed: %v", err)
 			return
 		}
@@ -293,7 +293,7 @@ func sendStyledSlashResponse(s *discordgo.Session, i *discordgo.InteractionCreat
 
 func editStyledMessage(s *discordgo.Session, channelID, messageID, title, body string) {
 	content := shareddiscord.FormatStyledBlock(title, body)
-	if _, err := s.ChannelMessageEdit(channelID, messageID, content); err != nil {
+	if _, err := shareddiscord.EditMessageNoEmbed(s, channelID, messageID, content); err != nil {
 		log.Printf("research: edit failed: %v", err)
 	}
 }

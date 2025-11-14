@@ -31,19 +31,19 @@ func (h *Handler) HandleMessage(s *discordgo.Session, m *discordgo.MessageCreate
 	}
 
 	if h.Config.ResearchRoleID != "" && !shareddiscord.HasRole(s, h.Config.Base.GuildID, m.Author.ID, h.Config.ResearchRoleID) {
-		s.ChannelMessageSend(m.ChannelID, "You don't have permission to use this command.")
+		shareddiscord.SendMessageNoEmbed(s, m.ChannelID, "You don't have permission to use this command.")
 		return
 	}
 
 	threadInfo, err := h.RefManager.FindThread(m.ChannelID)
 	if err != nil || threadInfo == nil {
-		s.ChannelMessageSend(m.ChannelID, "This command must be used in a referendum thread.")
+		shareddiscord.SendMessageNoEmbed(s, m.ChannelID, "This command must be used in a referendum thread.")
 		return
 	}
 
 	network := h.NetworkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
-		s.ChannelMessageSend(m.ChannelID, "Failed to identify network.")
+		shareddiscord.SendMessageNoEmbed(s, m.ChannelID, "Failed to identify network.")
 		return
 	}
 
@@ -59,7 +59,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 	}
 
 	if h.Config.ResearchRoleID != "" && !shareddiscord.HasRole(s, h.Config.Base.GuildID, i.Member.User.ID, h.Config.ResearchRoleID) {
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
 				Content: "You don't have permission to use this command.",
@@ -69,7 +69,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 		return
 	}
 
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	}); err != nil {
 		log.Printf("team: slash ack failed: %v", err)
@@ -79,7 +79,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 	threadInfo, err := h.RefManager.FindThread(i.ChannelID)
 	if err != nil || threadInfo == nil {
 		msg := "This command must be used in a referendum thread."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
 			Content: &msg,
 		})
 		return
@@ -88,7 +88,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 	network := h.NetworkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
 		msg := "Failed to identify network."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
 			Content: &msg,
 		})
 		return
@@ -103,24 +103,24 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 
 	proposalContent, err := h.Cache.GetProposalContent(network, refID)
 	if err != nil {
-		s.ChannelMessageSend(channelID, "Proposal content not found. Please run !refresh first.")
+		shareddiscord.SendMessageNoEmbed(s, channelID, "Proposal content not found. Please run !refresh first.")
 		return
 	}
 
 	members, err := h.TeamsAnalyzer.ExtractTeamMembers(ctx, proposalContent)
 	if err != nil {
-		s.ChannelMessageSend(channelID, fmt.Sprintf("Error extracting team members: %v", err))
+		shareddiscord.SendMessageNoEmbed(s, channelID, fmt.Sprintf("Error extracting team members: %v", err))
 		return
 	}
 
 	if len(members) == 0 {
-		s.ChannelMessageSend(channelID, "No team members found in the proposal.")
+		shareddiscord.SendMessageNoEmbed(s, channelID, "No team members found in the proposal.")
 		return
 	}
 
 	headerMsg := fmt.Sprintf("👥 **Team Analysis for %s Referendum #%d**\n", network, refID)
 	headerMsg += fmt.Sprintf("Found %d team members to analyze:\n", len(members))
-	s.ChannelMessageSend(channelID, headerMsg)
+	shareddiscord.SendMessageNoEmbed(s, channelID, headerMsg)
 
 	memberMessages := make(map[int]*discordgo.Message)
 	for i, member := range members {
@@ -130,7 +130,7 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 		}
 		msgContent += "\n⏳ *Analyzing...*"
 
-		msg, err := s.ChannelMessageSend(channelID, msgContent)
+		msg, err := shareddiscord.SendMessageNoEmbed(s, channelID, msgContent)
 		if err == nil {
 			memberMessages[i] = msg
 		}
@@ -173,7 +173,7 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 			}
 
 			updatedContent = shareddiscord.WrapURLsNoEmbed(updatedContent)
-			s.ChannelMessageEdit(channelID, msg.ID, updatedContent)
+			shareddiscord.EditMessageNoEmbed(s, channelID, msg.ID, updatedContent)
 		}
 	}
 
@@ -189,7 +189,7 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 		realCount, len(results), skilledCount, len(results))
 	summaryMsg += fmt.Sprintf("**Assessment:** %s", teamAssessment)
 
-	s.ChannelMessageSend(channelID, summaryMsg)
+	shareddiscord.SendMessageNoEmbed(s, channelID, summaryMsg)
 }
 
 func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.InteractionCreate, network string, refID uint32) {
@@ -199,7 +199,7 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 	proposalContent, err := h.Cache.GetProposalContent(network, refID)
 	if err != nil {
 		msg := "Proposal content not found. Please run /refresh first."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
 			Content: &msg,
 		})
 		return
@@ -208,7 +208,7 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 	members, err := h.TeamsAnalyzer.ExtractTeamMembers(ctx, proposalContent)
 	if err != nil {
 		msg := fmt.Sprintf("Error extracting team members: %v", err)
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
 			Content: &msg,
 		})
 		return
@@ -216,7 +216,7 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 
 	if len(members) == 0 {
 		msg := "No team members found in the proposal."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
 			Content: &msg,
 		})
 		return
@@ -225,7 +225,7 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 	results, err := h.TeamsAnalyzer.AnalyzeTeamMembers(ctx, members)
 	if err != nil {
 		msg := fmt.Sprintf("Error analyzing team members: %v", err)
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
 			Content: &msg,
 		})
 		return
@@ -234,7 +234,7 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 	claimMessages := make(map[int]*discordgo.Message)
 	for idx := range members {
 		msgContent := fmt.Sprintf("**Member %d:** %s\n⏳ *Analyzing...*", idx+1, members[idx].Name)
-		msg, err := s.ChannelMessageSend(i.ChannelID, msgContent)
+		msg, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, msgContent)
 		if err == nil {
 			claimMessages[idx] = msg
 		}
@@ -262,10 +262,10 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 				updatedContent += "✅ **Has Stated Skills**\n"
 			}
 
-			s.ChannelMessageEdit(i.ChannelID, msg.ID, updatedContent)
+			shareddiscord.EditMessageNoEmbed(s, i.ChannelID, msg.ID, updatedContent)
 		}
 	}
 
 	summaryMsg := "\n📊 **Team Analysis Complete**\n"
-	s.ChannelMessageSend(i.ChannelID, summaryMsg)
+	shareddiscord.SendMessageNoEmbed(s, i.ChannelID, summaryMsg)
 }

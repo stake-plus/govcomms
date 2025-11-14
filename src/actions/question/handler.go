@@ -146,7 +146,7 @@ func (m *Module) initHandlers() {
 
 func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	if m.cfg.QARoleID != "" && !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID) {
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
 				Content: "You don't have permission to use this command.",
@@ -156,7 +156,7 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 		return
 	}
 
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	}); err != nil {
 		log.Printf("question: slash ack failed: %v", err)
@@ -228,7 +228,7 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 }
 
 func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	}); err != nil {
 		log.Printf("question: context ack failed: %v", err)
@@ -237,26 +237,26 @@ func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.Interacti
 
 	if m.cfg.QARoleID != "" && !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID) {
 		msg := "You don't have permission to use this command."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
 		return
 	}
 
 	threadInfo, err := m.refManager.FindThread(i.ChannelID)
 	if err != nil || threadInfo == nil {
 		msg := "This command must be used in a referendum thread."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
 		return
 	}
 
 	qas, err := m.contextStore.GetRecentQAs(threadInfo.NetworkID, uint32(threadInfo.RefID), 10)
 	if err != nil {
 		msg := "Failed to retrieve context."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
 		return
 	}
 	if len(qas) == 0 {
 		msg := "No previous Q&A found for this referendum."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
 		return
 	}
 
@@ -276,12 +276,12 @@ func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.Interacti
 		}
 	}
 	content := response.String()
-	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &content})
+	shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &content})
 }
 
 func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	if m.cfg.QARoleID != "" && !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID) {
-		s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
 				Content: "You don't have permission to use this command.",
@@ -291,7 +291,7 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 		return
 	}
 
-	if err := s.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+	if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	}); err != nil {
 		log.Printf("question: refresh ack failed: %v", err)
@@ -301,26 +301,26 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 	threadInfo, err := m.refManager.FindThread(i.ChannelID)
 	if err != nil || threadInfo == nil {
 		msg := "This command must be used in a referendum thread."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
 		return
 	}
 
 	network := m.networkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
 		msg := "Failed to identify network."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
 		return
 	}
 
 	if _, err := m.cacheManager.Refresh(network.Name, uint32(threadInfo.RefID)); err != nil {
 		log.Printf("question: refresh failed: %v", err)
 		msg := "Failed to refresh proposal content."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
 		return
 	}
 
 	msg := fmt.Sprintf("✅ Refreshed content for %s referendum #%d", network.Name, threadInfo.RefID)
-	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+	shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{Content: &msg})
 }
 
 func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.Interaction, question string, message string) {
@@ -342,7 +342,7 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 	}
 
 	first := chunks[0]
-	if _, err := s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{
+	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, interaction, &discordgo.WebhookEdit{
 		Content: &first,
 	}); err != nil {
 		log.Printf("question: response send failed: %v", err)
@@ -350,7 +350,7 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 	}
 
 	for idx := 1; idx < len(chunks); idx++ {
-		if _, err := s.ChannelMessageSend(interaction.ChannelID, chunks[idx]); err != nil {
+		if _, err := shareddiscord.SendMessageNoEmbed(s, interaction.ChannelID, chunks[idx]); err != nil {
 			log.Printf("question: follow-up send failed: %v", err)
 			return
 		}
@@ -359,5 +359,5 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 
 func sendStyledWebhookEdit(s *discordgo.Session, interaction *discordgo.Interaction, title, body string) {
 	formatted := shareddiscord.FormatStyledBlock(title, body)
-	s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{Content: &formatted})
+	shareddiscord.InteractionResponseEditNoEmbed(s, interaction, &discordgo.WebhookEdit{Content: &formatted})
 }
