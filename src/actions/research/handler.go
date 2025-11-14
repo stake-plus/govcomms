@@ -77,18 +77,18 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 
 	threadInfo, err := h.RefManager.FindThread(i.ChannelID)
 	if err != nil || threadInfo == nil {
-		msg := "This command must be used in a referendum thread."
+		formatted := shareddiscord.FormatStyledBlock("Research", "This command must be used in a referendum thread.")
 		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-			Content: &msg,
+			Content: &formatted,
 		})
 		return
 	}
 
 	network := h.NetworkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
-		msg := "Failed to identify network."
+		formatted := shareddiscord.FormatStyledBlock("Research", "Failed to identify network.")
 		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-			Content: &msg,
+			Content: &formatted,
 		})
 		return
 	}
@@ -177,39 +177,36 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 
 	proposalContent, err := h.Cache.GetProposalContent(network, refID)
 	if err != nil {
-		msg := "Proposal content not found. Please run /refresh first."
+		formatted := shareddiscord.FormatStyledBlock("Research", "Proposal content not found. Please run /refresh first.")
 		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-			Content: &msg,
+			Content: &formatted,
 		})
 		return
 	}
 
 	topClaims, totalClaims, err := h.ClaimsAnalyzer.ExtractTopClaims(ctx, proposalContent)
 	if err != nil {
-		msg := fmt.Sprintf("Error extracting claims: %v", err)
+		formatted := shareddiscord.FormatStyledBlock("Research", fmt.Sprintf("Error extracting claims: %v", err))
 		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-			Content: &msg,
+			Content: &formatted,
 		})
 		return
 	}
 
 	if len(topClaims) == 0 {
-		msg := "No verifiable historical claims found in the proposal."
+		formatted := shareddiscord.FormatStyledBlock("Research", "No verifiable historical claims found in the proposal.")
 		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-			Content: &msg,
+			Content: &formatted,
 		})
 		return
 	}
 
-	headerMsg := fmt.Sprintf("🔍 **Verifying Historical Claims for %s Referendum #%d**\n", network, refID)
-	headerMsg += fmt.Sprintf("Found %d total historical claims, verifying top %d most important:\n", totalClaims, len(topClaims))
-	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{
-		Content: &headerMsg,
-	})
+	headerBody := fmt.Sprintf("Found %d total historical claims, verifying top %d most important.", totalClaims, len(topClaims))
+	sendStyledSlashResponse(s, i, fmt.Sprintf("Claim Verification • %s #%d", network, refID), headerBody)
 
 	claimMessages := make(map[int]*discordgo.Message)
 	for idx, claim := range topClaims {
-		msgContent := fmt.Sprintf("**Claim %d:** %s\n⏳ *Verifying...*", idx+1, claim.Claim)
+		msgContent := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d", idx+1), fmt.Sprintf("%s\n\n⏳ *Verifying...*", claim.Claim))
 		msg, err := s.ChannelMessageSend(i.ChannelID, msgContent)
 		if err == nil {
 			claimMessages[idx] = msg
@@ -241,23 +238,62 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 		}
 
 		if msg, exists := claimMessages[idx]; exists {
-			updatedContent := fmt.Sprintf("**Claim %d:** %s\n%s **%s** - %s",
-				idx+1,
+			body := fmt.Sprintf("%s\n\n%s **%s** - %s",
 				topClaims[idx].Claim,
 				statusEmoji,
 				result.Status,
 				result.Evidence)
 
 			if len(result.SourceURLs) > 0 {
-				updatedContent += fmt.Sprintf("\n📌 Sources: %s", shareddiscord.FormatURLsNoEmbed(result.SourceURLs))
+				body += fmt.Sprintf("\n📌 Sources: %s", shareddiscord.FormatURLsNoEmbed(result.SourceURLs))
 			}
 
-			updatedContent = shareddiscord.WrapURLsNoEmbed(updatedContent)
-			s.ChannelMessageEdit(i.ChannelID, msg.ID, updatedContent)
+			editStyledMessage(s, i.ChannelID, msg.ID, fmt.Sprintf("Claim %d", idx+1), body)
 		}
 	}
 
-	summaryMsg := fmt.Sprintf("\n📊 **Verification Complete**\n✅ Valid: %d | ❌ Rejected: %d | ❓ Unknown: %d",
-		validCount, rejectedCount, unknownCount)
-	s.ChannelMessageSend(i.ChannelID, summaryMsg)
+	summaryMsg := fmt.Sprintf("✅ Valid: %d\n❌ Rejected: %d\n❓ Unknown: %d", validCount, rejectedCount, unknownCount)
+	sendStyledMessage(s, i.ChannelID, "Claim Verification Complete", summaryMsg)
+}
+
+func sendStyledMessage(s *discordgo.Session, channelID, title, body string) {
+	chunks := shareddiscord.BuildStyledMessages(title, body, "")
+	if len(chunks) == 0 {
+		return
+	}
+	for _, chunk := range chunks {
+		if _, err := s.ChannelMessageSend(channelID, chunk); err != nil {
+			log.Printf("research: send failed: %v", err)
+			return
+		}
+	}
+}
+
+func sendStyledSlashResponse(s *discordgo.Session, i *discordgo.InteractionCreate, title, body string) {
+	chunks := shareddiscord.BuildStyledMessages(title, body, "")
+	if len(chunks) == 0 {
+		empty := ""
+		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &empty})
+		return
+	}
+
+	first := chunks[0]
+	if _, err := s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &first}); err != nil {
+		log.Printf("research: slash response failed: %v", err)
+		return
+	}
+
+	for _, chunk := range chunks[1:] {
+		if _, err := s.ChannelMessageSend(i.ChannelID, chunk); err != nil {
+			log.Printf("research: follow-up send failed: %v", err)
+			return
+		}
+	}
+}
+
+func editStyledMessage(s *discordgo.Session, channelID, messageID, title, body string) {
+	content := shareddiscord.FormatStyledBlock(title, body)
+	if _, err := s.ChannelMessageEdit(channelID, messageID, content); err != nil {
+		log.Printf("research: edit failed: %v", err)
+	}
 }

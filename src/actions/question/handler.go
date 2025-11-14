@@ -172,30 +172,26 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 		}
 	}
 	if len(question) < 5 {
-		msg := "Please provide a valid question (at least 5 characters)."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		sendStyledWebhookEdit(s, i.Interaction, "Question", "Please provide a valid question (at least 5 characters).")
 		return
 	}
 
 	threadInfo, err := m.refManager.FindThread(i.ChannelID)
 	if err != nil || threadInfo == nil {
-		msg := "This command must be used in a referendum thread."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		sendStyledWebhookEdit(s, i.Interaction, "Question", "This command must be used in a referendum thread.")
 		return
 	}
 
 	network := m.networkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
-		msg := "Failed to identify network."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		sendStyledWebhookEdit(s, i.Interaction, "Question", "Failed to identify network.")
 		return
 	}
 
 	content, err := m.cacheManager.GetProposalContent(network.Name, uint32(threadInfo.RefID))
 	if err != nil {
 		log.Printf("question: proposal content: %v", err)
-		msg := "Failed to retrieve proposal content. Please try /refresh first."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		sendStyledWebhookEdit(s, i.Interaction, "Question", "Failed to retrieve proposal content. Please try /refresh first.")
 		return
 	}
 
@@ -220,8 +216,7 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 	}
 	if err != nil {
 		log.Printf("question: AI failure: %v", err)
-		msg := "Failed to generate answer. Please try again."
-		s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &msg})
+		sendStyledWebhookEdit(s, i.Interaction, "Question", "Failed to generate answer. Please try again.")
 		return
 	}
 
