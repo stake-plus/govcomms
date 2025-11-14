@@ -356,3 +356,8 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 		}
 	}
 }
+
+func sendStyledWebhookEdit(s *discordgo.Session, interaction *discordgo.Interaction, title, body string) {
+	formatted := shareddiscord.FormatStyledBlock(title, body)
+	s.InteractionResponseEdit(interaction, &discordgo.WebhookEdit{Content: &formatted})
+}
