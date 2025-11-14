@@ -44,10 +44,9 @@ func NewService(cfg ServiceConfig, networks map[uint8]*sharedgov.Network) (*Serv
 			continue
 		}
 
+		// Polkassembly verifies accounts against generic Substrate (SS58 prefix 42, addresses starting with 5),
+		// so force that prefix even if the chain uses a different network-specific prefix.
 		prefix := uint16(42)
-		if net.SS58Prefix != nil {
-			prefix = *net.SS58Prefix
-		}
 
 		signer, err := NewPolkadotSignerFromSeed(seed, prefix)
 		if err != nil {
