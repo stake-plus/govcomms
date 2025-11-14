@@ -3,6 +3,7 @@ package actions
 import (
 	"context"
 	"fmt"
+	"log"
 
 	feedbackmodule "github.com/stake-plus/govcomms/src/actions/feedback"
 	questionmodule "github.com/stake-plus/govcomms/src/actions/question"
@@ -11,42 +12,41 @@ import (
 	"gorm.io/gorm"
 )
 
-// Options describes which action modules should run.
-type Options struct {
-	EnableQA       bool
-	EnableResearch bool
-	EnableFeedback bool
-}
-
 // StartAll wires up enabled action modules and starts the manager.
-func StartAll(ctx context.Context, db *gorm.DB, opts Options) (*Manager, error) {
+func StartAll(ctx context.Context, db *gorm.DB) (*Manager, error) {
 	mgr := NewManager()
 
-	if opts.EnableQA {
-		cfg := sharedconfig.LoadQAConfig(db)
-		mod, err := questionmodule.NewModule(&cfg, db)
+	qaCfg := sharedconfig.LoadQAConfig(db)
+	if qaCfg.Enabled {
+		mod, err := questionmodule.NewModule(&qaCfg, db)
 		if err != nil {
 			return nil, fmt.Errorf("actions: init question module: %w", err)
 		}
 		mgr.Add(mod)
+	} else {
+		log.Printf("actions: QA module disabled via configuration")
 	}
 
-	if opts.EnableResearch {
-		cfg := sharedconfig.LoadResearchConfig(db)
-		mod, err := researchmodule.NewModule(&cfg, db)
+	researchCfg := sharedconfig.LoadResearchConfig(db)
+	if researchCfg.Enabled {
+		mod, err := researchmodule.NewModule(&researchCfg, db)
 		if err != nil {
 			return nil, fmt.Errorf("actions: init research module: %w", err)
 		}
 		mgr.Add(mod)
+	} else {
+		log.Printf("actions: research module disabled via configuration")
 	}
 
-	if opts.EnableFeedback {
-		cfg := sharedconfig.LoadFeedbackConfig(db)
-		mod, err := feedbackmodule.NewModule(&cfg, db)
+	feedbackCfg := sharedconfig.LoadFeedbackConfig(db)
+	if feedbackCfg.Enabled {
+		mod, err := feedbackmodule.NewModule(&feedbackCfg, db)
 		if err != nil {
 			return nil, fmt.Errorf("actions: init feedback module: %w", err)
 		}
 		mgr.Add(mod)
+	} else {
+		log.Printf("actions: feedback module disabled via configuration")
 	}
 
 	if err := mgr.Start(ctx); err != nil {

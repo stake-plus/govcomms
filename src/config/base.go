@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 
 	"github.com/stake-plus/govcomms/src/data"
 	"gorm.io/gorm"
@@ -47,4 +48,27 @@ func GetSetting(name, envKey, defaultValue string) string {
 		val = defaultValue
 	}
 	return val
+}
+
+func getBoolSetting(settingKey, envKey string, defaultValue bool) bool {
+	if v := data.GetSetting(settingKey); v != "" {
+		return parseBoolDefault(v, defaultValue)
+	}
+	if envKey != "" {
+		if v := os.Getenv(envKey); v != "" {
+			return parseBoolDefault(v, defaultValue)
+		}
+	}
+	return defaultValue
+}
+
+func parseBoolDefault(value string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }

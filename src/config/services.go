@@ -58,6 +58,7 @@ type QAConfig struct {
 	AIConfig
 	QARoleID string
 	TempDir  string
+	Enabled  bool
 }
 
 // LoadQAConfig loads Q&A bot configuration
@@ -66,12 +67,14 @@ func LoadQAConfig(db *gorm.DB) QAConfig {
 	ai := LoadAIConfig(db)
 	qaRoleID := GetSetting("qa_role_id", "QA_ROLE_ID", "")
 	tempDir := GetSetting("qa_temp_dir", "QA_TEMP_DIR", "/tmp/govcomms-qa")
+	enabled := getBoolSetting("enable_qa", "ENABLE_QA", true)
 
 	return QAConfig{
 		Base:     base,
 		AIConfig: ai,
 		QARoleID: qaRoleID,
 		TempDir:  tempDir,
+		Enabled:  enabled,
 	}
 }
 
@@ -83,6 +86,7 @@ type ResearchConfig struct {
 	AIEnableWeb    bool
 	ResearchRoleID string
 	TempDir        string
+	Enabled        bool
 }
 
 // LoadResearchConfig loads Research bot configuration
@@ -92,7 +96,11 @@ func LoadResearchConfig(db *gorm.DB) ResearchConfig {
 	openAIKey := GetSetting("openai_api_key", "OPENAI_API_KEY", "")
 	aiModel := GetSetting("ai_model", "AI_MODEL", "gpt-4o-mini")
 	aiEnableWeb := shareddata.GetSetting("ai_enable_web_search") == "1"
-	tempDir := GetSetting("qa_temp_dir", "QA_TEMP_DIR", "/tmp/govcomms-qa")
+	tempDir := GetSetting("research_temp_dir", "RESEARCH_TEMP_DIR", "")
+	if tempDir == "" {
+		tempDir = GetSetting("qa_temp_dir", "QA_TEMP_DIR", "/tmp/govcomms-qa")
+	}
+	enabled := getBoolSetting("enable_research", "ENABLE_RESEARCH", true)
 
 	return ResearchConfig{
 		Base:           base,
@@ -101,6 +109,7 @@ func LoadResearchConfig(db *gorm.DB) ResearchConfig {
 		AIEnableWeb:    aiEnableWeb,
 		ResearchRoleID: researchRoleID,
 		TempDir:        tempDir,
+		Enabled:        enabled,
 	}
 }
 
@@ -111,6 +120,7 @@ type FeedbackConfig struct {
 	IndexerWorkers         int
 	IndexerIntervalMinutes int
 	PolkassemblyEndpoint   string
+	Enabled                bool
 }
 
 // LoadFeedbackConfig loads Feedback bot configuration
@@ -132,6 +142,7 @@ func LoadFeedbackConfig(db *gorm.DB) FeedbackConfig {
 			intervalMinutes = i
 		}
 	}
+	enabled := getBoolSetting("enable_feedback", "ENABLE_FEEDBACK", true)
 
 	return FeedbackConfig{
 		Base:                   base,
@@ -139,5 +150,6 @@ func LoadFeedbackConfig(db *gorm.DB) FeedbackConfig {
 		IndexerWorkers:         workers,
 		IndexerIntervalMinutes: intervalMinutes,
 		PolkassemblyEndpoint:   polkassemblyEndpoint,
+		Enabled:                enabled,
 	}
 }

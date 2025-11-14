@@ -177,8 +177,12 @@ func (b *Module) Start(ctx context.Context) error {
 	}
 
 	go func() {
-		log.Println("feedback: starting network indexer service")
-		data.IndexerService(runtimeCtx, b.db, 5*time.Minute, b.config.IndexerWorkers)
+		interval := time.Duration(b.config.IndexerIntervalMinutes) * time.Minute
+		if interval <= 0 {
+			interval = 5 * time.Minute
+		}
+		log.Printf("feedback: starting network indexer service (interval=%v)", interval)
+		data.IndexerService(runtimeCtx, b.db, interval, b.config.IndexerWorkers)
 	}()
 
 	go b.startReferendumSync(runtimeCtx)
