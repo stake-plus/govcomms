@@ -41,8 +41,7 @@ func New(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Bot, error) {
 
 	networkManager, err := sharedgov.NewNetworkManager(db)
 	if err != nil {
-		log.Printf("Failed to create network manager: %v", err)
-		networkManager = nil
+		return nil, fmt.Errorf("failed to create network manager: %w", err)
 	}
 
 	refManager := sharedgov.NewReferendumManager(db)

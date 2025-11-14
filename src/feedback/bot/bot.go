@@ -490,6 +490,7 @@ func (b *Bot) refreshPolkassemblyCheck() error {
 	for _, ref := range refs {
 		if err := b.processPolkassemblyReplies(&ref); err != nil {
 			log.Printf("feedback: polkassembly reply sync failed for ref %d: %v", ref.RefID, err)
+			continue
 		}
 
 		checkTime := time.Now()

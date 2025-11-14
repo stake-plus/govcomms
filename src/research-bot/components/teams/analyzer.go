@@ -9,12 +9,14 @@ import (
 	"sync"
 	"time"
 
-    sharedai "github.com/stake-plus/govcomms/src/shared/ai"
+	sharedai "github.com/stake-plus/govcomms/src/shared/ai"
 )
 
-type Analyzer struct { client sharedai.Client }
+type Analyzer struct{ client sharedai.Client }
 
-func NewAnalyzer(apiKey string) *Analyzer { return &Analyzer{ client: sharedai.NewClient(sharedai.FactoryConfig{ Provider: "openai", OpenAIKey: apiKey, Model: "gpt-5" }) } }
+func NewAnalyzer(apiKey string) *Analyzer {
+	return &Analyzer{client: sharedai.NewClient(sharedai.FactoryConfig{Provider: "openai", OpenAIKey: apiKey, Model: "gpt-4o-mini"})}
+}
 
 func (a *Analyzer) ExtractTeamMembers(ctx context.Context, proposalContent string) ([]TeamMember, error) {
 	maxContentLength := 10000
@@ -52,8 +54,10 @@ Include empty arrays for missing profile types. Only include team members with a
 Proposal:
 %s`, proposalContent)
 
-    responseText, err := a.client.Respond(ctx, prompt, nil, sharedai.Options{ Model: "gpt-5" })
-    if err != nil { return nil, err }
+	responseText, err := a.client.Respond(ctx, prompt, nil, sharedai.Options{Model: "gpt-4o-mini"})
+	if err != nil {
+		return nil, err
+	}
 	if responseText == "" {
 		return []TeamMember{}, nil
 	}
@@ -206,8 +210,8 @@ HAS_SKILLS: [true/false]
 CAPABILITY: [One detailed sentence about their verified experience and suitability]
 VERIFIED_URLS: [Comma-separated list of URLs that were successfully verified, or "None"]`
 
-    responseText, err := a.client.Respond(ctx, prompt, []sharedai.Tool{{Type: "web_search"}}, sharedai.Options{ Model: "gpt-5" })
-    if err != nil {
+	responseText, err := a.client.Respond(ctx, prompt, []sharedai.Tool{{Type: "web_search"}}, sharedai.Options{Model: "gpt-4o-mini"})
+	if err != nil {
 		return TeamAnalysisResult{
 			Name:            member.Name,
 			Role:            member.Role,

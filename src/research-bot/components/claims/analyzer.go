@@ -9,13 +9,13 @@ import (
 	"sync"
 	"time"
 
-    sharedai "github.com/stake-plus/govcomms/src/shared/ai"
+	sharedai "github.com/stake-plus/govcomms/src/shared/ai"
 )
 
-type Analyzer struct { client sharedai.Client }
+type Analyzer struct{ client sharedai.Client }
 
 func NewAnalyzer(apiKey string) *Analyzer {
-    return &Analyzer{ client: sharedai.NewClient(sharedai.FactoryConfig{ Provider: "openai", OpenAIKey: apiKey, Model: "gpt-5" }) }
+	return &Analyzer{client: sharedai.NewClient(sharedai.FactoryConfig{Provider: "openai", OpenAIKey: apiKey, Model: "gpt-4o-mini"})}
 }
 
 func (a *Analyzer) ExtractTopClaims(ctx context.Context, proposalContent string) ([]Claim, int, error) {
@@ -78,8 +78,10 @@ Respond with JSON:
 Proposal:
 %s`, proposalContent)
 
-    responseText, err := a.client.Respond(ctx, prompt, nil, sharedai.Options{ Model: "gpt-5" })
-    if err != nil { return nil, 0, err }
+	responseText, err := a.client.Respond(ctx, prompt, nil, sharedai.Options{Model: "gpt-4o-mini"})
+	if err != nil {
+		return nil, 0, err
+	}
 	if responseText == "" {
 		return []Claim{}, 0, nil
 	}
@@ -141,8 +143,8 @@ STATUS: [Valid/Rejected/Unknown]
 EVIDENCE: [One sentence with specific details found]
 SOURCES: [Comma-separated list of primary URLs where you found evidence, or "No sources found"]`
 
-    responseText, err := a.client.Respond(ctx, prompt, []sharedai.Tool{{Type: "web_search"}}, sharedai.Options{ Model: "gpt-5" })
-    if err != nil {
+	responseText, err := a.client.Respond(ctx, prompt, []sharedai.Tool{{Type: "web_search"}}, sharedai.Options{Model: "gpt-4o-mini"})
+	if err != nil {
 		return VerificationResult{
 			Claim:      claim.Claim,
 			Status:     StatusUnknown,

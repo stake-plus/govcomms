@@ -36,7 +36,7 @@ If information is not available in the provided content, clearly state that.`)
 		if aiProvider == "claude" {
 			aiModel = "claude-3-haiku-20240307"
 		} else {
-			aiModel = "gpt-5"
+			aiModel = "gpt-4o-mini"
 		}
 	}
 	aiEnableWeb := shareddata.GetSetting("ai_enable_web_search") == "1"
@@ -91,7 +91,7 @@ func LoadResearchConfig(db *gorm.DB) ResearchConfig {
 	base := LoadBase(db)
 	researchRoleID := GetSetting("research_role_id", "RESEARCH_ROLE_ID", "")
 	openAIKey := GetSetting("openai_api_key", "OPENAI_API_KEY", "")
-	aiModel := GetSetting("ai_model", "AI_MODEL", "gpt-5")
+	aiModel := GetSetting("ai_model", "AI_MODEL", "gpt-4o-mini")
 	aiEnableWeb := shareddata.GetSetting("ai_enable_web_search") == "1"
 	tempDir := GetSetting("qa_temp_dir", "QA_TEMP_DIR", "/tmp/govcomms-qa")
 
