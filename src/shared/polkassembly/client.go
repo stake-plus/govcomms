@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -234,47 +235,64 @@ func (c *Client) PostComment(content string, postID int, network string) (int, e
 		}
 	}
 
-	headers := map[string]string{
-		"Content-Type":  "application/json",
-		"Authorization": fmt.Sprintf("Bearer %s", c.loginData.Token),
-		"x-network":     network,
-	}
+	for attempt := 0; attempt < 2; attempt++ {
+		headers := map[string]string{
+			"Content-Type":  "application/json",
+			"Authorization": fmt.Sprintf("Bearer %s", c.loginData.Token),
+			"x-network":     network,
+		}
 
-	userID, err := c.fetchUserID(network)
-	if err != nil {
-		return 0, fmt.Errorf("fetch user ID: %w", err)
-	}
+		userID, err := c.fetchUserID(network)
+		if err != nil {
+			return 0, fmt.Errorf("fetch user ID: %w", err)
+		}
 
-	body := map[string]interface{}{
-		"content":     content,
-		"postId":      postID,
-		"postType":    "referendums_v2",
-		"sentiment":   0,
-		"trackNumber": 0,
-		"userId":      userID,
-	}
+		body := map[string]interface{}{
+			"content":     content,
+			"postId":      postID,
+			"postType":    "referendums_v2",
+			"sentiment":   0,
+			"trackNumber": 0,
+			"userId":      userID,
+		}
 
-	resp, err := c.post("/auth/actions/addPostComment", body, headers)
-	if err != nil {
-		return 0, fmt.Errorf("post comment failed: %w", err)
-	}
+		resp, err := c.post("/auth/actions/addPostComment", body, headers)
+		if err != nil {
+			var httpErr *HTTPError
+			if errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden) && attempt == 0 {
+				if loginErr := c.Login(); loginErr != nil {
+					return 0, fmt.Errorf("reauthenticate: %w", loginErr)
+				}
+				continue
+			}
+			if httpErr != nil && len(httpErr.Body) > 0 {
+				msg := strings.TrimSpace(string(httpErr.Body))
+				if msg != "" {
+					return 0, fmt.Errorf("post comment failed: %w: %s", err, msg)
+				}
+			}
+			return 0, fmt.Errorf("post comment failed: %w", err)
+		}
 
-	var commentResp struct {
-		Comment struct {
+		var commentResp struct {
+			Comment struct {
+				ID int `json:"id"`
+			} `json:"comment"`
 			ID int `json:"id"`
-		} `json:"comment"`
-		ID int `json:"id"`
-	}
-	if err := json.Unmarshal(resp, &commentResp); err == nil {
-		if commentResp.Comment.ID != 0 {
-			return commentResp.Comment.ID, nil
 		}
-		if commentResp.ID != 0 {
-			return commentResp.ID, nil
+		if err := json.Unmarshal(resp, &commentResp); err == nil {
+			if commentResp.Comment.ID != 0 {
+				return commentResp.Comment.ID, nil
+			}
+			if commentResp.ID != 0 {
+				return commentResp.ID, nil
+			}
 		}
+
+		return 0, nil
 	}
 
-	return 0, nil
+	return 0, fmt.Errorf("post comment failed: unauthorized after retry")
 }
 
 // ListComments returns the comments for a referendum post.
