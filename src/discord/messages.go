@@ -10,6 +10,44 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+type StyledProfile struct {
+	InnerWidth       int
+	Padding          int
+	TopPadding       int
+	BottomPadding    int
+	HorizontalMargin int
+	CenterTitle      bool
+}
+
+var (
+	StyledProfileDefault = StyledProfile{
+		InnerWidth: 72,
+		Padding:    1,
+	}
+	StyledProfileAnswer = StyledProfile{
+		InnerWidth:       100,
+		Padding:          1,
+		TopPadding:       1,
+		BottomPadding:    1,
+		HorizontalMargin: 4,
+	}
+	StyledProfileHeader = StyledProfile{
+		InnerWidth:       100,
+		Padding:          1,
+		TopPadding:       1,
+		BottomPadding:    1,
+		HorizontalMargin: 4,
+		CenterTitle:      true,
+	}
+	StyledProfileColumn = StyledProfile{
+		InnerWidth:       48,
+		Padding:          1,
+		TopPadding:       1,
+		BottomPadding:    1,
+		HorizontalMargin: 2,
+	}
+)
+
 const (
 	MaxDiscordMessageLen = 2000
 	SafeChunkLen         = 1900
@@ -184,16 +222,14 @@ type StyledMessage struct {
 	Content    string
 	Components []discordgo.MessageComponent
 	BoxLines   []string
+	Profile    StyledProfile
 }
 
 const (
 	maxLinkButtons     = 25
 	maxButtonLabelRune = 80
 
-	boxInnerWidth    = 68 // ~15% narrower than previous layout
-	boxPadding       = 1
 	boxColumnsGap    = "  "
-	boxLineWidth     = boxInnerWidth + (boxPadding * 2) + 4
 	maxComponentRows = 5
 
 	ansiDim   = "\u001b[2m"
