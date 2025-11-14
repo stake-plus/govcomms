@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+
+	"github.com/centrifuge/go-substrate-rpc-client/v4/types"
 )
 
 // ReferendaConstants holds all referenda pallet constants
@@ -28,9 +30,8 @@ func (c *Client) GetReferendaConstants() (*ReferendaConstants, error) {
 		Tracks: make(map[uint16]*TrackInfo),
 	}
 
-	// Get tracks using state_getStorage
-	tracksKey := createConstantKey("Referenda", "Tracks")
-	tracksData, err := c.getConstantValue(tracksKey)
+	// Get tracks using chain constants
+	tracksData, err := c.getConstantValue("Referenda", "Tracks")
 	if err != nil {
 		return nil, fmt.Errorf("get tracks constant: %w", err)
 	}
@@ -41,8 +42,7 @@ func (c *Client) GetReferendaConstants() (*ReferendaConstants, error) {
 	}
 
 	// Get undeciding timeout
-	timeoutKey := createConstantKey("Referenda", "UndecidingTimeout")
-	timeoutData, err := c.getConstantValue(timeoutKey)
+	timeoutData, err := c.getConstantValue("Referenda", "UndecidingTimeout")
 	if err != nil {
 		return nil, fmt.Errorf("get undeciding timeout: %w", err)
 	}
@@ -52,8 +52,7 @@ func (c *Client) GetReferendaConstants() (*ReferendaConstants, error) {
 	}
 
 	// Get submission deposit
-	depositKey := createConstantKey("Referenda", "SubmissionDeposit")
-	depositData, err := c.getConstantValue(depositKey)
+	depositData, err := c.getConstantValue("Referenda", "SubmissionDeposit")
 	if err != nil {
 		return nil, fmt.Errorf("get submission deposit: %w", err)
 	}
@@ -66,8 +65,7 @@ func (c *Client) GetReferendaConstants() (*ReferendaConstants, error) {
 	}
 
 	// Get max queued
-	maxQueuedKey := createConstantKey("Referenda", "MaxQueued")
-	maxQueuedData, err := c.getConstantValue(maxQueuedKey)
+	maxQueuedData, err := c.getConstantValue("Referenda", "MaxQueued")
 	if err != nil {
 		return nil, fmt.Errorf("get max queued: %w", err)
 	}
@@ -92,8 +90,7 @@ func (c *Client) GetSS58Prefix() (uint16, error) {
 	}
 
 	// Get SS58 prefix using state_getStorage
-	prefixKey := createConstantKey("System", "SS58Prefix")
-	prefixData, err := c.getConstantValue(prefixKey)
+	prefixData, err := c.getConstantValue("System", "SS58Prefix")
 	if err != nil {
 		return 42, fmt.Errorf("get ss58 prefix: %w", err) // Default to generic substrate
 	}
@@ -119,24 +116,33 @@ func createConstantKey(pallet, constant string) string {
 }
 
 // getConstantValue retrieves a constant value using direct RPC call
-func (c *Client) getConstantValue(key string) ([]byte, error) {
-	// First try to get it from storage
+func (c *Client) getConstantValue(pallet, constant string) ([]byte, error) {
+	// First try to get it from storage using hashed key
+	key := createConstantKey(pallet, constant)
 	data, err := c.GetStorage(key, nil)
 	if err == nil && data != "" && data != "0x" {
 		return DecodeHex(data)
 	}
 
-	// If not in storage, we need to get it from metadata
-	// For now, we'll use a different approach - query the metadata directly via RPC
-	var result string
-	err = c.api.Client.Call(&result, "state_getMetadata", nil)
-	if err != nil {
-		return nil, fmt.Errorf("get metadata: %w", err)
+	if c.metadata == nil {
+		return nil, fmt.Errorf("metadata not loaded")
 	}
 
-	// The metadata contains the constants, but parsing it is complex
-	// For now, return empty data which will use defaults
-	return nil, fmt.Errorf("constant not found in storage")
+	if c.metadata.IsMetadataV14 {
+		meta := c.metadata.AsMetadataV14
+		for _, p := range meta.Pallets {
+			if string(p.Name) != pallet {
+				continue
+			}
+			value, err := p.FindConstantValue(types.Text(constant))
+			if err != nil {
+				return nil, err
+			}
+			return value, nil
+		}
+	}
+
+	return nil, fmt.Errorf("constant %s.%s not found", pallet, constant)
 }
 
 // decodeTracks decodes the tracks Vec<(u16, TrackInfo)>
