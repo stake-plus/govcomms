@@ -128,33 +128,37 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 	skilledCount := 0
 
 	var memberPanels []shareddiscord.StyledMessage
-	for i, result := range results {
-		statusIcons := ""
-		if result.IsReal {
-			statusIcons += "👤 Real Person"
-			realCount++
-		} else {
-			statusIcons += "❌ Not Verified"
-		}
-
-		if result.HasStatedSkills {
-			statusIcons += " | 🎯 Skills Verified"
-			skilledCount++
-		} else {
-			statusIcons += " | ⚠️ Skills Unverified"
-		}
-
-		var sections []string
+	for _, result := range results {
 		header := result.Name
 		if result.Role != "" {
 			header += fmt.Sprintf(" (%s)", result.Role)
 		}
-		sections = append(sections, statusIcons)
-		if strings.TrimSpace(result.Capability) != "" {
-			sections = append(sections, fmt.Sprintf("💼 %s", result.Capability))
+
+		nameLine := fmt.Sprintf("Name: %s", header)
+
+		assessmentText := strings.TrimSpace(result.Capability)
+		if assessmentText == "" {
+			assessmentText = "_No assessment provided_"
 		}
-		body := strings.Join(sections, "\n\n")
-		panel := shareddiscord.BuildStyledMessage(fmt.Sprintf("Member %d • %s", i+1, header), body)
+		assessmentLine := fmt.Sprintf("Assessment:\n\n%s", assessmentText)
+
+		statusParts := []string{}
+		if result.IsReal {
+			realCount++
+			statusParts = append(statusParts, "Verified Real Person")
+		} else {
+			statusParts = append(statusParts, "Verification Failed")
+		}
+		if result.HasStatedSkills {
+			skilledCount++
+			statusParts = append(statusParts, "Has Stated Skills")
+		} else {
+			statusParts = append(statusParts, "Skills Unverified")
+		}
+		statusLine := fmt.Sprintf("Verification Status: %s", strings.Join(statusParts, " • "))
+
+		body := strings.Join([]string{nameLine, assessmentLine, statusLine}, "\n\n")
+		panel := shareddiscord.BuildStyledMessage("Team Member", body)
 		memberPanels = append(memberPanels, panel)
 	}
 
@@ -219,39 +223,37 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 	skilledCount := 0
 
 	var memberPanels []shareddiscord.StyledMessage
-	for idx, result := range results {
-		if result.IsReal {
-			realCount++
-		}
-		if result.HasStatedSkills {
-			skilledCount++
-		}
-
-		var sections []string
+	for _, result := range results {
 		header := result.Name
 		if result.Role != "" {
 			header += fmt.Sprintf(" (%s)", result.Role)
 		}
 
-		if strings.TrimSpace(result.Capability) != "" {
-			sections = append(sections, fmt.Sprintf("Assessment: %s", result.Capability))
-		}
+		nameLine := fmt.Sprintf("Name: %s", header)
 
-		status := ""
+		assessmentText := strings.TrimSpace(result.Capability)
+		if assessmentText == "" {
+			assessmentText = "_No assessment provided_"
+		}
+		assessmentLine := fmt.Sprintf("Assessment:\n\n%s", assessmentText)
+
+		statusParts := []string{}
 		if result.IsReal {
-			status += "👤 Verified Real Person"
+			realCount++
+			statusParts = append(statusParts, "Verified Real Person")
 		} else {
-			status += "❓ Verification Failed"
+			statusParts = append(statusParts, "Verification Failed")
 		}
 		if result.HasStatedSkills {
-			status += " • 🎯 Has Stated Skills"
+			skilledCount++
+			statusParts = append(statusParts, "Has Stated Skills")
+		} else {
+			statusParts = append(statusParts, "Skills Unverified")
 		}
-		if status != "" {
-			sections = append(sections, status)
-		}
+		statusLine := fmt.Sprintf("Verification Status: %s", strings.Join(statusParts, " • "))
 
-		body := strings.Join(sections, "\n\n")
-		panel := shareddiscord.BuildStyledMessage(fmt.Sprintf("Member %d • %s", idx+1, header), body)
+		body := strings.Join([]string{nameLine, assessmentLine, statusLine}, "\n\n")
+		panel := shareddiscord.BuildStyledMessage("Team Member", body)
 		memberPanels = append(memberPanels, panel)
 	}
 

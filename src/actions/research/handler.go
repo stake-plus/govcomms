@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/research/components/claims"
@@ -149,14 +148,13 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 			unknownCount++
 		}
 
-		body := fmt.Sprintf("%s\n\n%s **%s** - %s",
-			topClaims[i].Claim,
+		title := fmt.Sprintf("Claim: %s", topClaims[i].Claim)
+		body := fmt.Sprintf("Assessment:\n\n%s\n\nVerification Status: %s %s",
+			result.Evidence,
 			statusEmoji,
-			result.Status,
-			result.Evidence)
+			result.Status)
 
-		statusLabel := strings.ToUpper(string(result.Status))
-		panel := shareddiscord.BuildStyledMessage(fmt.Sprintf("Claim %d • %s", i+1, statusLabel), body)
+		panel := shareddiscord.BuildStyledMessage(title, body)
 		claimPanels = append(claimPanels, panel)
 	}
 
@@ -236,14 +234,13 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 			unknownCount++
 		}
 
-		body := fmt.Sprintf("%s\n\n%s **%s** - %s",
-			topClaims[idx].Claim,
+		title := fmt.Sprintf("Claim: %s", topClaims[idx].Claim)
+		body := fmt.Sprintf("Assessment:\n\n%s\n\nVerification Status: %s %s",
+			result.Evidence,
 			statusEmoji,
-			result.Status,
-			result.Evidence)
+			result.Status)
 
-		statusLabel := strings.ToUpper(string(result.Status))
-		panel := shareddiscord.BuildStyledMessage(fmt.Sprintf("Claim %d • %s", idx+1, statusLabel), body)
+		panel := shareddiscord.BuildStyledMessage(title, body)
 		claimPanels = append(claimPanels, panel)
 	}
 
