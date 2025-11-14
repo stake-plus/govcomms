@@ -301,34 +301,16 @@ func dispatchPanels(s *discordgo.Session, channelID string, panels []shareddisco
 		return
 	}
 
-	var content strings.Builder
-	var allComponents []discordgo.MessageComponent
-
 	for _, panel := range panels {
-		if content.Len() > 0 {
-			content.WriteString("\n")
+		msg := &discordgo.MessageSend{
+			Content: panel.Content,
 		}
-		content.WriteString(panel.Content)
-
-		for _, component := range panel.Components {
-			if len(allComponents) >= 5 { // Discord limit of 5 action rows
-				break
-			}
-			allComponents = append(allComponents, component)
+		if len(panel.Components) > 0 {
+			msg.Components = panel.Components
 		}
-		if len(allComponents) >= 5 {
-			break
+		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, channelID, msg); err != nil {
+			log.Printf("%s: panel send failed: %v", prefix, err)
+			return
 		}
-	}
-
-	msg := &discordgo.MessageSend{
-		Content: content.String(),
-	}
-	if len(allComponents) > 0 {
-		msg.Components = allComponents
-	}
-
-	if _, err := shareddiscord.SendComplexMessageNoEmbed(s, channelID, msg); err != nil {
-		log.Printf("%s: panel send failed: %v", prefix, err)
 	}
 }
