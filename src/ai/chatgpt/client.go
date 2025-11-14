@@ -31,7 +31,7 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 
 	return &client{
 		apiKey:     cfg.OpenAIKey,
-		httpClient: httpx.NewDefault(300 * time.Second),
+		httpClient: webclient.NewDefault(300 * time.Second),
 		defaults: core.Options{
 			Model:               valueOrDefault(cfg.Model, "gpt-4o-mini"),
 			Temperature:         orFloat(cfg.Temperature, 1),
@@ -54,7 +54,7 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 		"temperature": merged.Temperature,
 	}
 	bodyBytes, _ := json.Marshal(reqBody)
-	_, body, err := httpx.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+	_, body, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
 		req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err
@@ -112,7 +112,7 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 		payload["tool_choice"] = "auto"
 	}
 	bodyBytes, _ := json.Marshal(payload)
-	_, body, err := httpx.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+	_, body, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
 		req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/responses", bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err

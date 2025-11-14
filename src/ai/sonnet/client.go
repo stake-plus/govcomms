@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/stake-plus/govcomms/src/ai/core"
-	"github.com/stake-plus/govcomms/src/webclient"
 )
 
 func init() {
@@ -171,4 +170,3 @@ func orFloat(v, d float64) float64 {
 	}
 	return d
 }
-
