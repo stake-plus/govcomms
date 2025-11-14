@@ -50,23 +50,25 @@ Store secrets and configuration in `/opt/govcomms/.env.govcomms` (referenced by 
 
 After restarting the service, confirm:
 
-- Slash commands are registered (look for “Slash commands registered” log entries).
-- The indexer logs current block heights for every network.
-- Polkassembly login succeeds when seeds are configured.
+- `question: logged in as …` and `research: logged in as …` appear once Discord sessions connect.
+- `feedback: slash command registered` and `feedback: starting network indexer service` show that the feedback module is healthy.
+- `<network> indexer: Current block height …` appears for every configured network.
+- Polkassembly login succeeds when seeds are configured (watch for HTTP errors in `feedback:` logs).
 - Discord commands respond promptly in referendum threads.
 
 ## 3. Monitoring & Logs
 
 GovComms logs to stdout/stderr. Key log messages include:
 
-- **Module startup:** `AI Q&A started`, `Research bot started`, `Feedback bot started`.
+- **Discord sessions:** `question: logged in as …`, `research: logged in as …`, `Feedback bot logged in as …`.
+- **Slash registration/indexer start:** `feedback: slash command registered`, `feedback: starting network indexer service`, and `Starting indexer service with …`.
 - **Indexer status:** `<network> indexer: Current block height ...`.
 - **Thread mapping:** `feedback: thread ... mapping failed` (action required).
-- **Polkassembly:** success/failure logs for posting comments and syncing replies.
+- **Polkassembly:** success/failure logs for posting comments and syncing replies (e.g., `feedback: polkassembly monitor error: ...`).
 
 ### Suggested alerting
 
-- Monitor for repeated RPC failures in `feedback/data/indexer.go`.
+- Monitor for repeated RPC failures in `src/actions/feedback/data/indexer.go`.
 - Alert if slash-command registration fails (e.g., invalid token or missing intents).
 - Watch for `MYSQL_DSN is not set` to catch misconfigured services.
 
@@ -100,7 +102,7 @@ GovComms logs to stdout/stderr. Key log messages include:
 | Slash commands disappear | Discord token revoked or guild ID mismatch | Regenerate token, verify `guild_id`, restart service. |
 | `/question` reports “must be used in a referendum thread” | Thread not mapped | Ensure thread title starts with `<ref-id>:` and `networks.discord_channel_id` matches the parent forum. |
 | Indexer logs `Failed to get referendum count` | RPC unreachable | Update `network_rpcs` or verify node health. |
-| Polkassembly mirroring skipped | Missing `polkassembly_seed` or authentication failure | Add seed, check `GC_URL`, review logs for HTTP 401/403. |
+| Polkassembly mirroring skipped | Missing `polkassembly_seed` or authentication failure | Add seed, verify the `gc_url` setting, review logs for HTTP 401/403. |
 | AI modules fall back to cached content | Provider rate limit or key invalid | Check provider dashboards, rotate keys, or enable alternative provider. |
 
 ## 7. Data Hygiene & Safety

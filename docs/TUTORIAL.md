@@ -57,13 +57,12 @@ Edit `.env.govcomms`:
 - Fill in `MYSQL_DSN`, `DISCORD_TOKEN`, `GUILD_ID`.
 - Add role IDs (if applicable).
 - Provide at least one AI provider key.
-- Point `GC_URL` to the DAO’s public discussion page.
 
 ## Step 5 – Update Seed Data
 
 Use your preferred SQL client to edit:
 
-- `settings`: confirm tokens, role IDs, AI configuration.
+- `settings`: confirm tokens, role IDs, AI configuration, and set `gc_url` to the DAO’s public discussion page (no environment fallback).
 - `networks`: set the correct `discord_channel_id`, `polkassembly_seed`, and `ss58_prefix` per network.
 - `network_rpcs`: add reliable RPC URLs (e.g., `wss://rpc.polkadot.io`).
 

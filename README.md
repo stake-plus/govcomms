@@ -12,33 +12,34 @@ See `docs/CHAOS-DAO-INTEGRATION.md` for the joint deployment checklist.
 
 ## Features
 
-- **AI Q&A (`src/ai-qa`)** – `/question`, `/refresh`, `/context`; caches proposal and linked docs, stores Q&A transcripts.
-- **Research (`src/research-bot`)** – `/research`, `/team`; extracts claims and team members, runs sequential web-backed verification using OpenAI or Claude.
-- **Feedback & Polkassembly (`src/feedback`)** – `/feedback`; persists feedback in MySQL, posts embeds, mirrors the first DAO response to Polkassembly, polls for replies, and runs the Substrate referendum indexer.
-- **Shared packages (`src/shared`, `src/polkadot-go`)** – Config loaders, AI provider abstractions, Discord helpers, Polkassembly client, MySQL accessors, and a lightweight Substrate RPC toolkit.
+- **AI Q&A (`src/actions/question`)** – Provides `/question`, `/refresh`, and `/context` commands, maintains proposal caches under `src/cache`, and records Q&A transcripts in MySQL.
+- **Research & Team Analysis (`src/actions/research`, `src/actions/team`)** – Powers `/research` and `/team`, extracts claims, verifies evidence with OpenAI/Claude through `src/ai`, and publishes styled Discord updates.
+- **Feedback & Polkassembly (`src/actions/feedback`)** – Handles `/feedback`, maps Discord referendum threads, mirrors the first DAO response to Polkassembly, syncs replies, and runs the Substrate indexer in `src/actions/feedback/data`.
+- **Core packages (`src/config`, `src/ai`, `src/cache`, `src/polkadot-go`)** – Hold configuration loaders, AI provider registry and clients, caching utilities, Discord helpers, Polkassembly client, and the lightweight Substrate RPC toolkit.
 
 ## Repository Layout
 
 ```
-├── README.md                # High-level overview (this file)
-├── .env.example             # Sample environment configuration
-├── db/database.sql          # Canonical schema + seed data
-├── docs/                    # Installation, configuration, operations, tutorials
+├── README.md                         # High-level overview (this file)
+├── config/
+│   └── env.sample                    # Sample environment configuration
+├── db/database.sql                   # Canonical schema + seed data
+├── docs/                             # Installation, configuration, operations, tutorials
 │   ├── INSTALLATION.md
 │   ├── CONFIGURATION.md
 │   ├── OPERATIONS.md
 │   ├── TUTORIAL.md
 │   └── CHAOS-DAO-INTEGRATION.md
-├── docs/systemd/govcomms.service  # Reference service unit
-├── Makefile                 # Convenience targets (build, clean, test)
-├── src/                     # Application source code
-└── tmp/                     # Scratch/cache directories (safe to delete)
+├── docs/systemd/govcomms.service     # Reference systemd unit
+├── Makefile                          # Convenience targets (build, clean, test)
+├── src/                              # Application source (actions, ai, cache, config, etc.)
+└── tmp/                              # Scratch/cache directories (safe to delete)
 ```
 
 ## Quick Start
 
 1. **Read** `docs/INSTALLATION.md` for prerequisites and build instructions.
-2. **Configure** the database and environment variables using `docs/CONFIGURATION.md` and `.env.example`.
+2. **Configure** the database and environment variables using `docs/CONFIGURATION.md` and `config/env.sample`.
 3. **Run** GovComms locally (`./bin/govcomms --enable-feedback`) or via the provided systemd unit.
 4. **Integrate** the Chaos DAO Governance Bot by following `docs/CHAOS-DAO-INTEGRATION.md`.
 

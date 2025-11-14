@@ -83,9 +83,9 @@ source /opt/govcomms/.env.govcomms   # or use direnv / dotenv on Windows
 
 On first boot, watch the logs for:
 
-- Successful MySQL connection.
-- Slash command registration (one message per module).
-- Indexer startup and RPC connectivity.
+- `question: logged in as …` and `research: logged in as …` (Discord sessions connected).
+- `feedback: slash command registered` followed by `feedback: starting network indexer service`.
+- `<network> indexer: Current block height …` messages confirming RPC connectivity per network.
 
 Stop the process with `Ctrl+C` once you confirm everything works. You are now ready to configure persistent services (see `docs/OPERATIONS.md`) and to integrate the Chaos DAO Governance Bot (`docs/CHAOS-DAO-INTEGRATION.md`).
 
