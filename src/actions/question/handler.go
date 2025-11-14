@@ -326,12 +326,18 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 		userID = interaction.User.ID
 	}
 
-	title := "Answer"
+	title := "Question"
 	if questionTitle := strings.TrimSpace(question); questionTitle != "" {
-		title = fmt.Sprintf("Answer • %s", questionTitle)
+		title = fmt.Sprintf("Question: %s", questionTitle)
 	}
 
-	payloads := shareddiscord.BuildStyledMessages(title, message, userID)
+	answerBody := strings.TrimSpace(message)
+	if answerBody == "" {
+		answerBody = "_No content_"
+	}
+	answerBody = fmt.Sprintf("Answer:\n\n%s", answerBody)
+
+	payloads := shareddiscord.BuildStyledMessages(title, answerBody, userID)
 	if len(payloads) == 0 {
 		return
 	}

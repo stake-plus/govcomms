@@ -167,8 +167,8 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 			if strings.TrimSpace(result.Capability) != "" {
 				sections = append(sections, fmt.Sprintf("💼 %s", result.Capability))
 			}
-			if len(result.VerifiedURLs) > 0 {
-				sections = append(sections, "📌 Verified profiles:\n"+strings.Join(result.VerifiedURLs, "\n"))
+			if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.VerifiedURLs); urls != "" {
+				sections = append(sections, urls)
 			}
 
 			body := strings.Join(sections, "\n\n")
@@ -272,8 +272,8 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 				sections = append(sections, status)
 			}
 
-			if len(result.VerifiedURLs) > 0 {
-				sections = append(sections, "Verified URLs:\n"+strings.Join(result.VerifiedURLs, "\n"))
+			if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.VerifiedURLs); urls != "" {
+				sections = append(sections, urls)
 			}
 
 			body := strings.Join(sections, "\n\n")

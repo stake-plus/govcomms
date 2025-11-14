@@ -60,6 +60,22 @@ func FormatURLsNoEmbed(urls []string) string {
 	return strings.Join(formatted, " ")
 }
 
+// FormatURLsNoEmbedMultiline formats URLs (no embeds) separated by newlines to keep buttons tidy.
+func FormatURLsNoEmbedMultiline(urls []string) string {
+	if len(urls) == 0 {
+		return ""
+	}
+	var lines []string
+	for _, u := range urls {
+		trimmed := strings.TrimSpace(u)
+		if trimmed == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("<%s>", trimmed))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func isAlreadyAngleWrapped(text string, start, end int) bool {
 	return start > 0 && text[start-1] == '<' && end < len(text) && text[end] == '>'
 }

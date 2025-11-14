@@ -161,8 +161,8 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 				result.Status,
 				result.Evidence)
 
-			if len(result.SourceURLs) > 0 {
-				body += fmt.Sprintf("\n📌 Sources: %s", shareddiscord.FormatURLsNoEmbed(result.SourceURLs))
+			if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.SourceURLs); urls != "" {
+				body += "\n\n" + urls
 			}
 			editStyledMessage(s, channelID, msg.ID, fmt.Sprintf("Claim %d", i+1), body)
 		}
@@ -245,8 +245,8 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 				result.Status,
 				result.Evidence)
 
-			if len(result.SourceURLs) > 0 {
-				body += fmt.Sprintf("\n📌 Sources: %s", shareddiscord.FormatURLsNoEmbed(result.SourceURLs))
+			if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.SourceURLs); urls != "" {
+				body += "\n\n" + urls
 			}
 
 			editStyledMessage(s, i.ChannelID, msg.ID, fmt.Sprintf("Claim %d", idx+1), body)
