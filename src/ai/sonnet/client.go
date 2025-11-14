@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stake-plus/govcomms/src/ai/core"
+	"github.com/stake-plus/govcomms/src/webclient"
 )
 
 func init() {
@@ -31,7 +32,7 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 
 	return &client{
 		apiKey:     cfg.ClaudeKey,
-		httpClient: httpx.NewDefault(60 * time.Second),
+		httpClient: webclient.NewDefault(60 * time.Second),
 		defaults: core.Options{
 			Model:        valueOrDefault(cfg.Model, "claude-3-haiku-20240307"),
 			Temperature:  orFloat(cfg.Temperature, 0.2),
@@ -52,7 +53,7 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 		"temperature": merged.Temperature,
 	}
 	bodyBytes, _ := json.Marshal(reqBody)
-	_, body, err := httpx.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+	_, body, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
 		req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err
@@ -104,7 +105,7 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 		"temperature": merged.Temperature,
 	}
 	bodyBytes, _ := json.Marshal(reqBody)
-	_, body, err := httpx.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+	_, body, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
 		req, err := http.NewRequestWithContext(ctx, "POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err
@@ -170,3 +171,4 @@ func orFloat(v, d float64) float64 {
 	}
 	return d
 }
+

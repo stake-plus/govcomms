@@ -11,7 +11,7 @@ Use this guide to understand every tunable and how it maps back to the source co
 
 | Variable | Required | Description | Source |
 | --- | --- | --- | --- |
-| `MYSQL_DSN` | ✅ | Full DSN including `parseTime=true` and UTF8MB4 settings. Example:<br>`govcomms:password@tcp(127.0.0.1:3306)/govcomms?parseTime=true&charset=utf8mb4` | `src/shared/data/mysql.go` |
+| `MYSQL_DSN` | ✅ | Full DSN including `parseTime=true` and UTF8MB4 settings. Example:<br>`govcomms:password@tcp(127.0.0.1:3306)/govcomms?parseTime=true&charset=utf8mb4` | `src/data/mysql.go` |
 | `DISCORD_TOKEN` | ✅ | Discord bot token. Shared with the Chaos DAO Governance Bot if they run under one application. | `shared/config/base.go` |
 | `GUILD_ID` | ✅ | Target Discord guild for slash commands. | `shared/config/base.go` |
 | `QA_ROLE_ID` / `RESEARCH_ROLE_ID` / `FEEDBACK_ROLE_ID` | Optional | Restrict slash commands to specific roles. Leave empty to allow everyone. | `shared/config/services.go` |
