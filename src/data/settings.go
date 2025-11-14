@@ -3,7 +3,7 @@ package data
 import (
 	"sync"
 
-	"github.com/stake-plus/govcomms/src/shared/gov"
+	"github.com/stake-plus/govcomms/src/polkadot-go/governance"
 	"gorm.io/gorm"
 )
 
@@ -36,4 +36,5 @@ func GetSetting(name string) string {
 	defer settingsMu.RUnlock()
 	return settingsCache[name]
 }
+
 

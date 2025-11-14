@@ -7,7 +7,7 @@ import (
 	feedbackmodule "github.com/stake-plus/govcomms/src/actions/feedback"
 	questionmodule "github.com/stake-plus/govcomms/src/actions/question"
 	researchmodule "github.com/stake-plus/govcomms/src/actions/research"
-	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
+	sharedconfig "github.com/stake-plus/govcomms/src/config"
 	"gorm.io/gorm"
 )
 
@@ -55,3 +55,4 @@ func StartAll(ctx context.Context, db *gorm.DB, opts Options) (*Manager, error) 
 
 	return mgr, nil
 }
+

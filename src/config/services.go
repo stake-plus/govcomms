@@ -3,7 +3,7 @@ package config
 import (
 	"strconv"
 
-	shareddata "github.com/stake-plus/govcomms/src/shared/data"
+	shareddata "github.com/stake-plus/govcomms/src/data"
 	"gorm.io/gorm"
 )
 
@@ -141,3 +141,4 @@ func LoadFeedbackConfig(db *gorm.DB) FeedbackConfig {
 		PolkassemblyEndpoint:   polkassemblyEndpoint,
 	}
 }
+

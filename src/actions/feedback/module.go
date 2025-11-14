@@ -14,11 +14,11 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/core"
 	"github.com/stake-plus/govcomms/src/actions/feedback/data"
-	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
-	shareddata "github.com/stake-plus/govcomms/src/shared/data"
-	shareddiscord "github.com/stake-plus/govcomms/src/shared/discord"
-	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
-	sharedpolkassembly "github.com/stake-plus/govcomms/src/shared/polkassembly"
+	sharedconfig "github.com/stake-plus/govcomms/src/config"
+	shareddata "github.com/stake-plus/govcomms/src/data"
+	shareddiscord "github.com/stake-plus/govcomms/src/discord"
+	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
+	sharedpolkassembly "github.com/stake-plus/govcomms/src/polkadot-go/polkassembly"
 	"gorm.io/gorm"
 )
 
@@ -589,3 +589,4 @@ func (b *Module) postFirstMessageIfNeeded(network *sharedgov.Network, ref *share
 
 	return nil
 }
+

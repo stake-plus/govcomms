@@ -10,9 +10,9 @@ import (
 	"github.com/stake-plus/govcomms/src/actions/core"
 	aicore "github.com/stake-plus/govcomms/src/ai/core"
 	cache "github.com/stake-plus/govcomms/src/cache"
-	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
-	shareddiscord "github.com/stake-plus/govcomms/src/shared/discord"
-	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
+	sharedconfig "github.com/stake-plus/govcomms/src/config"
+	shareddiscord "github.com/stake-plus/govcomms/src/discord"
+	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 	"gorm.io/gorm"
 )
 
@@ -418,3 +418,4 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 		}
 	}
 }
+

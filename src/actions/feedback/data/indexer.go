@@ -9,7 +9,7 @@ import (
 	"time"
 
 	polkadot "github.com/stake-plus/govcomms/src/polkadot-go"
-	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
+	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 	"gorm.io/gorm"
 )
 
@@ -482,3 +482,4 @@ func IndexerService(ctx context.Context, db *gorm.DB, interval time.Duration, wo
 	<-ctx.Done()
 	log.Println("Indexer service stopping")
 }
+

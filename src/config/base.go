@@ -3,7 +3,7 @@ package config
 import (
 	"os"
 
-	"github.com/stake-plus/govcomms/src/shared/data"
+	"github.com/stake-plus/govcomms/src/data"
 	"gorm.io/gorm"
 )
 
@@ -48,4 +48,5 @@ func GetSetting(name, envKey, defaultValue string) string {
 	}
 	return val
 }
+
 

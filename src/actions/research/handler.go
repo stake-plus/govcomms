@@ -9,9 +9,9 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/research/components/claims"
 	cache "github.com/stake-plus/govcomms/src/cache"
-	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
-	shareddiscord "github.com/stake-plus/govcomms/src/shared/discord"
-	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
+	sharedconfig "github.com/stake-plus/govcomms/src/config"
+	shareddiscord "github.com/stake-plus/govcomms/src/discord"
+	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 )
 
 // Handler manages the research action logic.
@@ -265,3 +265,4 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 		validCount, rejectedCount, unknownCount)
 	s.ChannelMessageSend(i.ChannelID, summaryMsg)
 }
+

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
+	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 	"gorm.io/gorm"
 )
 
@@ -106,3 +106,4 @@ func GetFirstFeedbackMessage(db *gorm.DB, refDBID uint64) (*sharedgov.RefMessage
 	}
 	return &msg, nil
 }
+

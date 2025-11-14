@@ -10,9 +10,9 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/research/components/teams"
 	cache "github.com/stake-plus/govcomms/src/cache"
-	sharedconfig "github.com/stake-plus/govcomms/src/shared/config"
-	shareddiscord "github.com/stake-plus/govcomms/src/shared/discord"
-	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
+	sharedconfig "github.com/stake-plus/govcomms/src/config"
+	shareddiscord "github.com/stake-plus/govcomms/src/discord"
+	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 )
 
 // Handler encapsulates /team logic for both legacy and slash commands.
@@ -269,3 +269,4 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 	summaryMsg := "\n📊 **Team Analysis Complete**\n"
 	s.ChannelMessageSend(i.ChannelID, summaryMsg)
 }
+

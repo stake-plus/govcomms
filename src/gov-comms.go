@@ -10,7 +10,7 @@ import (
 
 	"github.com/stake-plus/govcomms/src/actions"
 	_ "github.com/stake-plus/govcomms/src/ai/providers"
-	shareddata "github.com/stake-plus/govcomms/src/shared/data"
+	shareddata "github.com/stake-plus/govcomms/src/data"
 )
 
 func main() {
@@ -56,3 +56,4 @@ func envBool(key string, def bool) bool {
 	}
 	return false
 }
+

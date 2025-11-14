@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	sharedgov "github.com/stake-plus/govcomms/src/shared/gov"
+	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 )
 
 // ServiceConfig describes configuration for the Polkassembly service.
@@ -116,3 +116,4 @@ func (s *Service) PostFirstMessage(network string, refID int, message, link stri
 
 	return commentID, nil
 }
+
