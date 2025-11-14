@@ -140,4 +140,3 @@ func dispatchStyledMessages(s *discordgo.Session, channelID string, payloads []S
 	}
 	return sent, nil
 }
-

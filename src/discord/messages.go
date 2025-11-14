@@ -190,10 +190,10 @@ const (
 	maxLinkButtons     = 25
 	maxButtonLabelRune = 80
 
-	boxInnerWidth   = 68 // ~15% narrower than previous layout
-	boxPadding      = 1
-	boxColumnsGap   = "  "
-	boxLineWidth    = boxInnerWidth + (boxPadding * 2) + 4
+	boxInnerWidth    = 68 // ~15% narrower than previous layout
+	boxPadding       = 1
+	boxColumnsGap    = "  "
+	boxLineWidth     = boxInnerWidth + (boxPadding * 2) + 4
 	maxComponentRows = 5
 
 	ansiDim   = "\u001b[2m"
