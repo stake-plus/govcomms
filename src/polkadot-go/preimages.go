@@ -21,6 +21,13 @@ func NewPreimageDecoder(client *Client) *PreimageDecoder {
 	return &PreimageDecoder{client: client}
 }
 
+func (pd *PreimageDecoder) encodeAccount(accountID types.AccountID) string {
+	if pd != nil && pd.client != nil {
+		return pd.client.accountIDToSS58(accountID)
+	}
+	return accountIDToSS58WithPrefix(accountID, 42)
+}
+
 // FetchAndDecodePreimage fetches a preimage and extracts all recipient addresses
 func (pd *PreimageDecoder) FetchAndDecodePreimage(hash string, length uint32, blockNumber uint32) ([]string, error) {
 	// First try current storage
@@ -281,13 +288,13 @@ func (pd *PreimageDecoder) handleBalancesCall(decoder *scale.Decoder, callIndex 
 	case 0x00: // transfer
 		var dest types.AccountID
 		if err := decoder.Decode(&dest); err == nil {
-			addresses[accountIDToSS58(dest)] = true
+			addresses[pd.encodeAccount(dest)] = true
 		}
 
 	case 0x07: // transfer_keep_alive
 		var dest types.AccountID
 		if err := decoder.Decode(&dest); err == nil {
-			addresses[accountIDToSS58(dest)] = true
+			addresses[pd.encodeAccount(dest)] = true
 		}
 
 	default:
@@ -314,7 +321,7 @@ func (pd *PreimageDecoder) handleTreasuryCall(decoder *scale.Decoder, callIndex 
 			beneficiaryBytes := remainingData[bytesRead : bytesRead+32]
 			var beneficiary types.AccountID
 			copy(beneficiary[:], beneficiaryBytes)
-			addresses[accountIDToSS58(beneficiary)] = true
+			addresses[pd.encodeAccount(beneficiary)] = true
 		}
 
 	default:
@@ -333,7 +340,7 @@ func (pd *PreimageDecoder) handleStakingCall(decoder *scale.Decoder, callIndex b
 		if len(remainingData) >= 32 {
 			var controller types.AccountID
 			copy(controller[:], remainingData[:32])
-			addresses[accountIDToSS58(controller)] = true
+			addresses[pd.encodeAccount(controller)] = true
 		}
 
 	case 0x04: // nominate
@@ -345,7 +352,7 @@ func (pd *PreimageDecoder) handleStakingCall(decoder *scale.Decoder, callIndex b
 			for i := uint64(0); i < compactLen && offset+32 <= len(remainingData); i++ {
 				var nominee types.AccountID
 				copy(nominee[:], remainingData[offset:offset+32])
-				addresses[accountIDToSS58(nominee)] = true
+				addresses[pd.encodeAccount(nominee)] = true
 				offset += 32
 			}
 		}
@@ -365,7 +372,7 @@ func (pd *PreimageDecoder) handleProxyCall(decoder *scale.Decoder, callIndex byt
 		if len(remainingData) >= 32 {
 			var real types.AccountID
 			copy(real[:], remainingData[:32])
-			addresses[accountIDToSS58(real)] = true
+			addresses[pd.encodeAccount(real)] = true
 
 			// Skip account (32 bytes) and force_proxy_type (1 byte)
 			if len(remainingData) > 33 {
@@ -400,7 +407,7 @@ func (pd *PreimageDecoder) extractAccountsFromData(decoder *scale.Decoder, addre
 		}
 
 		if nonZero > 10 && nonZero < 30 {
-			address := accountIDToSS58(accountID)
+			address := pd.encodeAccount(accountID)
 			if len(address) > 40 && len(address) < 50 {
 				addresses[address] = true
 			}
@@ -426,7 +433,7 @@ func (pd *PreimageDecoder) extractAccountsFromRawData(data []byte, addresses map
 		if nonZero > 10 && nonZero < 30 {
 			var accountID types.AccountID
 			copy(accountID[:], potentialAccount)
-			address := accountIDToSS58(accountID)
+			address := pd.encodeAccount(accountID)
 
 			// Additional validation - check if it's a valid SS58
 			if len(address) > 40 && len(address) < 50 {

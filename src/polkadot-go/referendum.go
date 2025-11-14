@@ -31,7 +31,7 @@ func (c *Client) GetReferendumInfo(refID uint32) (*ReferendumInfo, error) {
 	}
 
 	// Try to decode the referendum data
-	info, err := decodeReferendumInfo(raw, refID)
+	info, err := decodeReferendumInfo(raw, refID, c.accountIDToSS58)
 	if err == nil {
 		return info, nil
 	}
@@ -45,7 +45,7 @@ func (c *Client) GetReferendumInfo(refID uint32) (*ReferendumInfo, error) {
 			var blockNum uint32
 			if err := decoder.Decode(&blockNum); err == nil {
 				// Fetch historical data
-				return c.fetchHistoricalReferendum(refID, variant, blockNum, storageKey)
+		return c.fetchHistoricalReferendum(refID, variant, blockNum, storageKey)
 			}
 		}
 	}
@@ -79,10 +79,10 @@ func (c *Client) fetchHistoricalReferendum(refID uint32, variant uint8, blockNum
 	}
 
 	// Decode the historical data
-	histInfo, err := decodeReferendumInfo(histRaw, refID)
+	histInfo, err := decodeReferendumInfo(histRaw, refID, c.accountIDToSS58)
 	if err != nil {
 		// Try legacy format for very old referenda
-		histInfo, err = decodeLegacyReferendumInfo(histRaw, refID)
+		histInfo, err = decodeLegacyReferendumInfo(histRaw, refID, c.accountIDToSS58)
 		if err != nil {
 			return nil, fmt.Errorf("decode historical data: %w", err)
 		}
@@ -209,8 +209,14 @@ func accountIDToSS58WithPrefix(accountID types.AccountID, prefix uint16) string 
 }
 
 // decodeLegacyReferendumInfo decodes very old referendum formats
-func decodeLegacyReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
+func decodeLegacyReferendumInfo(data []byte, refID uint32, encodeAccount func(types.AccountID) string) (*ReferendumInfo, error) {
 	decoder := scale.NewDecoder(bytes.NewReader(data))
+
+	if encodeAccount == nil {
+		encodeAccount = func(accountID types.AccountID) string {
+			return accountIDToSS58WithPrefix(accountID, 42)
+		}
+	}
 
 	// Read variant
 	variant, err := decoder.ReadOneByte()
@@ -241,7 +247,7 @@ func decodeLegacyReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, err
 				// This might be an account
 				var accountID types.AccountID
 				copy(accountID[:], testAccount)
-				info.Submission.Who = accountIDToSS58(accountID)
+				info.Submission.Who = encodeAccount(accountID)
 				info.Submission.Amount = "10000000000" // Default deposit
 				break
 			}
@@ -302,7 +308,7 @@ func decodeLegacyReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, err
 				// Decode deposit directly into Submission
 				var who types.AccountID
 				if err := decoder.Decode(&who); err == nil {
-					info.Submission.Who = accountIDToSS58(who)
+					info.Submission.Who = encodeAccount(who)
 
 					var amount types.U128
 					if err := decoder.Decode(&amount); err == nil {
@@ -325,10 +331,16 @@ func decodeLegacyReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, err
 }
 
 // decodeFinishedReferendum handles all finished referendum states
-func decodeFinishedReferendum(decoder *scale.Decoder, status string) (*ReferendumInfo, error) {
+func decodeFinishedReferendum(decoder *scale.Decoder, status string, encodeAccount func(types.AccountID) string) (*ReferendumInfo, error) {
 	info := &ReferendumInfo{
 		Status: status,
 		Track:  0, // Finished refs don't store track, assume root
+	}
+
+	if encodeAccount == nil {
+		encodeAccount = func(accountID types.AccountID) string {
+			return accountIDToSS58WithPrefix(accountID, 42)
+		}
 	}
 
 	// Since - BlockNumberFor<T, I>
@@ -366,7 +378,7 @@ func decodeFinishedReferendum(decoder *scale.Decoder, status string) (*Referendu
 			info.Submission.Amount = "0"
 			return info, nil
 		}
-		info.Submission.Who = accountIDToSS58(who)
+		info.Submission.Who = encodeAccount(who)
 
 		var amount types.U128
 		if err := decoder.Decode(&amount); err != nil {
@@ -384,7 +396,7 @@ func decodeFinishedReferendum(decoder *scale.Decoder, status string) (*Referendu
 }
 
 // decodeReferendumInfo decodes referendum data based on the structure from the documentation
-func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
+func decodeReferendumInfo(data []byte, refID uint32, encodeAccount func(types.AccountID) string) (*ReferendumInfo, error) {
 	decoder := scale.NewDecoder(bytes.NewReader(data))
 
 	// Read variant
@@ -395,15 +407,15 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 
 	switch variant {
 	case 0: // Ongoing
-		return decodeOngoingReferendum(decoder, refID)
+		return decodeOngoingReferendum(decoder, refID, encodeAccount)
 	case 1: // Approved
-		return decodeFinishedReferendum(decoder, "Approved")
+		return decodeFinishedReferendum(decoder, "Approved", encodeAccount)
 	case 2: // Rejected
-		return decodeFinishedReferendum(decoder, "Rejected")
+		return decodeFinishedReferendum(decoder, "Rejected", encodeAccount)
 	case 3: // Cancelled
-		return decodeFinishedReferendum(decoder, "Cancelled")
+		return decodeFinishedReferendum(decoder, "Cancelled", encodeAccount)
 	case 4: // TimedOut
-		return decodeFinishedReferendum(decoder, "TimedOut")
+		return decodeFinishedReferendum(decoder, "TimedOut", encodeAccount)
 	case 5: // Killed
 		info := &ReferendumInfo{
 			Status: "Killed",
@@ -427,8 +439,14 @@ func decodeReferendumInfo(data []byte, refID uint32) (*ReferendumInfo, error) {
 }
 
 // decodeOngoingReferendum decodes the complex Ongoing referendum state
-func decodeOngoingReferendum(decoder *scale.Decoder, refID uint32) (*ReferendumInfo, error) {
+func decodeOngoingReferendum(decoder *scale.Decoder, refID uint32, encodeAccount func(types.AccountID) string) (*ReferendumInfo, error) {
 	info := &ReferendumInfo{Status: "Ongoing"}
+
+	if encodeAccount == nil {
+		encodeAccount = func(accountID types.AccountID) string {
+			return accountIDToSS58WithPrefix(accountID, 42)
+		}
+	}
 
 	// Track (u16)
 	var track uint16
@@ -467,7 +485,7 @@ func decodeOngoingReferendum(decoder *scale.Decoder, refID uint32) (*ReferendumI
 	if err := decoder.Decode(&submitter); err != nil {
 		return nil, fmt.Errorf("decode submitter: %w", err)
 	}
-	info.Submission.Who = accountIDToSS58(submitter)
+	info.Submission.Who = encodeAccount(submitter)
 
 	var amount types.U128
 	if err := decoder.Decode(&amount); err != nil {
@@ -476,7 +494,7 @@ func decodeOngoingReferendum(decoder *scale.Decoder, refID uint32) (*ReferendumI
 	info.Submission.Amount = amount.String()
 
 	// DecisionDeposit - Option<Deposit<T::AccountId, BalanceOf<T, I>>>
-	if err := decodeOptionDeposit(decoder, &info.DecisionDeposit); err != nil {
+	if err := decodeOptionDeposit(decoder, &info.DecisionDeposit, encodeAccount); err != nil {
 		return nil, fmt.Errorf("decode decision deposit: %w", err)
 	}
 
@@ -558,30 +576,14 @@ func decodeProposal(decoder *scale.Decoder, info *ReferendumInfo, refID uint32) 
 		info.ProposalLen = 0
 
 	case 2: // Inline
-		var length types.UCompact
-		if err := decoder.Decode(&length); err != nil {
-			return fmt.Errorf("decode inline length: %w", err)
-		}
-
-		// UCompact stores the value as bytes, we need to extract it
-		// This is a workaround - ideally we'd have a method to get the uint64 value
-		callLen := uint32(0)
-		// Read the actual call data length from the stream
-		// Since we can't easily convert UCompact, let's read it as a U32
-		if err := decoder.Decode(&callLen); err != nil {
-			// If that fails, try a default length
-			callLen = 1024
-		}
-
-		callData := make([]byte, callLen)
-		if err := decoder.Read(callData); err != nil {
+		var callData types.Bytes
+		if err := decoder.Decode(&callData); err != nil {
 			return fmt.Errorf("decode inline call: %w", err)
 		}
 
-		// Compute hash
 		hash := Blake2_256(callData)
 		info.Proposal = codec.HexEncodeToString(hash)
-		info.ProposalLen = callLen
+		info.ProposalLen = uint32(len(callData))
 
 	case 3, 4, 5, 6, 7: // Various legacy formats with just hash
 		var hash types.Hash
@@ -688,12 +690,18 @@ func decodeEnactment(decoder *scale.Decoder, info *ReferendumInfo) error {
 }
 
 // decodeDeposit decodes a deposit structure
-func decodeDeposit(decoder *scale.Decoder, deposit *Deposit) error {
+func decodeDeposit(decoder *scale.Decoder, deposit *Deposit, encodeAccount func(types.AccountID) string) error {
+	if encodeAccount == nil {
+		encodeAccount = func(accountID types.AccountID) string {
+			return accountIDToSS58WithPrefix(accountID, 42)
+		}
+	}
+
 	var who types.AccountID
 	if err := decoder.Decode(&who); err != nil {
 		return fmt.Errorf("decode deposit who: %w", err)
 	}
-	deposit.Who = accountIDToSS58(who)
+	deposit.Who = encodeAccount(who)
 
 	var amount types.U128
 	if err := decoder.Decode(&amount); err != nil {
@@ -705,7 +713,7 @@ func decodeDeposit(decoder *scale.Decoder, deposit *Deposit) error {
 }
 
 // decodeOptionDeposit decodes an optional deposit
-func decodeOptionDeposit(decoder *scale.Decoder, deposit **Deposit) error {
+func decodeOptionDeposit(decoder *scale.Decoder, deposit **Deposit, encodeAccount func(types.AccountID) string) error {
 	hasDeposit, err := decoder.ReadOneByte()
 	if err != nil {
 		return fmt.Errorf("read deposit option: %w", err)
@@ -713,7 +721,7 @@ func decodeOptionDeposit(decoder *scale.Decoder, deposit **Deposit) error {
 
 	if hasDeposit == 1 {
 		*deposit = &Deposit{}
-		return decodeDeposit(decoder, *deposit)
+		return decodeDeposit(decoder, *deposit, encodeAccount)
 	}
 
 	return nil

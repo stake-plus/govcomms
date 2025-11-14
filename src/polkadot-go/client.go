@@ -160,7 +160,7 @@ func (c *Client) GetHeader(hash *string) (*Header, error) {
 	}
 
 	return &Header{
-		Number: fmt.Sprintf("%d", header.Number),
+		Number: fmt.Sprintf("0x%08x", uint64(header.Number)),
 	}, nil
 }
 
@@ -230,10 +230,10 @@ func (c *Client) GetReferendumInfoAt(refID uint32, blockHash string) (*Referendu
 	}
 
 	// Decode the referendum data
-	info, err := decodeReferendumInfo(raw, refID)
+	info, err := decodeReferendumInfo(raw, refID, c.accountIDToSS58)
 	if err != nil {
 		// Try legacy format
-		info, err = decodeLegacyReferendumInfo(raw, refID)
+		info, err = decodeLegacyReferendumInfo(raw, refID, c.accountIDToSS58)
 		if err != nil {
 			return nil, fmt.Errorf("decode referendum info: %w", err)
 		}
