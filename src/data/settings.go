@@ -36,5 +36,3 @@ func GetSetting(name string) string {
 	defer settingsMu.RUnlock()
 	return settingsCache[name]
 }
-
-

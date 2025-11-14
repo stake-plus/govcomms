@@ -418,4 +418,3 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 		}
 	}
 }
-

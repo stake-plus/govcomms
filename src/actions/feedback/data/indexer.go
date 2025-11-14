@@ -482,4 +482,3 @@ func IndexerService(ctx context.Context, db *gorm.DB, interval time.Duration, wo
 	<-ctx.Done()
 	log.Println("Indexer service stopping")
 }
-

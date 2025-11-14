@@ -55,4 +55,3 @@ func StartAll(ctx context.Context, db *gorm.DB, opts Options) (*Manager, error) 
 
 	return mgr, nil
 }
-

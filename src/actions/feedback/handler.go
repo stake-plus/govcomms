@@ -129,4 +129,3 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 		authorTag, network.Name, ref.RefID)
 	s.InteractionResponseEdit(i.Interaction, &discordgo.WebhookEdit{Content: &response})
 }
-

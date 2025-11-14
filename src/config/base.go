@@ -48,5 +48,3 @@ func GetSetting(name, envKey, defaultValue string) string {
 	}
 	return val
 }
-
-

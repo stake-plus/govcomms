@@ -116,4 +116,3 @@ func (s *Service) PostFirstMessage(network string, refID int, message, link stri
 
 	return commentID, nil
 }
-

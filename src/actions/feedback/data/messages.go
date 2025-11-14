@@ -106,4 +106,3 @@ func GetFirstFeedbackMessage(db *gorm.DB, refDBID uint64) (*sharedgov.RefMessage
 	}
 	return &msg, nil
 }
-

@@ -141,4 +141,3 @@ func LoadFeedbackConfig(db *gorm.DB) FeedbackConfig {
 		PolkassemblyEndpoint:   polkassemblyEndpoint,
 	}
 }
-

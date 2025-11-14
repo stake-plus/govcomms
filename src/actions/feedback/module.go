@@ -589,4 +589,3 @@ func (b *Module) postFirstMessageIfNeeded(network *sharedgov.Network, ref *share
 
 	return nil
 }
-

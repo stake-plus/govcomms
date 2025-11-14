@@ -167,4 +167,3 @@ func (m *Module) initHandlers() {
 		}
 	})
 }
-

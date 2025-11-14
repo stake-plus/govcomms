@@ -269,4 +269,3 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 	summaryMsg := "\n📊 **Team Analysis Complete**\n"
 	s.ChannelMessageSend(i.ChannelID, summaryMsg)
 }
-

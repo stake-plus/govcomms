@@ -265,4 +265,3 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 		validCount, rejectedCount, unknownCount)
 	s.ChannelMessageSend(i.ChannelID, summaryMsg)
 }
-
