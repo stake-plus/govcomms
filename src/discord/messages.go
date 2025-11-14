@@ -276,7 +276,6 @@ func replaceURLsWithReferences(input string) (string, []linkReference) {
 	var refs []linkReference
 	seen := make(map[string]int)
 
-	// Convert markdown links and capture URLs
 	text := markdownLinkRegex.ReplaceAllStringFunc(input, func(match string) string {
 		submatches := markdownLinkRegex.FindStringSubmatch(match)
 		if len(submatches) < 3 {
@@ -284,35 +283,34 @@ func replaceURLsWithReferences(input string) (string, []linkReference) {
 		}
 		label := submatches[1]
 		url := submatches[2]
-		ensureReference(url, &refs, seen)
+		if urlIdx, ok := seen[url]; ok {
+			_ = urlIdx
+		} else {
+			ref := linkReference{Index: len(refs) + 1, URL: url}
+			refs = append(refs, ref)
+			seen[url] = len(refs) - 1
+		}
 		return label
 	})
 
-	// Remove bare URLs while tracking them for buttons
-	cleaned := bareURLRegex.ReplaceAllStringFunc(text, func(raw string) string {
-		ensureReference(raw, &refs, seen)
-		return ""
-	})
+	builder := strings.Builder{}
+	last := 0
+	matches := bareURLRegex.FindAllStringIndex(text, -1)
+	for _, match := range matches {
+		builder.WriteString(text[last:match[0]])
+		url := text[match[0]:match[1]]
+		if _, ok := seen[url]; !ok {
+			ref := linkReference{Index: len(refs) + 1, URL: url}
+			refs = append(refs, ref)
+			seen[url] = len(refs) - 1
+		}
+		last = match[1]
+	}
+	builder.WriteString(text[last:])
 
-	cleaned = doubleSpaceRegex.ReplaceAllString(cleaned, " ")
+	cleaned := doubleSpaceRegex.ReplaceAllString(builder.String(), " ")
 	cleaned = strings.TrimSpace(cleaned)
 	return cleaned, refs
-}
-
-func ensureReference(url string, refs *[]linkReference, seen map[string]int) {
-	url = strings.TrimSpace(url)
-	if url == "" {
-		return
-	}
-	if _, ok := seen[url]; ok {
-		return
-	}
-	ref := linkReference{
-		Index: len(*refs) + 1,
-		URL:   url,
-	}
-	*refs = append(*refs, ref)
-	seen[url] = len(*refs) - 1
 }
 
 func buildLinkButtons(refs []linkReference) []discordgo.MessageComponent {
