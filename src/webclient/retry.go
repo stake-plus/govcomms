@@ -31,7 +31,7 @@ func DoWithRetry(ctx context.Context, attempts int, initialDelay time.Duration, 
 			return status, body, ctx.Err()
 		case <-t.C:
 		}
-		if delay < 30*time.Second {
+		if delay < 180*time.Second {
 			delay *= 2
 		}
 	}
