@@ -128,7 +128,7 @@ func (c *Client) getConstantValue(pallet, constant string) ([]byte, error) {
 		return nil, fmt.Errorf("metadata not loaded")
 	}
 
-	if c.metadata.IsMetadataV14 {
+	if c.metadata.Version == 14 {
 		meta := c.metadata.AsMetadataV14
 		for _, p := range meta.Pallets {
 			if string(p.Name) != pallet {

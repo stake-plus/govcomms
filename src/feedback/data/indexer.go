@@ -32,6 +32,14 @@ type MultiNetworkIndexer struct {
 }
 
 func NewNetworkIndexer(networkID uint8, networkName string, db *gorm.DB, workers int) (*NetworkIndexer, error) {
+	var network sharedgov.Network
+	if err := db.Where("id = ?", networkID).First(&network).Error; err != nil {
+		return nil, fmt.Errorf("load network %d: %w", networkID, err)
+	}
+	if network.Name != "" {
+		networkName = network.Name
+	}
+
 	var rpc sharedgov.NetworkRPC
 	err := db.Where("network_id = ? AND active = ?", networkID, true).First(&rpc).Error
 	if err != nil {
@@ -41,6 +49,19 @@ func NewNetworkIndexer(networkID uint8, networkName string, db *gorm.DB, workers
 	client, err := polkadot.NewClient(rpc.URL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create polkadot client for %s: %w", networkName, err)
+	}
+
+	if prefix, prefixErr := client.GetSS58Prefix(); prefixErr != nil {
+		log.Printf("Failed to determine SS58 prefix for %s: %v", networkName, prefixErr)
+	} else {
+		needsUpdate := network.SS58Prefix == nil || *network.SS58Prefix != prefix
+		if needsUpdate {
+			if updateErr := db.Model(&network).Update("ss58_prefix", prefix).Error; updateErr != nil {
+				log.Printf("Failed to persist SS58 prefix %d for %s: %v", prefix, networkName, updateErr)
+			} else {
+				log.Printf("Stored SS58 prefix %d for %s", prefix, networkName)
+			}
+		}
 	}
 
 	return &NetworkIndexer{
