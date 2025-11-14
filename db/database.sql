@@ -1,6 +1,5 @@
--- Drop existing tables if needed (in correct order due to foreign keys)
+DROP TABLE IF EXISTS qa_history;
 DROP TABLE IF EXISTS dao_votes;
-DROP TABLE IF EXISTS ref_subs;
 DROP TABLE IF EXISTS ref_proponents;
 DROP TABLE IF EXISTS ref_messages;
 DROP TABLE IF EXISTS ref_threads;
@@ -127,6 +126,22 @@ CREATE TABLE IF NOT EXISTS `ref_messages` (
   KEY `idx_message_proposal` (`ref_id`),
   KEY `idx_message_author` (`author`),
   CONSTRAINT `fk_message_proposal` FOREIGN KEY (`ref_id`) REFERENCES `refs` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Q&A history for the AI module
+CREATE TABLE IF NOT EXISTS `qa_history` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `network_id` tinyint unsigned NOT NULL,
+  `ref_id` int unsigned NOT NULL,
+  `thread_id` varchar(64) NOT NULL,
+  `user_id` varchar(64) NOT NULL,
+  `question` text NOT NULL,
+  `answer` text NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_qa_ref` (`network_id`,`ref_id`),
+  KEY `idx_qa_thread` (`thread_id`),
+  KEY `idx_qa_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Proposal participants
