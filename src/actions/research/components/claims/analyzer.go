@@ -58,6 +58,8 @@ Count total verifiable HISTORICAL claims, then order them based on significance 
 3. Historical metrics that can be independently checked
 4. Previous achievements in the ecosystem
 
+SELECT THE 10 MOST SIGNIFICANT AND IMPORTANT CLAIMS TO VERIFY.
+
 Respond with JSON:
 {
   "total_claims": 25,
