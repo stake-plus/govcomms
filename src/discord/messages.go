@@ -374,4 +374,3 @@ func truncateForDiscord(value string, limit int) string {
 	}
 	return string(runes[:limit-1]) + "…"
 }
-
