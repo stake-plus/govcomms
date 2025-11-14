@@ -252,6 +252,11 @@ type linkReference struct {
 	URL   string
 }
 
+// ReplaceURLsAndCollect strips URLs or markdown links from text and returns cleaned text plus references.
+func ReplaceURLsAndCollect(input string) (string, []linkReference) {
+	return replaceURLsWithReferences(input)
+}
+
 func buildStyledMessageFromCleanChunk(title string, cleanedBody string) StyledMessage {
 	trimmed := strings.TrimSpace(cleanedBody)
 	if trimmed == "" {
