@@ -158,7 +158,7 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 		}
 
 		body := strings.Join(sections, "\n\n")
-		memberBlocks = append(memberBlocks, shareddiscord.FormatStyledBlock(fmt.Sprintf("Member %d • %s", i+1, header), body))
+		memberBlocks = append(memberBlocks, formatAnsiPanel(fmt.Sprintf("Member %d • %s", i+1, header), body))
 	}
 
 	teamAssessment := "❌ Team unlikely to complete the proposed task"
@@ -170,25 +170,15 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 
 	summaryBody := fmt.Sprintf("👤 Real People: %d/%d | 🎯 Verified Skills: %d/%d\n\n**Assessment:** %s",
 		realCount, len(results), skilledCount, len(results), teamAssessment)
-	finalHeaderBody := headerBody + "\n\n" + summaryBody
+	finalText := headerBody + "\n\n" + summaryBody
+	if len(memberBlocks) > 0 {
+		finalText += "\n\n" + strings.Join(memberBlocks, "\n\n")
+	}
+	finalHeaderBody := finalText
 	if headerHandle != nil {
 		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
 			log.Printf("team: header update failed: %v", err)
 			sendTeamStyledMessage(s, channelID, headerTitle, finalHeaderBody)
-			memberText := strings.Join(memberBlocks, "\n\n")
-			if memberText != "" {
-				chunks := shareddiscord.BuildStyledMessages("", memberText, "")
-				for _, chunk := range chunks {
-					msg := &discordgo.MessageSend{Content: chunk.Content}
-					if len(chunk.Components) > 0 {
-						msg.Components = chunk.Components
-					}
-					if _, err := shareddiscord.SendComplexMessageNoEmbed(s, channelID, msg); err != nil {
-						log.Printf("team: member block send failed: %v", err)
-						break
-					}
-				}
-			}
 		}
 	} else {
 		sendTeamStyledMessage(s, channelID, headerTitle, finalHeaderBody)
@@ -270,7 +260,7 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 		}
 
 		body := strings.Join(sections, "\n\n")
-		memberBlocks = append(memberBlocks, shareddiscord.FormatStyledBlock(fmt.Sprintf("Member %d • %s", idx+1, header), body))
+		memberBlocks = append(memberBlocks, formatAnsiPanel(fmt.Sprintf("Member %d • %s", idx+1, header), body))
 	}
 
 	teamAssessment := "❌ Team unlikely to complete the proposed task"
@@ -280,26 +270,16 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 		teamAssessment = "⚠️ Team may be capable but has some concerns"
 	}
 
-	finalHeaderBody := fmt.Sprintf("%s\n\n👤 Real People: %d/%d | 🎯 Verified Skills: %d/%d\n\n**Assessment:** %s",
+	finalText := fmt.Sprintf("%s\n\n👤 Real People: %d/%d | 🎯 Verified Skills: %d/%d\n\n**Assessment:** %s",
 		headerBody, realCount, len(results), skilledCount, len(results), teamAssessment)
+	if len(memberBlocks) > 0 {
+		finalText += "\n\n" + strings.Join(memberBlocks, "\n\n")
+	}
+	finalHeaderBody := finalText
 	if headerHandle != nil {
 		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
 			log.Printf("team: slash header update failed: %v", err)
 			sendTeamStyledMessage(s, i.ChannelID, headerTitle, finalHeaderBody)
-			memberText := strings.Join(memberBlocks, "\n\n")
-			if memberText != "" {
-				chunks := shareddiscord.BuildStyledMessages("", memberText, "")
-				for _, chunk := range chunks {
-					msg := &discordgo.MessageSend{Content: chunk.Content}
-					if len(chunk.Components) > 0 {
-						msg.Components = chunk.Components
-					}
-					if _, err := shareddiscord.SendComplexMessageNoEmbed(s, i.ChannelID, msg); err != nil {
-						log.Printf("team: slash member block send failed: %v", err)
-						break
-					}
-				}
-			}
 		}
 	} else {
 		sendTeamStyledMessage(s, i.ChannelID, headerTitle, finalHeaderBody)
@@ -335,4 +315,33 @@ func sendTeamWebhookEdit(s *discordgo.Session, interaction *discordgo.Interactio
 		edit.Components = &components
 	}
 	shareddiscord.InteractionResponseEditNoEmbed(s, interaction, edit)
+}
+
+func formatAnsiPanel(title, body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		body = "_No content_"
+	}
+
+	var sb strings.Builder
+	sb.WriteString("```ansi\n")
+	if strings.TrimSpace(title) != "" {
+		sb.WriteString(title)
+		sb.WriteString("\n")
+		sb.WriteString(strings.Repeat("─", maxLine(len([]rune(title))+2, 6)))
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString(body)
+	if !strings.HasSuffix(body, "\n") {
+		sb.WriteString("\n")
+	}
+	sb.WriteString("```")
+	return sb.String()
+}
+
+func maxLine(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

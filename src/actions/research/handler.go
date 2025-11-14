@@ -160,30 +160,20 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 		}
 
 		statusLabel := strings.ToUpper(string(result.Status))
-		block := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d • %s", i+1, statusLabel), body)
+		block := formatAnsiPanel(fmt.Sprintf("Claim %d • %s", i+1, statusLabel), body)
 		claimBlocks = append(claimBlocks, block)
 	}
 
 	summaryMsg := fmt.Sprintf("✅ Valid: %d\n❌ Rejected: %d\n❓ Unknown: %d", validCount, rejectedCount, unknownCount)
-	finalHeaderBody := fmt.Sprintf("%s\n\n%s", headerBody, summaryMsg)
+	finalText := fmt.Sprintf("%s\n\n%s", headerBody, summaryMsg)
+	if len(claimBlocks) > 0 {
+		finalText += "\n\n" + strings.Join(claimBlocks, "\n\n")
+	}
+	finalHeaderBody := finalText
 	if headerHandle != nil {
 		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
 			log.Printf("research: header update failed: %v", err)
 			sendStyledMessage(s, channelID, headerTitle, finalHeaderBody)
-			claimText := strings.Join(claimBlocks, "\n\n")
-			if claimText != "" {
-				chunks := shareddiscord.BuildStyledMessages("", claimText, "")
-				for _, chunk := range chunks {
-					msg := &discordgo.MessageSend{Content: chunk.Content}
-					if len(chunk.Components) > 0 {
-						msg.Components = chunk.Components
-					}
-					if _, err := shareddiscord.SendComplexMessageNoEmbed(s, channelID, msg); err != nil {
-						log.Printf("research: claim block send failed: %v", err)
-						break
-					}
-				}
-			}
 		}
 	} else {
 		sendStyledMessage(s, channelID, headerTitle, finalHeaderBody)
@@ -263,30 +253,20 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 		}
 
 		statusLabel := strings.ToUpper(string(result.Status))
-		block := shareddiscord.FormatStyledBlock(fmt.Sprintf("Claim %d • %s", idx+1, statusLabel), body)
+		block := formatAnsiPanel(fmt.Sprintf("Claim %d • %s", idx+1, statusLabel), body)
 		claimBlocks = append(claimBlocks, block)
 	}
 
 	summaryMsg := fmt.Sprintf("✅ Valid: %d\n❌ Rejected: %d\n❓ Unknown: %d", validCount, rejectedCount, unknownCount)
-	finalHeaderBody := fmt.Sprintf("%s\n\n%s", headerBody, summaryMsg)
+	finalText := fmt.Sprintf("%s\n\n%s", headerBody, summaryMsg)
+	if len(claimBlocks) > 0 {
+		finalText += "\n\n" + strings.Join(claimBlocks, "\n\n")
+	}
+	finalHeaderBody := finalText
 	if headerHandle != nil {
 		if err := headerHandle.Update(s, headerTitle, finalHeaderBody); err != nil {
 			log.Printf("research: slash header update failed: %v", err)
 			sendStyledMessage(s, i.ChannelID, headerTitle, finalHeaderBody)
-			claimText := strings.Join(claimBlocks, "\n\n")
-			if claimText != "" {
-				chunks := shareddiscord.BuildStyledMessages("", claimText, "")
-				for _, chunk := range chunks {
-					msg := &discordgo.MessageSend{Content: chunk.Content}
-					if len(chunk.Components) > 0 {
-						msg.Components = chunk.Components
-					}
-					if _, err := shareddiscord.SendComplexMessageNoEmbed(s, i.ChannelID, msg); err != nil {
-						log.Printf("research: claim block send failed: %v", err)
-						break
-					}
-				}
-			}
 		}
 	} else {
 		sendStyledMessage(s, i.ChannelID, headerTitle, finalHeaderBody)
@@ -326,4 +306,62 @@ func editStyledMessage(s *discordgo.Session, channelID, messageID, title, body s
 	if _, err := shareddiscord.EditMessageComplexNoEmbed(s, edit); err != nil {
 		log.Printf("research: edit failed: %v", err)
 	}
+}
+
+func formatAnsiPanel(title, body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		body = "_No content_"
+	}
+
+	var sb strings.Builder
+	sb.WriteString("```ansi\n")
+	if strings.TrimSpace(title) != "" {
+		sb.WriteString(title)
+		sb.WriteString("\n")
+		sb.WriteString(strings.Repeat("─", maxLineWidth(len([]rune(title))+2, 6)))
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString(body)
+	if !strings.HasSuffix(body, "\n") {
+		sb.WriteString("\n")
+	}
+	sb.WriteString("```")
+	return sb.String()
+}
+
+func maxLineWidth(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func formatAnsiPanel(title, body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		body = "_No content_"
+	}
+
+	var sb strings.Builder
+	sb.WriteString("```ansi\n")
+	if strings.TrimSpace(title) != "" {
+		sb.WriteString(title)
+		sb.WriteString("\n")
+		sb.WriteString(strings.Repeat("─", maxInt(6, len([]rune(title))+2)))
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString(body)
+	if !strings.HasSuffix(body, "\n") {
+		sb.WriteString("\n")
+	}
+	sb.WriteString("```")
+	return sb.String()
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
