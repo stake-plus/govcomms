@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"strings"
 	"time"
 )
@@ -65,10 +66,13 @@ type Signer interface {
 
 // NewClient creates a new Polkassembly client
 func NewClient(endpoint string, signer Signer, network string) *Client {
+	jar, _ := cookiejar.New(nil)
+
 	return &Client{
 		endpoint: endpoint,
 		httpClient: &http.Client{
 			Timeout: defaultTimeout,
+			Jar:     jar,
 		},
 		signer:  signer,
 		network: strings.ToLower(strings.TrimSpace(network)),
