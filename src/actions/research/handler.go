@@ -155,10 +155,6 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 			result.Status,
 			result.Evidence)
 
-		if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.SourceURLs); urls != "" {
-			body += "\n\n" + urls
-		}
-
 		statusLabel := strings.ToUpper(string(result.Status))
 		panel := shareddiscord.BuildStyledMessage(fmt.Sprintf("Claim %d • %s", i+1, statusLabel), body)
 		claimPanels = append(claimPanels, panel)
@@ -245,10 +241,6 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 			statusEmoji,
 			result.Status,
 			result.Evidence)
-
-		if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.SourceURLs); urls != "" {
-			body += "\n\n" + urls
-		}
 
 		statusLabel := strings.ToUpper(string(result.Status))
 		panel := shareddiscord.BuildStyledMessage(fmt.Sprintf("Claim %d • %s", idx+1, statusLabel), body)

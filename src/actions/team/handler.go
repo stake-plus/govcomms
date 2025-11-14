@@ -153,10 +153,6 @@ func (h *Handler) runTeamWorkflow(s *discordgo.Session, channelID string, networ
 		if strings.TrimSpace(result.Capability) != "" {
 			sections = append(sections, fmt.Sprintf("💼 %s", result.Capability))
 		}
-		if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.VerifiedURLs); urls != "" {
-			sections = append(sections, urls)
-		}
-
 		body := strings.Join(sections, "\n\n")
 		panel := shareddiscord.BuildStyledMessage(fmt.Sprintf("Member %d • %s", i+1, header), body)
 		memberPanels = append(memberPanels, panel)
@@ -252,10 +248,6 @@ func (h *Handler) runTeamWorkflowSlash(s *discordgo.Session, i *discordgo.Intera
 		}
 		if status != "" {
 			sections = append(sections, status)
-		}
-
-		if urls := shareddiscord.FormatURLsNoEmbedMultiline(result.VerifiedURLs); urls != "" {
-			sections = append(sections, urls)
 		}
 
 		body := strings.Join(sections, "\n\n")
