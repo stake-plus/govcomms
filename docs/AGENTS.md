@@ -48,7 +48,9 @@ The manager tracks every registered agent, wires shared dependencies
    `agents_grant_lookback_days` and `agents_grant_repeat_threshold`.
 
 Agents share the same AI provider stack as the Discord modules, so make sure at
-least one provider key is configured.
+least one provider key is configured. You can now set `ai_provider=consensus`
+(or `AI_PROVIDER=consensus`) to let the agents automatically fan out across the
+vendors listed in `ai_consensus_*` and return a voted-on answer.
 
 ## Configuration
 

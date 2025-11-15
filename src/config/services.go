@@ -2,7 +2,9 @@ package config
 
 import (
 	"strconv"
+	"strings"
 
+	aicore "github.com/stake-plus/govcomms/src/ai/core"
 	shareddata "github.com/stake-plus/govcomms/src/data"
 	"gorm.io/gorm"
 )
@@ -19,6 +21,18 @@ type AIConfig struct {
 	AIModel        string
 	AIEnableWeb    bool
 	AIEnableDeep   bool
+	Consensus      ConsensusConfig
+}
+
+// ConsensusConfig enumerates the council of models and thresholds used by the
+// consensus provider/orchestrator.
+type ConsensusConfig struct {
+	Researchers   []string
+	Reviewers     []string
+	Voters        []string
+	Agreement     float64
+	DebateRounds  int
+	MaxRoundDelay int
 }
 
 // LoadAIConfig loads AI configuration
@@ -47,7 +61,7 @@ If information is not available in the provided content, clearly state that.`)
 	aiEnableWeb := shareddata.GetSetting("ai_enable_web_search") == "1"
 	aiEnableDeep := shareddata.GetSetting("ai_enable_deep_search") == "1"
 
-	return AIConfig{
+	cfg := AIConfig{
 		OpenAIKey:      openAIKey,
 		ClaudeKey:      claudeKey,
 		GeminiKey:      geminiKey,
@@ -59,6 +73,153 @@ If information is not available in the provided content, clearly state that.`)
 		AIEnableWeb:    aiEnableWeb,
 		AIEnableDeep:   aiEnableDeep,
 	}
+
+	consensus := buildConsensusConfig(cfg)
+	cfg.Consensus = consensus
+
+	return cfg
+}
+
+func buildConsensusConfig(base AIConfig) ConsensusConfig {
+	researchers := parseCSV(GetSetting("ai_consensus_researchers", "AI_CONSENSUS_RESEARCHERS", ""))
+	reviewers := parseCSV(GetSetting("ai_consensus_reviewers", "AI_CONSENSUS_REVIEWERS", ""))
+	voters := parseCSV(GetSetting("ai_consensus_voters", "AI_CONSENSUS_VOTERS", ""))
+
+	auto := func(list []string) []string {
+		if len(list) > 0 {
+			return list
+		}
+		return defaultConsensusParticipants(base)
+	}
+
+	researchers = auto(researchers)
+	if len(reviewers) == 0 {
+		reviewers = append([]string{}, researchers...)
+	}
+	if len(voters) == 0 {
+		voters = append([]string{}, reviewers...)
+	}
+
+	agreement := 0.67
+	if raw := GetSetting("ai_consensus_agreement", "AI_CONSENSUS_AGREEMENT", ""); raw != "" {
+		if val, err := strconv.ParseFloat(raw, 64); err == nil && val >= 0.5 && val <= 1 {
+			agreement = val
+		}
+	}
+
+	rounds := 1
+	if raw := GetSetting("ai_consensus_rounds", "AI_CONSENSUS_ROUNDS", ""); raw != "" {
+		if val, err := strconv.Atoi(raw); err == nil && val > 0 {
+			rounds = val
+		}
+	}
+
+	maxDelay := 120
+	if raw := GetSetting("ai_consensus_round_delay", "AI_CONSENSUS_ROUND_DELAY", ""); raw != "" {
+		if val, err := strconv.Atoi(raw); err == nil && val >= 30 {
+			maxDelay = val
+		}
+	}
+
+	return ConsensusConfig{
+		Researchers:   uniqueStrings(researchers),
+		Reviewers:     uniqueStrings(reviewers),
+		Voters:        uniqueStrings(voters),
+		Agreement:     agreement,
+		DebateRounds:  rounds,
+		MaxRoundDelay: maxDelay,
+	}
+}
+
+func defaultConsensusParticipants(cfg AIConfig) []string {
+	var participants []string
+	add := func(val string) {
+		for _, existing := range participants {
+			if existing == val {
+				return
+			}
+		}
+		participants = append(participants, val)
+	}
+	if cfg.OpenAIKey != "" {
+		add("gpt51")
+	}
+	if cfg.GeminiKey != "" {
+		add("gemini25")
+	}
+	if cfg.GrokKey != "" {
+		add("grok4")
+	}
+	if cfg.DeepSeekKey != "" {
+		add("deepseek3")
+	}
+	if cfg.ClaudeKey != "" {
+		add("sonnet45")
+	}
+	return participants
+}
+
+func uniqueStrings(values []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if v == "" {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(v))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, key)
+	}
+	return out
+}
+
+// FactoryConfig returns a ready-to-use ai/core factory payload with the current
+// configuration embedded, including consensus metadata in the Extra map.
+func (cfg AIConfig) FactoryConfig() aicore.FactoryConfig {
+	return aicore.FactoryConfig{
+		Provider:            cfg.AIProvider,
+		SystemPrompt:        cfg.AISystemPrompt,
+		Model:               cfg.AIModel,
+		OpenAIKey:           cfg.OpenAIKey,
+		ClaudeKey:           cfg.ClaudeKey,
+		GeminiKey:           cfg.GeminiKey,
+		DeepSeekKey:         cfg.DeepSeekKey,
+		GrokKey:             cfg.GrokKey,
+		MaxCompletionTokens: 0,
+		Extra:               cfg.extraSettings(),
+	}
+}
+
+func (cfg AIConfig) extraSettings() map[string]string {
+	extra := map[string]string{}
+	if cfg.AIEnableWeb {
+		extra["enable_web_search"] = "1"
+	}
+	if cfg.AIEnableDeep {
+		extra["enable_deep_search"] = "1"
+	}
+	if len(cfg.Consensus.Researchers) > 0 {
+		extra["consensus_researchers"] = strings.Join(cfg.Consensus.Researchers, ",")
+	}
+	if len(cfg.Consensus.Reviewers) > 0 {
+		extra["consensus_reviewers"] = strings.Join(cfg.Consensus.Reviewers, ",")
+	}
+	if len(cfg.Consensus.Voters) > 0 {
+		extra["consensus_voters"] = strings.Join(cfg.Consensus.Voters, ",")
+	}
+	if cfg.Consensus.Agreement > 0 {
+		extra["consensus_agreement"] = strconv.FormatFloat(cfg.Consensus.Agreement, 'f', 2, 64)
+	}
+	if cfg.Consensus.DebateRounds > 0 {
+		extra["consensus_rounds"] = strconv.Itoa(cfg.Consensus.DebateRounds)
+	}
+	if cfg.Consensus.MaxRoundDelay > 0 {
+		extra["consensus_round_delay"] = strconv.Itoa(cfg.Consensus.MaxRoundDelay)
+	}
+	return extra
 }
 
 // QAConfig holds AI Q&A bot configuration

@@ -81,18 +81,9 @@ func StartAll(ctx context.Context, db *gorm.DB) (*Manager, error) {
 }
 
 func buildAIClient(cfg sharedconfig.AIConfig, logger *log.Logger) aicore.Client {
-	client, err := aicore.NewClient(aicore.FactoryConfig{
-		Provider:            cfg.AIProvider,
-		SystemPrompt:        cfg.AISystemPrompt,
-		Model:               cfg.AIModel,
-		OpenAIKey:           cfg.OpenAIKey,
-		ClaudeKey:           cfg.ClaudeKey,
-		GeminiKey:           cfg.GeminiKey,
-		DeepSeekKey:         cfg.DeepSeekKey,
-		GrokKey:             cfg.GrokKey,
-		Extra:               map[string]string{},
-		MaxCompletionTokens: 2048,
-	})
+	factoryCfg := cfg.FactoryConfig()
+	factoryCfg.MaxCompletionTokens = 2048
+	client, err := aicore.NewClient(factoryCfg)
 	if err != nil && logger != nil {
 		logger.Printf("agents: ai client unavailable: %v", err)
 	}

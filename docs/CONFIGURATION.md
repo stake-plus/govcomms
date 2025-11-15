@@ -23,6 +23,8 @@ Use this guide to understand every tunable and how it maps back to the source co
 | `AI_PROVIDER` | Optional | Default provider key: `gpt5`, `gpt4o`, `gemini25`, `deepseek32`, `sonnet45`, `haiku45`, `opus41`, `grok4`. | `src/config/services.go` |
 | `AI_MODEL` | Optional | Model ID per provider (defaults to `gpt-5`, `claude-3-haiku-20240307`, etc.). | `src/config/services.go` |
 | `AI_SYSTEM_PROMPT` | Optional | Custom prompt injected into AI calls. | `src/config/services.go` |
+| `AI_CONSENSUS_RESEARCHERS` / `AI_CONSENSUS_REVIEWERS` / `AI_CONSENSUS_VOTERS` | Optional | CSV/space separated provider keys (format `provider[:model]`) that participate in the consensus council. Defaults to all vendors you configured keys for. | `src/config/services.go` |
+| `AI_CONSENSUS_AGREEMENT` / `AI_CONSENSUS_ROUNDS` / `AI_CONSENSUS_ROUND_DELAY` | Optional | Control the quorum threshold (0.5–1), number of review rounds, and seconds between rounds (min 30). | `src/config/services.go` |
 | `ENABLE_QA` / `ENABLE_RESEARCH` / `ENABLE_FEEDBACK` | Optional | Mirrors CLI flags. Accepts `1`, `true`, `false`, `0`. | `src/gov-comms.go` |
 | `ENABLE_AGENTS` & `ENABLE_AGENT_*` | Optional | Gates the background agents runtime (`agents/start.go`). See `docs/AGENTS.md`. | `src/config/agents.go` |
 | `QA_TEMP_DIR` / `RESEARCH_TEMP_DIR` | Optional | Cache directories for proposal content and research attachments. | `src/config/services.go`, `src/cache` |
@@ -43,6 +45,8 @@ Store environment values in `/opt/govcomms/.env.govcomms` (Linux) or `C:\govcomm
 | `qa_role_id` / `research_role_id` / `feedback_role_id` | Role IDs gating slash commands. | respective env vars |
 | `openai_api_key` / `claude_api_key` / `gemini_api_key` / `deepseek_api_key` / `grok_api_key` | AI provider keys stored centrally. | env vars |
 | `ai_provider`, `ai_model`, `ai_system_prompt` | AI behavior tuning. | env vars |
+| `ai_consensus_researchers` / `ai_consensus_reviewers` / `ai_consensus_voters` | Override the consensus council roster (same syntax as the env vars). | `AI_CONSENSUS_*` |
+| `ai_consensus_agreement` / `ai_consensus_rounds` / `ai_consensus_round_delay` | Numeric knobs for quorum, iterations, and delay in seconds. | `AI_CONSENSUS_*` |
 | `ai_enable_web_search`, `ai_enable_deep_search` | `"1"` to enable optional tools. | — (DB only) |
 | `qa_temp_dir` / `research_temp_dir` | Cache directories for QA and research modules. | env vars |
 | `indexer_workers` | Concurrency level for `src/actions/feedback/data/indexer.go`. Default `10`. | — (DB only) |
@@ -73,6 +77,7 @@ currently require OpenAI GPT‑5 for claims analysis.
 | `haiku45` | `claude-3.5-haiku-20241022` | `CLAUDE_API_KEY` | Browsing hint via metadata. |
 | `opus41` | `claude-3.5-opus-20241022` | `CLAUDE_API_KEY` | Browsing hint via metadata. |
 | `grok4` | `grok-4-latest` | `GROK_API_KEY` | Internet tool toggle. |
+| `consensus` | N/A (delegates to configured models) | Uses whichever keys you supply | Multi-model orchestration and voting; configure roster via `AI_CONSENSUS_*`. |
 
 Switch providers by updating `ai_provider` (DB) or `AI_PROVIDER` (env). Override
 `ai_model` / `AI_MODEL` to stick to a specific version. If you enable optional

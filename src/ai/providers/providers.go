@@ -1,6 +1,7 @@
 package providers
 
 import (
+	_ "github.com/stake-plus/govcomms/src/ai/consensus"
 	_ "github.com/stake-plus/govcomms/src/ai/deepseek3"
 	_ "github.com/stake-plus/govcomms/src/ai/gemini25"
 	_ "github.com/stake-plus/govcomms/src/ai/gpt4o"
