@@ -1,4 +1,4 @@
-package opus
+package opus41
 
 import (
 	"github.com/stake-plus/govcomms/src/ai/anthropic"
@@ -9,6 +9,7 @@ const defaultModel = "claude-3.5-opus-20241022"
 
 func init() {
 	core.RegisterProvider("opus", newClient)
+	core.RegisterProvider("opus41", newClient)
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {

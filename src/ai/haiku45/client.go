@@ -1,4 +1,4 @@
-package haiku
+package haiku45
 
 import (
 	"github.com/stake-plus/govcomms/src/ai/anthropic"
@@ -9,6 +9,7 @@ const defaultModel = "claude-3.5-haiku-20241022"
 
 func init() {
 	core.RegisterProvider("haiku", newClient)
+	core.RegisterProvider("haiku45", newClient)
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {

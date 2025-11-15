@@ -1,4 +1,4 @@
-package sonnet
+package sonnet45
 
 import (
 	"github.com/stake-plus/govcomms/src/ai/anthropic"
@@ -10,7 +10,7 @@ const defaultModel = "claude-3.5-sonnet-20241022"
 func init() {
 	core.RegisterProvider("claude", newClient)
 	core.RegisterProvider("sonnet", newClient)
-	core.RegisterProvider("anthropic", newClient)
+	core.RegisterProvider("sonnet45", newClient)
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
