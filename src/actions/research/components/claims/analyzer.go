@@ -16,9 +16,9 @@ type Analyzer struct{ client aicore.Client }
 
 func NewAnalyzer(apiKey string) (*Analyzer, error) {
 	client, err := aicore.NewClient(aicore.FactoryConfig{
-		Provider:  "gpt5",
+		Provider:  "gpt51",
 		OpenAIKey: apiKey,
-		Model:     "gpt-5",
+		Model:     "gpt-5.1",
 	})
 	if err != nil {
 		return nil, err

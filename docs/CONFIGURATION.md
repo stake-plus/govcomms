@@ -65,8 +65,8 @@ currently require OpenAI GPT‑5 for claims analysis.
 
 | Provider key | Default model | Env key | Tooling |
 | --- | --- | --- | --- |
-| `gpt5` (default) | `gpt-5` | `OPENAI_API_KEY` | Chat Completions + Responses API, supports `web_search`. |
-| `gpt4o` | `gpt-4o-mini` | `OPENAI_API_KEY` | Same as `gpt5`, lower cost. |
+| `gpt51` (default) | `gpt-5.1` | `OPENAI_API_KEY` | Chat Completions + Responses API, supports `web_search`. |
+| `gpt4o` | `gpt-4o-mini` | `OPENAI_API_KEY` | Same as `gpt51`, lower cost. |
 | `gemini25` | `models/gemini-2.5-pro-exp` | `GEMINI_API_KEY` | Optional Google search tool (`googleSearchRetrieval`). |
 | `deepseek32` | `deepseek-v3.2` | `DEEPSEEK_API_KEY` | Supports `web_search` tool payload. |
 | `sonnet45` | `claude-3.5-sonnet-20241022` | `CLAUDE_API_KEY` | Browsing hint via metadata. |

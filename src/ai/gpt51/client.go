@@ -1,4 +1,4 @@
-package gpt5
+package gpt51
 
 import (
 	"bytes"
@@ -14,8 +14,7 @@ import (
 )
 
 func init() {
-	core.RegisterProvider("openai", newClient) //legacy support
-	core.RegisterProvider("gpt5", newClient)
+	core.RegisterProvider("gpt51", newClient)
 }
 
 type client struct {
@@ -26,7 +25,7 @@ type client struct {
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
 	if cfg.OpenAIKey == "" {
-		return nil, fmt.Errorf("gpt5: OpenAI API key not configured")
+		return nil, fmt.Errorf("gpt51: OpenAI API key not configured")
 	}
 
 	return &client{
@@ -76,7 +75,7 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 		return resp.StatusCode, b, nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("gpt5 API error: %w", err)
+		return "", fmt.Errorf("gpt51 API error: %w", err)
 	}
 	var result struct {
 		Choices []struct {
@@ -134,7 +133,7 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 		return resp.StatusCode, b, nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("gpt5 API error: %w", err)
+		return "", fmt.Errorf("gpt51 API error: %w", err)
 	}
 	// Tolerate multiple shapes by extracting text fields
 	var result struct {

@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	providersFlag = flag.String("providers", "gpt5", "Comma-separated provider list or 'all'")
+	providersFlag = flag.String("providers", "gpt51", "Comma-separated provider list or 'all'")
 	modeFlag      = flag.String("mode", "respond", "respond|qa|both")
 	systemFlag    = flag.String("system", "", "Override system prompt")
 	modelFlag     = flag.String("model", "", "Override model name")
@@ -30,7 +30,7 @@ var (
 )
 
 var allProviders = []string{
-	"gpt5",
+	"gpt51",
 	"gpt4o",
 	"deepseek3",
 	"sonnet45",
