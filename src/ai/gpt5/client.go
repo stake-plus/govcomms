@@ -15,7 +15,7 @@ import (
 
 func init() {
 	core.RegisterProvider("openai", newClient) //legacy support
-	core.RegisterProvider("gpt-5", newClient)
+	core.RegisterProvider("gpt5", newClient)
 }
 
 type client struct {

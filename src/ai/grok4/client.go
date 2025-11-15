@@ -21,7 +21,7 @@ const (
 )
 
 func init() {
-	core.RegisterProvider("grok-4", newClient)
+	core.RegisterProvider("grok4", newClient)
 }
 
 type client struct {

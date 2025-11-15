@@ -22,7 +22,7 @@ const (
 )
 
 func init() {
-	core.RegisterProvider("deepseek-3.2", newClient)
+	core.RegisterProvider("deepseek32", newClient)
 }
 
 type client struct {

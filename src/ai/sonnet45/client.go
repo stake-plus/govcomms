@@ -23,7 +23,7 @@ const (
 )
 
 func init() {
-	core.RegisterProvider("sonnet-4.5", newClient)
+	core.RegisterProvider("sonnet45", newClient)
 }
 
 type client struct {

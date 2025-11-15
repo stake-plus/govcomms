@@ -23,7 +23,7 @@ const (
 )
 
 func init() {
-	core.RegisterProvider("opus-4.1", newClient)
+	core.RegisterProvider("opus41", newClient)
 }
 
 type client struct {

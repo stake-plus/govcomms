@@ -23,7 +23,7 @@ const (
 )
 
 func init() {
-	core.RegisterProvider("haiku-4.5", newClient)
+	core.RegisterProvider("haiku45", newClient)
 }
 
 type client struct {
