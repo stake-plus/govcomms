@@ -17,7 +17,7 @@ import (
 const (
 	baseURL          = "https://generativelanguage.googleapis.com/v1beta"
 	defaultModelName = "gemini-2.5-flash"
-	defaultMaxTokens = 2048
+	defaultMaxTokens = 16000
 )
 
 func init() {
@@ -42,7 +42,7 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 
 	return &client{
 		apiKey:     cfg.GeminiKey,
-		httpClient: webclient.NewDefault(120 * time.Second),
+		httpClient: webclient.NewDefault(240 * time.Second),
 		defaults: core.Options{
 			Model:               model,
 			Temperature:         orFloat(cfg.Temperature, 0.2),

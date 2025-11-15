@@ -17,9 +17,9 @@ import (
 const (
 	defaultModel        = "claude-haiku-4-5"
 	anthropicEndpoint   = "https://api.anthropic.com/v1/messages"
-	defaultMaxTokens    = 1024
+	defaultMaxTokens    = 16000
 	defaultTemperature  = 0.2
-	defaultRequestDelay = 60 * time.Second
+	defaultRequestDelay = 240 * time.Second
 )
 
 func init() {

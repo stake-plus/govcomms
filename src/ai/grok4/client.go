@@ -17,7 +17,7 @@ import (
 const (
 	apiURL           = "https://api.x.ai/v1/chat/completions"
 	defaultModel     = "grok-4-fast-reasoning"
-	defaultMaxTokens = 8192
+	defaultMaxTokens = 16000
 )
 
 func init() {
@@ -37,7 +37,7 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 
 	return &client{
 		apiKey:     cfg.GrokKey,
-		httpClient: webclient.NewDefault(120 * time.Second),
+		httpClient: webclient.NewDefault(240 * time.Second),
 		defaults: core.Options{
 			Model:               valueOrDefault(cfg.Model, defaultModel),
 			Temperature:         orFloat(cfg.Temperature, 1.0),

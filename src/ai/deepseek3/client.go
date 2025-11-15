@@ -16,8 +16,8 @@ import (
 
 const (
 	apiURL             = "https://api.deepseek.com/chat/completions"
-	defaultModel       = "deepseek-chat"
-	defaultMaxTokens   = 8192
+	defaultModel       = "deepseek-reasoner"
+	defaultMaxTokens   = 16000
 	defaultTemperature = 0.7
 )
 
@@ -38,7 +38,7 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 
 	return &client{
 		apiKey:     cfg.DeepSeekKey,
-		httpClient: webclient.NewDefault(180 * time.Second),
+		httpClient: webclient.NewDefault(240 * time.Second),
 		defaults: core.Options{
 			Model:               valueOrDefault(cfg.Model, defaultModel),
 			Temperature:         orFloat(cfg.Temperature, defaultTemperature),
