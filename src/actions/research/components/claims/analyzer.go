@@ -14,14 +14,9 @@ import (
 
 type Analyzer struct{ client aicore.Client }
 
-func NewAnalyzer(apiKey string) (*Analyzer, error) {
-	client, err := aicore.NewClient(aicore.FactoryConfig{
-		Provider:  "gpt51",
-		OpenAIKey: apiKey,
-		Model:     "gpt-5.1",
-	})
-	if err != nil {
-		return nil, err
+func NewAnalyzer(client aicore.Client) (*Analyzer, error) {
+	if client == nil {
+		return nil, fmt.Errorf("claims: ai client is nil")
 	}
 	return &Analyzer{client: client}, nil
 }
@@ -88,7 +83,7 @@ Respond with JSON:
 Proposal:
 %s`, proposalContent)
 
-	responseText, err := a.client.Respond(ctx, prompt, nil, aicore.Options{Model: "gpt-5.1"})
+	responseText, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -153,7 +148,7 @@ STATUS: [Valid/Rejected/Unknown]
 EVIDENCE: [One sentence with specific details found]
 SOURCES: [Comma-separated list of primary URLs where you found evidence, or "No sources found"]`
 
-	responseText, err := a.client.Respond(ctx, prompt, []aicore.Tool{{Type: "web_search"}}, aicore.Options{Model: "gpt-5.1"})
+	responseText, err := a.client.Respond(ctx, prompt, []aicore.Tool{{Type: "web_search"}}, aicore.Options{})
 	if err != nil {
 		return VerificationResult{
 			Claim:      claim.Claim,

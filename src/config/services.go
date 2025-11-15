@@ -251,9 +251,7 @@ func LoadQAConfig(db *gorm.DB) QAConfig {
 // ResearchConfig holds Research bot configuration
 type ResearchConfig struct {
 	Base
-	OpenAIKey      string
-	AIModel        string
-	AIEnableWeb    bool
+	AIConfig
 	ResearchRoleID string
 	TempDir        string
 	Enabled        bool
@@ -262,10 +260,8 @@ type ResearchConfig struct {
 // LoadResearchConfig loads Research bot configuration
 func LoadResearchConfig(db *gorm.DB) ResearchConfig {
 	base := LoadBase(db)
+	ai := LoadAIConfig(db)
 	researchRoleID := GetSetting("research_role_id", "RESEARCH_ROLE_ID", "")
-	openAIKey := GetSetting("openai_api_key", "OPENAI_API_KEY", "")
-	aiModel := GetSetting("ai_model", "AI_MODEL", "gpt5")
-	aiEnableWeb := shareddata.GetSetting("ai_enable_web_search") == "1"
 	tempDir := GetSetting("research_temp_dir", "RESEARCH_TEMP_DIR", "")
 	if tempDir == "" {
 		tempDir = GetSetting("qa_temp_dir", "QA_TEMP_DIR", "/tmp/govcomms-qa")
@@ -274,9 +270,7 @@ func LoadResearchConfig(db *gorm.DB) ResearchConfig {
 
 	return ResearchConfig{
 		Base:           base,
-		OpenAIKey:      openAIKey,
-		AIModel:        aiModel,
-		AIEnableWeb:    aiEnableWeb,
+		AIConfig:       ai,
 		ResearchRoleID: researchRoleID,
 		TempDir:        tempDir,
 		Enabled:        enabled,

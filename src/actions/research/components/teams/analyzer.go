@@ -14,14 +14,9 @@ import (
 
 type Analyzer struct{ client aicore.Client }
 
-func NewAnalyzer(apiKey string) (*Analyzer, error) {
-	client, err := aicore.NewClient(aicore.FactoryConfig{
-		Provider:  "gpt51",
-		OpenAIKey: apiKey,
-		Model:     "gpt-5.1",
-	})
-	if err != nil {
-		return nil, err
+func NewAnalyzer(client aicore.Client) (*Analyzer, error) {
+	if client == nil {
+		return nil, fmt.Errorf("teams: ai client is nil")
 	}
 	return &Analyzer{client: client}, nil
 }
@@ -62,7 +57,7 @@ Include empty arrays for missing profile types. Only include team members with a
 Proposal:
 %s`, proposalContent)
 
-	responseText, err := a.client.Respond(ctx, prompt, nil, aicore.Options{Model: "gpt-5.1"})
+	responseText, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +213,7 @@ HAS_SKILLS: [true/false]
 CAPABILITY: [One detailed sentence about their verified experience and suitability]
 VERIFIED_URLS: [Comma-separated list of URLs that were successfully verified, or "None"]`
 
-	responseText, err := a.client.Respond(ctx, prompt, []aicore.Tool{{Type: "web_search"}}, aicore.Options{Model: "gpt-5.1"})
+	responseText, err := a.client.Respond(ctx, prompt, []aicore.Tool{{Type: "web_search"}}, aicore.Options{})
 	if err != nil {
 		return TeamAnalysisResult{
 			Name:            member.Name,

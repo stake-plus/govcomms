@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
+	aicore "github.com/stake-plus/govcomms/src/ai/core"
 	"github.com/stake-plus/govcomms/src/actions/core"
 	"github.com/stake-plus/govcomms/src/actions/research/components/claims"
 	"github.com/stake-plus/govcomms/src/actions/research/components/teams"
@@ -63,11 +64,28 @@ func NewModule(cfg *sharedconfig.ResearchConfig, db *gorm.DB) (*Module, error) {
 		return nil, fmt.Errorf("research: cache manager: %w", err)
 	}
 
-	claimsAnalyzer, err := claims.NewAnalyzer(cfg.OpenAIKey)
+	if cfg.AIConfig.OpenAIKey == "" &&
+		cfg.AIConfig.ClaudeKey == "" &&
+		cfg.AIConfig.GeminiKey == "" &&
+		cfg.AIConfig.DeepSeekKey == "" &&
+		cfg.AIConfig.GrokKey == "" {
+		return nil, fmt.Errorf("research: no AI provider configured")
+	}
+
+	claimsClient, err := aicore.NewClient(cfg.AIConfig.FactoryConfig())
+	if err != nil {
+		return nil, fmt.Errorf("research: claims client: %w", err)
+	}
+	claimsAnalyzer, err := claims.NewAnalyzer(claimsClient)
 	if err != nil {
 		return nil, fmt.Errorf("research: claims analyzer: %w", err)
 	}
-	teamsAnalyzer, err := teams.NewAnalyzer(cfg.OpenAIKey)
+
+	teamsClient, err := aicore.NewClient(cfg.AIConfig.FactoryConfig())
+	if err != nil {
+		return nil, fmt.Errorf("research: teams client: %w", err)
+	}
+	teamsAnalyzer, err := teams.NewAnalyzer(teamsClient)
 	if err != nil {
 		return nil, fmt.Errorf("research: teams analyzer: %w", err)
 	}

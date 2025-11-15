@@ -15,7 +15,7 @@ Use this guide to understand every tunable and how it maps back to the source co
 | `DISCORD_TOKEN` | ✅ | Discord bot token. Shared with the Chaos DAO Governance Bot if they run under one application. | `src/config/base.go` |
 | `GUILD_ID` | ✅ | Target Discord guild for slash commands. | `src/config/base.go` |
 | `QA_ROLE_ID` / `RESEARCH_ROLE_ID` / `FEEDBACK_ROLE_ID` | Optional | Restrict slash commands to specific roles. Leave empty to allow everyone. | `src/config/services.go` |
-| `OPENAI_API_KEY` | Optional but required for `/research` & `/team` | Unlocks GPT‑5/GPT‑4o providers. Needed even if you also configure other vendors. | `src/config/services.go`, `src/actions/research` |
+| `OPENAI_API_KEY` | Optional (needed only if you want OpenAI models in the provider pool) | Unlocks GPT‑5/GPT‑4o providers. `/research` and `/team` now consume the shared AI stack (including `ai_provider=consensus`), so they no longer require OpenAI specifically. | `src/config/services.go`, `src/actions/research` |
 | `CLAUDE_API_KEY` | Optional | Enables Anthropic providers (`sonnet45`, `haiku45`, `opus41`). | `src/config/services.go` |
 | `GEMINI_API_KEY` | Optional | Enables Google Gemini 2.5 provider. | `src/config/services.go` |
 | `DEEPSEEK_API_KEY` | Optional | Enables DeepSeek v3.2 provider. | `src/config/services.go` |
