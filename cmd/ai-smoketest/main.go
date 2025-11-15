@@ -55,7 +55,6 @@ func main() {
 	}
 
 	systemPrompt := pickFirst(*systemFlag, aiCfg.AISystemPrompt, defaultSystemPrompt)
-	model := pickFirst(*modelFlag, aiCfg.AIModel, defaultModelForProvider(aiCfg.AIProvider))
 	enableWeb := *webFlag || aiCfg.AIEnableWeb
 
 	mode, err := parseMode(*modeFlag)
@@ -63,7 +62,11 @@ func main() {
 		log.Fatalf("invalid mode: %v", err)
 	}
 
+	configuredProvider := strings.TrimSpace(aiCfg.AIProvider)
+	configuredModel := strings.TrimSpace(aiCfg.AIModel)
+
 	for _, provider := range providers {
+		model := resolveModelForProvider(provider, configuredProvider, configuredModel, *modelFlag)
 		if err := runProvider(provider, mode, model, systemPrompt, enableWeb, aiCfg); err != nil {
 			log.Printf("[%s] ERROR: %v", provider, err)
 		}
@@ -187,13 +190,40 @@ func pickFirst(values ...string) string {
 
 func defaultModelForProvider(provider string) string {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "claude", "sonnet45", "haiku45":
-		return "claude-3-haiku-20240307"
 	case "gpt4o":
 		return "gpt-4o-mini"
+	case "deepseek32":
+		return "deepseek-chat"
+	case "sonnet45":
+		return "claude-3.5-sonnet-20241022"
+	case "haiku45":
+		return "claude-3.5-haiku-20241022"
+	case "opus41":
+		return "claude-3-opus-20240229"
+	case "claude":
+		return "claude-3-opus-20240229"
+	case "grok4":
+		return "grok-beta"
+	case "gemini25":
+		return "gemini-1.5-pro-latest"
 	default:
 		return "gpt-5"
 	}
+}
+
+func resolveModelForProvider(targetProvider, configuredProvider, configuredModel, flagModel string) string {
+	if model := strings.TrimSpace(flagModel); model != "" {
+		return model
+	}
+
+	configuredModel = strings.TrimSpace(configuredModel)
+	configuredProvider = strings.TrimSpace(configuredProvider)
+
+	if configuredModel != "" && (configuredProvider == "" || strings.EqualFold(configuredProvider, targetProvider)) {
+		return configuredModel
+	}
+
+	return defaultModelForProvider(targetProvider)
 }
 
 func parseMode(input string) (runMode, error) {
