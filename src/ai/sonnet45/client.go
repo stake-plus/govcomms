@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	defaultModel       = "claude-3.5-sonnet-20241022"
+	defaultModel       = "claude-sonnet-4-5"
 	anthropicEndpoint  = "https://api.anthropic.com/v1/messages"
 	defaultMaxTokens   = 2048
 	defaultTemperature = 0.1

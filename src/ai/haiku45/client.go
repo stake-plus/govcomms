@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	defaultModel        = "claude-3.5-haiku-20241022"
+	defaultModel        = "claude-haiku-4-5"
 	anthropicEndpoint   = "https://api.anthropic.com/v1/messages"
 	defaultMaxTokens    = 1024
 	defaultTemperature  = 0.2

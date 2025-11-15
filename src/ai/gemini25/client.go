@@ -16,7 +16,7 @@ import (
 
 const (
 	baseURL          = "https://generativelanguage.googleapis.com/v1beta"
-	defaultModelName = "models/gemini-2.5-pro-exp"
+	defaultModelName = "gemini-2.5-flash"
 	defaultMaxTokens = 2048
 )
 

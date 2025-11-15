@@ -16,7 +16,7 @@ import (
 
 const (
 	apiURL             = "https://api.deepseek.com/chat/completions"
-	defaultModel       = "deepseek-v3.2"
+	defaultModel       = "deepseek-chat"
 	defaultMaxTokens   = 8192
 	defaultTemperature = 0.7
 )
