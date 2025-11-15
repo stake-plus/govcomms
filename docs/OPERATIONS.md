@@ -56,7 +56,21 @@ After restarting the service, confirm:
 - Polkassembly login succeeds when seeds are configured (watch for HTTP errors in `feedback:` logs).
 - Discord commands respond promptly in referendum threads.
 
-## 3. Monitoring & Logs
+## 3. Agents Runtime Health
+
+- Agents log with the prefix `[agents]`. During startup you should see either
+  `agents: disabled via configuration` or a log line per agent indicating whether it was added.
+- To temporarily disable the runtime, set `ENABLE_AGENTS=0` (or update the
+  `enable_agents` setting) before restarting the service. You can disable
+  individual agents with `ENABLE_AGENT_SOCIAL`, `ENABLE_AGENT_ALIAS`, and
+  `ENABLE_AGENT_GRANTWATCH`.
+- Health indicators:
+  - `[agents] manager: starting` followed by `agents: <name> agent disabled` or `agents: <name> ready`.
+  - Mission errors surface as log lines from the specific agent package. Repeated
+    failures typically mean missing API credentials or stale configuration.
+- Reference `docs/AGENTS.md` for configuration knobs and mission examples.
+
+## 4. Monitoring & Logs
 
 GovComms logs to stdout/stderr. Key log messages include:
 
@@ -65,6 +79,7 @@ GovComms logs to stdout/stderr. Key log messages include:
 - **Indexer status:** `<network> indexer: Current block height ...`.
 - **Thread mapping:** `feedback: thread ... mapping failed` (action required).
 - **Polkassembly:** success/failure logs for posting comments and syncing replies (e.g., `feedback: polkassembly monitor error: ...`).
+- **Agents:** look for `[agents]` lines describing startup or mission execution.
 
 ### Suggested alerting
 
@@ -72,7 +87,7 @@ GovComms logs to stdout/stderr. Key log messages include:
 - Alert if slash-command registration fails (e.g., invalid token or missing intents).
 - Watch for `MYSQL_DSN is not set` to catch misconfigured services.
 
-## 4. Maintenance Tasks
+## 5. Maintenance Tasks
 
 | Task | Frequency | Notes |
 | --- | --- | --- |
@@ -82,7 +97,7 @@ GovComms logs to stdout/stderr. Key log messages include:
 | Backup database | Nightly | `mysqldump govcomms > backup.sql`. Include `refs`, `ref_messages`, `qa_history`. |
 | Review dependencies | Quarterly | `go list -u -m all` and run tests before upgrading. |
 
-## 5. Upgrades
+## 6. Upgrades
 
 1. Stop the service: `sudo systemctl stop govcomms`.
 2. Pull updates and rebuild:
@@ -94,7 +109,7 @@ GovComms logs to stdout/stderr. Key log messages include:
 3. Apply schema changes from `db/database.sql` if new columns were introduced.
 4. Start the service and monitor logs.
 
-## 6. Troubleshooting
+## 7. Troubleshooting
 
 | Symptom | Likely Cause | Resolution |
 | --- | --- | --- |
@@ -105,13 +120,13 @@ GovComms logs to stdout/stderr. Key log messages include:
 | Polkassembly mirroring skipped | Missing `polkassembly_seed` or authentication failure | Add seed, verify the `gc_url` setting, review logs for HTTP 401/403. |
 | AI modules fall back to cached content | Provider rate limit or key invalid | Check provider dashboards, rotate keys, or enable alternative provider. |
 
-## 7. Data Hygiene & Safety
+## 8. Data Hygiene & Safety
 
 - **Never share** `\*.env` files or Polkassembly seeds in source control.
 - Restrict MySQL access to the GovComms and Chaos DAO bot hosts.
 - Keep `refs` and `ref_messages` backed up; they contain DAO deliberation history.
 
-## 8. Staging vs. Production
+## 9. Staging vs. Production
 
 You can run multiple GovComms instances by pointing each at a different database and Discord guild:
 

@@ -11,6 +11,7 @@ This guide walks through provisioning Stake Plus GovComms from scratch. Follow i
 | Git | Required for cloning the repository. |
 | MySQL/MariaDB | MySQL 8.x (or MariaDB 10.6+) reachable over TCP. UTF8MB4 charset is mandatory. |
 | Discord bot | A Discord application with bot permissions, `applications.commands` scope, and intents: Guilds, Guild Messages, Message Content, Message Reactions. |
+| AI providers | At least one of: OpenAI (GPT‑5/4o), Anthropic (Sonnet/Haiku/Opus), Google Gemini 2.5, DeepSeek v3.2, or xAI Grok 4. Research/Team analyzers currently **require** an OpenAI key even if other providers are configured. |
 | Polkassembly (optional) | sr25519 seed phrases for every network that should mirror feedback. |
 
 ## 2. Clone the Repository
@@ -69,8 +70,9 @@ The seed inserts placeholder settings, two networks (Polkadot/Kusama), and defau
 2. Populate the file with real credentials:
    - `MYSQL_DSN` must point to the database created above.
    - Discord token/guild ID must match the bot you intend to register.
-   - Provide at least one AI provider key (`OPENAI_API_KEY` or `CLAUDE_API_KEY`).
+   - Provide the AI provider keys you plan to use (`OPENAI_API_KEY`, `CLAUDE_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `GROK_API_KEY`). `/research` and `/team` still require an OpenAI key for GPT‑5 claims analysis.
    - Set `QA_TEMP_DIR` to a writable cache directory.
+   - Leave the per-agent toggles (`ENABLE_AGENT_*`) at `1` unless you intentionally want to disable the new agents runtime (see `docs/AGENTS.md`).
 
 > GovComms reads settings from MySQL first, then falls back to environment variables. Keeping the `.env` file in sync with the database makes migrations easier.
 

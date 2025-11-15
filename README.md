@@ -13,8 +13,9 @@ See `docs/CHAOS-DAO-INTEGRATION.md` for the joint deployment checklist.
 ## Features
 
 - **AI Q&A (`src/actions/question`)** – Provides `/question`, `/refresh`, and `/context` commands, maintains proposal caches under `src/cache`, and records Q&A transcripts in MySQL.
-- **Research & Team Analysis (`src/actions/research`, `src/actions/team`)** – Powers `/research` and `/team`, extracts claims, verifies evidence with OpenAI/Claude through `src/ai`, and publishes styled Discord updates.
-- **Feedback & Polkassembly (`src/actions/feedback`)** – Handles `/feedback`, maps Discord referendum threads, mirrors the first DAO response to Polkassembly, syncs replies, and runs the Substrate indexer in `src/actions/feedback/data`.
+- **Research & Team Analysis (`src/actions/research`, `src/actions/team`)** – Powers `/research` and `/team`, extracts claims, verifies evidence with the AI factory (`src/ai`), and publishes styled Discord updates.
+- **Feedback & Polkassembly (`src/actions/feedback`)** – Handles `/feedback`, maps Discord referendum threads, mirrors DAO responses to Polkassembly, syncs replies, and runs the Substrate indexer in `src/actions/feedback/data`.
+- **Agents runtime (`src/agents`)** – Runs continuous due-diligence missions (social presence, alias hunting, grant watch) using the same AI provider registry. See `docs/AGENTS.md`.
 - **Core packages (`src/config`, `src/ai`, `src/cache`, `src/polkadot-go`)** – Hold configuration loaders, AI provider registry and clients, caching utilities, Discord helpers, Polkassembly client, and the lightweight Substrate RPC toolkit.
 
 ## Repository Layout
@@ -48,10 +49,11 @@ See `docs/CHAOS-DAO-INTEGRATION.md` for the joint deployment checklist.
 | Document | Purpose |
 | --- | --- |
 | `docs/INSTALLATION.md` | Platform prerequisites, build steps, database provisioning. |
-| `docs/CONFIGURATION.md` | Environment variables, settings table, network and Polkassembly configuration. |
-| `docs/OPERATIONS.md` | Runtime commands, systemd usage, maintenance, troubleshooting. |
+| `docs/CONFIGURATION.md` | Environment variables, settings table, AI providers, agent knobs. |
+| `docs/OPERATIONS.md` | Runtime commands, systemd usage, monitoring, troubleshooting. |
 | `docs/TUTORIAL.md` | Step-by-step walkthrough for a fresh deployment. |
 | `docs/CHAOS-DAO-INTEGRATION.md` | How GovComms interfaces with the Chaos DAO Governance Bot. |
+| `docs/AGENTS.md` | Architecture and configuration of the background agents runtime. |
 
 ## Contributing & License
 

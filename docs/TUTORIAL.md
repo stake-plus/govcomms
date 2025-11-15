@@ -56,7 +56,7 @@ Edit `.env.govcomms`:
 
 - Fill in `MYSQL_DSN`, `DISCORD_TOKEN`, `GUILD_ID`.
 - Add role IDs (if applicable).
-- Provide at least one AI provider key.
+- Provide the AI provider keys you need (`OPENAI_API_KEY`, `CLAUDE_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `GROK_API_KEY`). Research/Team modules still require an OpenAI key for GPT‑5 analysis.
 
 ## Step 5 – Update Seed Data
 
@@ -91,7 +91,7 @@ sudo systemctl enable --now govcomms
 journalctl -u govcomms -f
 ```
 
-Logs should show all modules starting successfully. Leave the service running.
+Logs should show all action modules plus `[agents]` log lines for any enabled background agents (see `docs/AGENTS.md`). Leave the service running.
 
 ## Step 8 – Integrate the Chaos DAO Governance Bot
 

@@ -15,12 +15,17 @@ Use this guide to understand every tunable and how it maps back to the source co
 | `DISCORD_TOKEN` | ✅ | Discord bot token. Shared with the Chaos DAO Governance Bot if they run under one application. | `src/config/base.go` |
 | `GUILD_ID` | ✅ | Target Discord guild for slash commands. | `src/config/base.go` |
 | `QA_ROLE_ID` / `RESEARCH_ROLE_ID` / `FEEDBACK_ROLE_ID` | Optional | Restrict slash commands to specific roles. Leave empty to allow everyone. | `src/config/services.go` |
-| `OPENAI_API_KEY` / `CLAUDE_API_KEY` | At least one | API keys for AI providers registered in `src/ai`. | `src/config/services.go` |
-| `AI_PROVIDER` | Optional | `openai` (default) or `claude`. Other providers are registered but not fully implemented. | `src/config/services.go` |
-| `AI_MODEL` | Optional | Model ID (defaults to `gpt-4o-mini` or `claude-3-haiku-20240307`). | `src/config/services.go` |
+| `OPENAI_API_KEY` | Optional but required for `/research` & `/team` | Unlocks GPT‑5/GPT‑4o providers. Needed even if you also configure other vendors. | `src/config/services.go`, `src/actions/research` |
+| `CLAUDE_API_KEY` | Optional | Enables Anthropic providers (`sonnet45`, `haiku45`, `opus41`). | `src/config/services.go` |
+| `GEMINI_API_KEY` | Optional | Enables Google Gemini 2.5 provider. | `src/config/services.go` |
+| `DEEPSEEK_API_KEY` | Optional | Enables DeepSeek v3.2 provider. | `src/config/services.go` |
+| `GROK_API_KEY` | Optional | Enables xAI Grok 4 provider. | `src/config/services.go` |
+| `AI_PROVIDER` | Optional | Default provider key: `gpt5`, `gpt4o`, `gemini25`, `deepseek32`, `sonnet45`, `haiku45`, `opus41`, `grok4`. | `src/config/services.go` |
+| `AI_MODEL` | Optional | Model ID per provider (defaults to `gpt-5`, `claude-3-haiku-20240307`, etc.). | `src/config/services.go` |
 | `AI_SYSTEM_PROMPT` | Optional | Custom prompt injected into AI calls. | `src/config/services.go` |
 | `ENABLE_QA` / `ENABLE_RESEARCH` / `ENABLE_FEEDBACK` | Optional | Mirrors CLI flags. Accepts `1`, `true`, `false`, `0`. | `src/gov-comms.go` |
-| `QA_TEMP_DIR` | Optional | Directory used to cache proposal content and documents. Must be writable. | `src/config/services.go`, `src/cache` |
+| `ENABLE_AGENTS` & `ENABLE_AGENT_*` | Optional | Gates the background agents runtime (`agents/start.go`). See `docs/AGENTS.md`. | `src/config/agents.go` |
+| `QA_TEMP_DIR` / `RESEARCH_TEMP_DIR` | Optional | Cache directories for proposal content and research attachments. | `src/config/services.go`, `src/cache` |
 | `POLKASSEMBLY_ENDPOINT` | Optional | Override API base (default `https://api.polkassembly.io/api/v1`). | `src/config/services.go`, `src/actions/feedback/module.go` |
 
 > `AI_ENABLE_WEB_SEARCH`, `AI_ENABLE_DEEP_SEARCH`, and `GC_URL` currently need to be set via the `settings` table. The legacy environment keys remain in `config/env.sample` but are ignored at runtime.
@@ -36,18 +41,45 @@ Store environment values in `/opt/govcomms/.env.govcomms` (Linux) or `C:\govcomm
 | `discord_token` | Discord bot token. | `DISCORD_TOKEN` |
 | `guild_id` | Guild where slash commands register. | `GUILD_ID` |
 | `qa_role_id` / `research_role_id` / `feedback_role_id` | Role IDs gating slash commands. | respective env vars |
-| `openai_api_key` / `claude_api_key` | AI provider keys. | env vars |
+| `openai_api_key` / `claude_api_key` / `gemini_api_key` / `deepseek_api_key` / `grok_api_key` | AI provider keys stored centrally. | env vars |
 | `ai_provider`, `ai_model`, `ai_system_prompt` | AI behavior tuning. | env vars |
 | `ai_enable_web_search`, `ai_enable_deep_search` | `"1"` to enable optional tools. | — (DB only) |
-| `qa_temp_dir` | Proposal cache directory. | `QA_TEMP_DIR` |
+| `qa_temp_dir` / `research_temp_dir` | Cache directories for QA and research modules. | env vars |
 | `indexer_workers` | Concurrency level for `src/actions/feedback/data/indexer.go`. Default `10`. | — (DB only) |
 | `indexer_interval_minutes` | Minutes between indexer passes. Default `60`. | — (DB only) |
 | `polkassembly_endpoint` | API base for Polkassembly. | `POLKASSEMBLY_ENDPOINT` |
 | `gc_url` | Base link appended to Polkassembly comments (points readers back to DAO context). | — (DB only) |
+| `enable_agents` / `enable_agent_social` / `enable_agent_alias` / `enable_agent_grantwatch` | Feature gates for the background agents runtime. | `ENABLE_AGENTS`, `ENABLE_AGENT_SOCIAL`, etc. |
+| `agents_http_timeout_seconds` | HTTP timeout shared by agents. | — (DB only) |
+| `agents_social_providers` | CSV list of social probes (e.g., `manual,twitter`). | — (DB only) |
+| `agents_alias_min_confidence` / `agents_alias_max_suggestions` | Alias hunter tuning knobs. | — (DB only) |
+| `agents_grant_lookback_days` / `agents_grant_repeat_threshold` | Grant watcher tuning. | — (DB only) |
 
 > **Tip:** Keep the database as the authoritative source. Use environment variables only for secrets you cannot store in MySQL.
 
-## 3. Network & Thread Configuration
+## 3. AI Provider Reference
+
+The AI factory under `src/ai` registers multiple providers. Pick the one that
+matches your cost/latency requirements, but remember `/research` and `/team`
+currently require OpenAI GPT‑5 for claims analysis.
+
+| Provider key | Default model | Env key | Tooling |
+| --- | --- | --- | --- |
+| `gpt5` (default) | `gpt-5` | `OPENAI_API_KEY` | Chat Completions + Responses API, supports `web_search`. |
+| `gpt4o` | `gpt-4o-mini` | `OPENAI_API_KEY` | Same as `gpt5`, lower cost. |
+| `gemini25` | `models/gemini-2.5-pro-exp` | `GEMINI_API_KEY` | Optional Google search tool (`googleSearchRetrieval`). |
+| `deepseek32` | `deepseek-v3.2` | `DEEPSEEK_API_KEY` | Supports `web_search` tool payload. |
+| `sonnet45` | `claude-3.5-sonnet-20241022` | `CLAUDE_API_KEY` | Browsing hint via metadata. |
+| `haiku45` | `claude-3.5-haiku-20241022` | `CLAUDE_API_KEY` | Browsing hint via metadata. |
+| `opus41` | `claude-3.5-opus-20241022` | `CLAUDE_API_KEY` | Browsing hint via metadata. |
+| `grok4` | `grok-4-latest` | `GROK_API_KEY` | Internet tool toggle. |
+
+Switch providers by updating `ai_provider` (DB) or `AI_PROVIDER` (env). Override
+`ai_model` / `AI_MODEL` to stick to a specific version. If you enable optional
+tools (`ai_enable_web_search`, `ai_enable_deep_search`), the runtime will pass
+`web_search` tool descriptors to providers that support them.
+
+## 4. Network & Thread Configuration
 
 ### `networks` table
 
@@ -69,7 +101,7 @@ Provide at least one active RPC endpoint per network. The indexer rotates throug
 - When a thread is created or updated in the configured channel, `src/actions/feedback/module.go` parses the ref ID and populates `ref_threads`.
 - `GuildThreadsActive` reconciles mappings periodically in case the bot restarts.
 
-## 4. Polkassembly Integration
+## 5. Polkassembly Integration
 
 1. For each network you want to mirror feedback to, add a valid sr25519 seed (e.g., `//Alice` style or mnemonic).
 2. Ensure the `gc_url` setting points to the DAO’s discussion hub (configured via the `settings` table) so Polkassembly readers can follow links back.
@@ -78,7 +110,7 @@ Provide at least one active RPC endpoint per network. The indexer rotates throug
    - Save the returned comment ID to `ref_messages`.
    - Poll every 15 minutes for replies and echo them back into Discord threads.
 
-## 5. Module Toggles & CLI Flags
+## 6. Module & Agent Toggles
 
 Use either CLI flags or environment variables (`ENABLE_QA`, etc.) when starting the binary:
 
@@ -91,7 +123,9 @@ Use either CLI flags or environment variables (`ENABLE_QA`, etc.) when starting 
 
 Setting a flag to `false` (or the env variable to `0`) skips module startup—useful for staging environments or troubleshooting.
 
-## 6. Cache & Storage Locations
+For the agents runtime, use either the env vars (`ENABLE_AGENTS`, `ENABLE_AGENT_SOCIAL`, etc.) or update the `enable_agent_*` settings in MySQL. See `docs/AGENTS.md` for detailed behavior and monitoring tips.
+
+## 7. Cache & Storage Locations
 
 | Path | Purpose |
 | --- | --- |
@@ -100,7 +134,7 @@ Setting a flag to `false` (or the env variable to `0`) skips module startup—us
 
 Ensure the service account running GovComms can read/write these directories.
 
-## 7. Verifying Configuration
+## 8. Verifying Configuration
 
 1. Run `go test ./...` to ensure code compiles against the configured environment.
 2. Start GovComms with `--enable-feedback` and monitor logs for:
