@@ -19,14 +19,14 @@ type AI struct {
 func LoadAIFromEnv() AI {
 	provider := os.Getenv("AI_PROVIDER")
 	if provider == "" {
-		provider = "openai"
+		provider = "gpt51"
 	}
 	model := os.Getenv("AI_MODEL")
 	if model == "" {
-		if provider == "claude" {
-			model = "claude-3-haiku-20240307"
+		if provider == "sonnet45" {
+			model = "claude-sonnet-4-5"
 		} else {
-			model = "gpt-5"
+			model = "gpt-5.1"
 		}
 	}
 	return AI{

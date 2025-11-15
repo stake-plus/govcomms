@@ -88,7 +88,7 @@ Respond with JSON:
 Proposal:
 %s`, proposalContent)
 
-	responseText, err := a.client.Respond(ctx, prompt, nil, aicore.Options{Model: "gpt-5"})
+	responseText, err := a.client.Respond(ctx, prompt, nil, aicore.Options{Model: "gpt-5.1"})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -153,7 +153,7 @@ STATUS: [Valid/Rejected/Unknown]
 EVIDENCE: [One sentence with specific details found]
 SOURCES: [Comma-separated list of primary URLs where you found evidence, or "No sources found"]`
 
-	responseText, err := a.client.Respond(ctx, prompt, []aicore.Tool{{Type: "web_search"}}, aicore.Options{Model: "gpt-5"})
+	responseText, err := a.client.Respond(ctx, prompt, []aicore.Tool{{Type: "web_search"}}, aicore.Options{Model: "gpt-5.1"})
 	if err != nil {
 		return VerificationResult{
 			Claim:      claim.Claim,
