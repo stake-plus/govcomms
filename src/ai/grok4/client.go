@@ -16,7 +16,7 @@ import (
 
 const (
 	apiURL           = "https://api.x.ai/v1/chat/completions"
-	defaultModel     = "grok-4-latest"
+	defaultModel     = "grok-beta"
 	defaultMaxTokens = 8192
 )
 
@@ -114,7 +114,7 @@ func (c *client) send(ctx context.Context, payload map[string]interface{}) (stri
 			return resp.StatusCode, nil, err
 		}
 		if resp.StatusCode != http.StatusOK {
-			return resp.StatusCode, b, fmt.Errorf("status %d", resp.StatusCode)
+			return resp.StatusCode, b, fmt.Errorf("status %d: %s", resp.StatusCode, truncateErrorBody(b))
 		}
 		return resp.StatusCode, b, nil
 	})
@@ -170,6 +170,18 @@ func maxTokens(requested int) int {
 		return defaultMaxTokens
 	}
 	return requested
+}
+
+func truncateErrorBody(body []byte) string {
+	text := strings.TrimSpace(string(body))
+	if text == "" {
+		return "no response body"
+	}
+	const limit = 300
+	if len(text) > limit {
+		return text[:limit] + "..."
+	}
+	return text
 }
 
 type completionResponse struct {
