@@ -4,13 +4,14 @@ Use the `cmd/ai-smoketest` helper to verify that each configured model is reacha
 
 ## Requirements
 
-1. Export the API keys you plan to test — the helper reads the same variables as the runtime:
+1. Ensure `MYSQL_DSN` points at your GovComms database. The script will load keys via `config.LoadAIConfig`, so any secrets stored in the `settings` table are reused automatically.
+2. (Optional fallback) Export the API keys you plan to test — the helper reads the same variables as the runtime if a key is missing from the database:
    - `OPENAI_API_KEY` (GPT‑5 / GPT‑4o mini)
    - `CLAUDE_API_KEY` (Sonnet/Haiku)
    - `GEMINI_API_KEY`
    - `DEEPSEEK_API_KEY`
    - `GROK_API_KEY`
-2. Optional: set `AI_SYSTEM_PROMPT` or `AI_MODEL` to override defaults, or pass the `-system` / `-model` flags.
+3. Optional: set `AI_SYSTEM_PROMPT` or `AI_MODEL` to override defaults, or pass the `-system` / `-model` flags.
 
 ## Running the script
 
