@@ -32,7 +32,7 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 		apiKey:     cfg.OpenAIKey,
 		httpClient: webclient.NewDefault(300 * time.Second),
 		defaults: core.Options{
-			Model:               valueOrDefault(cfg.Model, "gpt-4o-mini"),
+			Model:               valueOrDefault(cfg.Model, "gpt-4o"),
 			Temperature:         orFloat(cfg.Temperature, 1),
 			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, 50000),
 			SystemPrompt:        cfg.SystemPrompt,

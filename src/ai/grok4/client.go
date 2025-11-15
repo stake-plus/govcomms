@@ -16,7 +16,7 @@ import (
 
 const (
 	apiURL           = "https://api.x.ai/v1/chat/completions"
-	defaultModel     = "grok-beta"
+	defaultModel     = "grok-4-fast-reasoning"
 	defaultMaxTokens = 8192
 )
 
