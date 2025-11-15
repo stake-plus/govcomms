@@ -14,8 +14,7 @@ import (
 )
 
 func init() {
-	core.RegisterProvider("gpt4omini", newClient)
-	core.RegisterProvider("gpt-4o-mini", newClient)
+	core.RegisterProvider("gpt-4o", newClient)
 }
 
 type client struct {

@@ -8,8 +8,7 @@ import (
 const defaultModel = "claude-3.5-opus-20241022"
 
 func init() {
-	core.RegisterProvider("opus", newClient)
-	core.RegisterProvider("opus41", newClient)
+	core.RegisterProvider("opus-4.1", newClient)
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {

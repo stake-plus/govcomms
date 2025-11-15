@@ -16,12 +16,12 @@ import (
 
 const (
 	apiURL           = "https://api.x.ai/v1/chat/completions"
-	defaultModel     = "grok-2-latest"
+	defaultModel     = "grok-4-latest"
 	defaultMaxTokens = 8192
 )
 
 func init() {
-	core.RegisterProvider("grok", newClient)
+	core.RegisterProvider("grok-4", newClient)
 }
 
 type client struct {

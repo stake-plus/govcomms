@@ -8,8 +8,7 @@ import (
 const defaultModel = "claude-3.5-haiku-20241022"
 
 func init() {
-	core.RegisterProvider("haiku", newClient)
-	core.RegisterProvider("haiku45", newClient)
+	core.RegisterProvider("haiku-4.5", newClient)
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {

@@ -21,7 +21,7 @@ const (
 )
 
 func init() {
-	core.RegisterProvider("gemini", newClient)
+	core.RegisterProvider("gemini-2.5", newClient)
 }
 
 type client struct {

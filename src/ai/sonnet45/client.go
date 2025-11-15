@@ -8,9 +8,7 @@ import (
 const defaultModel = "claude-3.5-sonnet-20241022"
 
 func init() {
-	core.RegisterProvider("claude", newClient)
-	core.RegisterProvider("sonnet", newClient)
-	core.RegisterProvider("sonnet45", newClient)
+	core.RegisterProvider("sonnet-4.5", newClient)
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {

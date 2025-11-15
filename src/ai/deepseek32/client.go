@@ -1,4 +1,4 @@
-package deepseek
+package deepseek32
 
 import (
 	"bytes"
@@ -16,13 +16,13 @@ import (
 
 const (
 	apiURL             = "https://api.deepseek.com/chat/completions"
-	defaultModel       = "deepseek-r1"
+	defaultModel       = "deepseek-v3.2"
 	defaultMaxTokens   = 8192
 	defaultTemperature = 0.7
 )
 
 func init() {
-	core.RegisterProvider("deepseek", newClient)
+	core.RegisterProvider("deepseek-3.2", newClient)
 }
 
 type client struct {
