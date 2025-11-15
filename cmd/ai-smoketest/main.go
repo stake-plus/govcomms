@@ -32,7 +32,7 @@ var (
 var allProviders = []string{
 	"gpt5",
 	"gpt4o",
-	"deepseek32",
+	"deepseek3",
 	"sonnet45",
 	"haiku45",
 	"opus41",

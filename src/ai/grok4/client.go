@@ -80,8 +80,6 @@ func (c *client) buildRequest(opts core.Options, userPrompt string, enableWeb bo
 		"max_output_tokens": maxTokens(opts.MaxCompletionTokens),
 		"stream":            false,
 		"n":                 1,
-		"presence_penalty":  0,
-		"frequency_penalty": 0,
 		"top_p":             0.9,
 	}
 
