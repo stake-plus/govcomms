@@ -30,7 +30,7 @@ type ProviderFactory func(FactoryConfig) (Client, error)
 var (
 	mu         sync.RWMutex
 	providers  = map[string]ProviderFactory{}
-	defaultKey = "openai"
+	defaultKey = "gpt51"
 )
 
 // RegisterProvider registers a provider factory under one or more names.

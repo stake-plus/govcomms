@@ -28,7 +28,7 @@ func LoadAIConfig(db *gorm.DB) AIConfig {
 	geminiKey := GetSetting("gemini_api_key", "GEMINI_API_KEY", "")
 	deepSeekKey := GetSetting("deepseek_api_key", "DEEPSEEK_API_KEY", "")
 	grokKey := GetSetting("grok_api_key", "GROK_API_KEY", "")
-	aiProvider := GetSetting("ai_provider", "AI_PROVIDER", "openai")
+	aiProvider := GetSetting("ai_provider", "AI_PROVIDER", "gpt51")
 
 	aiSystemPrompt := GetSetting("ai_system_prompt", "AI_SYSTEM_PROMPT",
 		`You are a helpful assistant that analyzes Polkadot/Kusama governance proposals and answers questions about them. 
