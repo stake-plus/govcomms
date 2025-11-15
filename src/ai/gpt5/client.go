@@ -1,4 +1,4 @@
-package chatgpt
+package gpt5
 
 import (
 	"bytes"
@@ -16,6 +16,7 @@ import (
 func init() {
 	core.RegisterProvider("openai", newClient)
 	core.RegisterProvider("chatgpt", newClient)
+	core.RegisterProvider("gpt5", newClient)
 }
 
 type client struct {
@@ -26,14 +27,14 @@ type client struct {
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
 	if cfg.OpenAIKey == "" {
-		return nil, fmt.Errorf("chatgpt: OpenAI API key not configured")
+		return nil, fmt.Errorf("gpt5: OpenAI API key not configured")
 	}
 
 	return &client{
 		apiKey:     cfg.OpenAIKey,
 		httpClient: webclient.NewDefault(300 * time.Second),
 		defaults: core.Options{
-			Model:               valueOrDefault(cfg.Model, "gpt-4o-mini"),
+			Model:               valueOrDefault(cfg.Model, "gpt-5"),
 			Temperature:         orFloat(cfg.Temperature, 1),
 			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, 50000),
 			SystemPrompt:        cfg.SystemPrompt,
@@ -76,7 +77,7 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 		return resp.StatusCode, b, nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("chatgpt API error: %w", err)
+		return "", fmt.Errorf("gpt5 API error: %w", err)
 	}
 	var result struct {
 		Choices []struct {
@@ -134,7 +135,7 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 		return resp.StatusCode, b, nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("chatgpt API error: %w", err)
+		return "", fmt.Errorf("gpt5 API error: %w", err)
 	}
 	// Tolerate multiple shapes by extracting text fields
 	var result struct {
@@ -160,7 +161,7 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 	if err := json.Unmarshal(body, &alt); err == nil && alt.OutputText != "" {
 		return alt.OutputText, nil
 	}
-	return "", fmt.Errorf("failed to parse ChatGPT response")
+	return "", fmt.Errorf("failed to parse GPT-5 response")
 }
 
 func (c *client) merge(opts core.Options) core.Options {

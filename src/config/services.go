@@ -11,6 +11,9 @@ import (
 type AIConfig struct {
 	OpenAIKey      string
 	ClaudeKey      string
+	GeminiKey      string
+	DeepSeekKey    string
+	GrokKey        string
 	AIProvider     string
 	AISystemPrompt string
 	AIModel        string
@@ -22,6 +25,9 @@ type AIConfig struct {
 func LoadAIConfig(db *gorm.DB) AIConfig {
 	openAIKey := GetSetting("openai_api_key", "OPENAI_API_KEY", "")
 	claudeKey := GetSetting("claude_api_key", "CLAUDE_API_KEY", "")
+	geminiKey := GetSetting("gemini_api_key", "GEMINI_API_KEY", "")
+	deepSeekKey := GetSetting("deepseek_api_key", "DEEPSEEK_API_KEY", "")
+	grokKey := GetSetting("grok_api_key", "GROK_API_KEY", "")
 	aiProvider := GetSetting("ai_provider", "AI_PROVIDER", "openai")
 
 	aiSystemPrompt := GetSetting("ai_system_prompt", "AI_SYSTEM_PROMPT",
@@ -35,7 +41,7 @@ If information is not available in the provided content, clearly state that.`)
 		if aiProvider == "claude" {
 			aiModel = "claude-3-haiku-20240307"
 		} else {
-			aiModel = "gpt-4o-mini"
+			aiModel = "gpt-5"
 		}
 	}
 	aiEnableWeb := shareddata.GetSetting("ai_enable_web_search") == "1"
@@ -44,6 +50,9 @@ If information is not available in the provided content, clearly state that.`)
 	return AIConfig{
 		OpenAIKey:      openAIKey,
 		ClaudeKey:      claudeKey,
+		GeminiKey:      geminiKey,
+		DeepSeekKey:    deepSeekKey,
+		GrokKey:        grokKey,
 		AIProvider:     aiProvider,
 		AISystemPrompt: aiSystemPrompt,
 		AIModel:        aiModel,

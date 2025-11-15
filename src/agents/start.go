@@ -87,6 +87,9 @@ func buildAIClient(cfg sharedconfig.AIConfig, logger *log.Logger) aicore.Client 
 		Model:               cfg.AIModel,
 		OpenAIKey:           cfg.OpenAIKey,
 		ClaudeKey:           cfg.ClaudeKey,
+		GeminiKey:           cfg.GeminiKey,
+		DeepSeekKey:         cfg.DeepSeekKey,
+		GrokKey:             cfg.GrokKey,
 		Extra:               map[string]string{},
 		MaxCompletionTokens: 2048,
 	})

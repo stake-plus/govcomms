@@ -53,13 +53,20 @@ func NewModule(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Module, error) {
 	}
 	refManager := sharedgov.NewReferendumManager(db)
 
-	if cfg.AIConfig.OpenAIKey == "" && cfg.AIConfig.ClaudeKey == "" {
+	if cfg.AIConfig.OpenAIKey == "" &&
+		cfg.AIConfig.ClaudeKey == "" &&
+		cfg.AIConfig.GeminiKey == "" &&
+		cfg.AIConfig.DeepSeekKey == "" &&
+		cfg.AIConfig.GrokKey == "" {
 		return nil, fmt.Errorf("question: no AI provider configured")
 	}
 	aiClient, err := aicore.NewClient(aicore.FactoryConfig{
 		Provider:     cfg.AIConfig.AIProvider,
 		OpenAIKey:    cfg.AIConfig.OpenAIKey,
 		ClaudeKey:    cfg.AIConfig.ClaudeKey,
+		GeminiKey:    cfg.AIConfig.GeminiKey,
+		DeepSeekKey:  cfg.AIConfig.DeepSeekKey,
+		GrokKey:      cfg.AIConfig.GrokKey,
 		SystemPrompt: cfg.AIConfig.AISystemPrompt,
 		Model:        cfg.AIConfig.AIModel,
 		Temperature:  0,
