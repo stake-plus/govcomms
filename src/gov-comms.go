@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/stake-plus/govcomms/src/actions"
+	"github.com/stake-plus/govcomms/src/agents"
 	_ "github.com/stake-plus/govcomms/src/ai/providers"
 	shareddata "github.com/stake-plus/govcomms/src/data"
 )
@@ -23,9 +24,14 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	manager, err := actions.StartAll(ctx, db)
+	actionManager, err := actions.StartAll(ctx, db)
 	if err != nil {
 		log.Fatalf("actions start: %v", err)
+	}
+
+	agentManager, err := agents.StartAll(ctx, db)
+	if err != nil {
+		log.Fatalf("agents start: %v", err)
 	}
 
 	// Wait for termination
@@ -33,5 +39,10 @@ func main() {
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	<-sigs
 
-	manager.Stop(ctx)
+	if actionManager != nil {
+		actionManager.Stop(ctx)
+	}
+	if agentManager != nil {
+		agentManager.Stop(ctx)
+	}
 }
