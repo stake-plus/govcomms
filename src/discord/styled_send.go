@@ -97,8 +97,15 @@ func (h *HeaderHandle) Update(s *discordgo.Session, title, body string) error {
 			empty := []discordgo.MessageComponent{}
 			edit.Components = &empty
 		}
-		_, err := InteractionResponseEditNoEmbed(s, h.interaction, edit)
-		return err
+		if _, err := InteractionResponseEditNoEmbed(s, h.interaction, edit); err != nil {
+			if expiredInteractionToken(err) {
+				h.viaInteraction = false
+			} else {
+				return err
+			}
+		} else {
+			return nil
+		}
 	}
 
 	if h.channelID == "" || h.messageID == "" {
@@ -139,4 +146,16 @@ func dispatchStyledMessages(s *discordgo.Session, channelID string, payloads []S
 		sent = append(sent, sentMsg)
 	}
 	return sent, nil
+}
+
+func expiredInteractionToken(err error) bool {
+	if err == nil {
+		return false
+	}
+	if restErr, ok := err.(*discordgo.RESTError); ok && restErr.Message != nil {
+		if restErr.Message.Code == 50027 {
+			return true
+		}
+	}
+	return false
 }
