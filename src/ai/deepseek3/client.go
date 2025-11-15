@@ -1,4 +1,4 @@
-package deepseek32
+package deepseek3
 
 import (
 	"bytes"
