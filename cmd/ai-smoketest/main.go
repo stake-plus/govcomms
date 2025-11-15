@@ -55,7 +55,7 @@ func main() {
 	}
 
 	systemPrompt := pickFirst(*systemFlag, aiCfg.AISystemPrompt, defaultSystemPrompt)
-	enableWeb := *webFlag || aiCfg.AIEnableWeb
+	enableWeb := *webFlag // provider web tools can still be forced via flag
 
 	mode, err := parseMode(*modeFlag)
 	if err != nil {
