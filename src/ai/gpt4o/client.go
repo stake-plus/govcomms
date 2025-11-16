@@ -27,8 +27,6 @@ type client struct {
 	defaults   core.Options
 }
 
-const responsesBetaHeader = "responses-2024-12-17"
-
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
 	if cfg.OpenAIKey == "" {
 		return nil, fmt.Errorf("gpt4omini: OpenAI API key not configured")
@@ -66,7 +64,6 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		req.Header.Set("OpenAI-Beta", responsesBetaHeader)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return 0, nil, err
@@ -141,7 +138,6 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		req.Header.Set("OpenAI-Beta", responsesBetaHeader)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return 0, nil, err
@@ -379,6 +375,8 @@ func (c *client) submitToolOutputs(ctx context.Context, responseID string, outpu
 	endpoints := []string{
 		fmt.Sprintf("https://api.openai.com/v1/responses/%s/submit_tool_outputs", responseID),
 		fmt.Sprintf("https://api.openai.com/v1/responses/%s/tool_outputs", responseID),
+		fmt.Sprintf("https://api.openai.com/v1/beta/responses/%s/submit_tool_outputs", responseID),
+		fmt.Sprintf("https://api.openai.com/v1/beta/responses/%s/tool_outputs", responseID),
 	}
 	var lastErr error
 	for idx, endpoint := range endpoints {
@@ -388,7 +386,6 @@ func (c *client) submitToolOutputs(ctx context.Context, responseID string, outpu
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		req.Header.Set("OpenAI-Beta", responsesBetaHeader)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return nil, err
@@ -402,8 +399,8 @@ func (c *client) submitToolOutputs(ctx context.Context, responseID string, outpu
 			return body, nil
 		}
 		lastErr = fmt.Errorf("gpt4omini: submit tool outputs status %d: %s", resp.StatusCode, string(body))
-		if resp.StatusCode == http.StatusNotFound && idx == 0 {
-			log.Printf("gpt4o: submit_tool_outputs endpoint unavailable, retrying tool_outputs variant")
+		if resp.StatusCode == http.StatusNotFound && idx < len(endpoints)-1 {
+			log.Printf("gpt4o: submit tool outputs endpoint %s unavailable (status %d), trying next fallback", endpoint, resp.StatusCode)
 			continue
 		}
 		return nil, lastErr
