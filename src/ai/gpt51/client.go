@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -28,10 +27,6 @@ type client struct {
 	defaults   core.Options
 }
 
-const responsesBetaHeader = "responses=v1"
-
-var errToolOutputsUnsupported = errors.New("responses tool outputs endpoint unavailable")
-
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
 	if cfg.OpenAIKey == "" {
 		return nil, fmt.Errorf("gpt51: OpenAI API key not configured")
@@ -47,10 +42,6 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 			SystemPrompt:        cfg.SystemPrompt,
 		},
 	}, nil
-}
-
-func addResponsesBetaHeader(req *http.Request) {
-	req.Header.Set("OpenAI-Beta", responsesBetaHeader)
 }
 
 func (c *client) AnswerQuestion(ctx context.Context, content string, question string, opts core.Options) (string, error) {
@@ -73,7 +64,6 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		addResponsesBetaHeader(req)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return 0, nil, err
@@ -107,74 +97,9 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 	return result.Choices[0].Message.Content, nil
 }
 
-func buildInputBlocks(text string) []map[string]any {
-	return []map[string]any{
-		{
-			"role": "user",
-			"content": []map[string]any{
-				{
-					"type": "input_text",
-					"text": text,
-				},
-			},
-		},
-	}
-}
-
 func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, opts core.Options) (string, error) {
-	// Use Responses API with optional tools like web_search
 	merged := c.merge(opts)
-	payload := map[string]interface{}{
-		"model":             merged.Model,
-		"input":             buildInputBlocks(input),
-		"temperature":       merged.Temperature,
-		"max_output_tokens": merged.MaxCompletionTokens,
-	}
-	var toolMap map[string]core.Tool
-	var forcedTool string
-	if len(tools) > 0 {
-		var toolPayload []map[string]interface{}
-		toolPayload, toolMap, forcedTool = buildToolsPayload(tools)
-		if len(toolPayload) > 0 {
-			payload["tools"] = toolPayload
-			payload["tool_choice"] = buildToolChoice(forcedTool)
-		}
-	}
-	bodyBytes, _ := json.Marshal(payload)
-	_, body, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
-		req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/responses", bytes.NewBuffer(bodyBytes))
-		if err != nil {
-			return 0, nil, err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		addResponsesBetaHeader(req)
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			return 0, nil, err
-		}
-		defer resp.Body.Close()
-		b, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return resp.StatusCode, nil, err
-		}
-		if resp.StatusCode != http.StatusOK {
-			return resp.StatusCode, b, fmt.Errorf("status %d: %s", resp.StatusCode, truncatePayload(b, 512))
-		}
-		return resp.StatusCode, b, nil
-	})
-	if err != nil {
-		return "", fmt.Errorf("gpt51 API error: %w", err)
-	}
-	result, herr := c.handleResponse(ctx, body, toolMap)
-	if herr == nil {
-		return result, nil
-	}
-	if errors.Is(herr, errToolOutputsUnsupported) {
-		log.Printf("gpt51: responses tool outputs unsupported; falling back to chat completions tool flow")
-		return c.respondWithChatTools(ctx, input, tools, merged)
-	}
-	return "", herr
+	return c.respondWithChatTools(ctx, input, tools, merged)
 }
 
 func (c *client) merge(opts core.Options) core.Options {
@@ -211,97 +136,6 @@ func orFloat(v, d float64) float64 {
 		return v
 	}
 	return d
-}
-
-func buildToolsPayload(tools []core.Tool) ([]map[string]interface{}, map[string]core.Tool, string) {
-	out := []map[string]interface{}{}
-	toolMap := map[string]core.Tool{}
-	var forced string
-	for idx, t := range tools {
-		switch strings.ToLower(t.Type) {
-		case "web_search":
-			out = append(out, map[string]interface{}{"type": "web_search"})
-		case "mcp_referenda":
-			name := t.Name
-			if strings.TrimSpace(name) == "" {
-				name = fmt.Sprintf("mcp_referendum_%d", idx+1)
-			}
-			funcDef := map[string]interface{}{
-				"name":        name,
-				"description": t.Description,
-			}
-			if t.Parameters != nil {
-				funcDef["parameters"] = t.Parameters
-			}
-			tool := map[string]interface{}{
-				"type":     "function",
-				"name":     name,
-				"function": funcDef,
-			}
-			if t.Description != "" {
-				tool["description"] = t.Description
-			}
-			out = append(out, tool)
-			toolCopy := t
-			toolCopy.Name = name
-			toolMap[name] = toolCopy
-			forced = name
-		default:
-			// ignore unsupported tool types
-		}
-	}
-	return out, toolMap, forced
-}
-
-func (c *client) handleResponse(ctx context.Context, body []byte, toolMap map[string]core.Tool) (string, error) {
-	raw := body
-	for {
-		var envelope openAIResponse
-		if err := json.Unmarshal(raw, &envelope); err != nil {
-			log.Printf("gpt51: failed to decode response body=%s", truncatePayload(raw, 1024))
-			return "", err
-		}
-		log.Printf("gpt51: response status=%s id=%s", envelope.Status, envelope.ID)
-
-		if calls := pendingToolCalls(envelope); len(calls) > 0 {
-			log.Printf("gpt51: requires action id=%s status=%s", envelope.ID, envelope.Status)
-			outputs, err := c.executeToolCalls(ctx, calls, toolMap)
-			if err != nil {
-				return "", err
-			}
-			nextBody, err := c.submitToolOutputs(ctx, envelope.ID, outputs)
-			if err != nil {
-				return "", err
-			}
-			raw = nextBody
-			continue
-		}
-
-		switch envelope.Status {
-		case "completed":
-			log.Printf("gpt51: completed response id=%s", envelope.ID)
-			if err := c.backfillToolResults(ctx, envelope.Output, toolMap, envelope.ID); err != nil {
-				return "", err
-			}
-			if text := extractResponseText(envelope); text != "" {
-				return text, nil
-			}
-			log.Printf("gpt51: empty response raw=%s", truncatePayload(raw, 2048))
-			return "", fmt.Errorf("gpt51: empty response")
-		case "requires_action":
-			return "", fmt.Errorf("gpt51: required action missing tool outputs")
-		case "queued", "in_progress":
-			log.Printf("gpt51: status %s waiting...", envelope.Status)
-			time.Sleep(500 * time.Millisecond)
-			nextBody, err := c.fetchResponse(ctx, envelope.ID)
-			if err != nil {
-				return "", err
-			}
-			raw = nextBody
-		default:
-			return "", fmt.Errorf("gpt51: unexpected status %s", envelope.Status)
-		}
-	}
 }
 
 func (c *client) executeToolCalls(ctx context.Context, calls []openAIToolCall, toolMap map[string]core.Tool) ([]toolOutput, error) {
@@ -394,110 +228,6 @@ func (c *client) invokeMCP(ctx context.Context, desc *core.MCPDescriptor, args m
 	return string(body), nil
 }
 
-func (c *client) submitToolOutputs(ctx context.Context, responseID string, outputs []toolOutput) ([]byte, error) {
-	payload := map[string]any{
-		"tool_outputs": outputs,
-	}
-	bodyBytes, _ := json.Marshal(payload)
-	endpoints := []string{
-		fmt.Sprintf("https://api.openai.com/v1/responses/%s/submit_tool_outputs", responseID),
-		fmt.Sprintf("https://api.openai.com/v1/responses/%s/tool_outputs", responseID),
-		fmt.Sprintf("https://api.openai.com/v1/beta/responses/%s/submit_tool_outputs", responseID),
-		fmt.Sprintf("https://api.openai.com/v1/beta/responses/%s/tool_outputs", responseID),
-	}
-	var lastErr error
-	all404 := true
-	for idx, endpoint := range endpoints {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(bodyBytes))
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		addResponsesBetaHeader(req)
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		body, readErr := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if readErr != nil {
-			return nil, readErr
-		}
-		if resp.StatusCode == http.StatusOK {
-			return body, nil
-		}
-		lastErr = fmt.Errorf("gpt51: submit tool outputs status %d: %s", resp.StatusCode, string(body))
-		if resp.StatusCode == http.StatusNotFound {
-			log.Printf("gpt51: submit tool outputs endpoint %s unavailable (status %d), trying next fallback", endpoint, resp.StatusCode)
-			if idx == len(endpoints)-1 {
-				break
-			}
-			continue
-		}
-		all404 = false
-		return nil, lastErr
-	}
-	if all404 {
-		return nil, errToolOutputsUnsupported
-	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("gpt51: submit tool outputs failed without response")
-	}
-	return nil, lastErr
-}
-
-func (c *client) fetchResponse(ctx context.Context, responseID string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("https://api.openai.com/v1/responses/%s", responseID), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	addResponsesBetaHeader(req)
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gpt51: fetch response status %d: %s", resp.StatusCode, string(body))
-	}
-	return body, nil
-}
-
-func extractResponseText(resp openAIResponse) string {
-	for _, o := range resp.Output {
-		if text := extractTextFromContent(o.Content); text != "" {
-			return text
-		}
-	}
-	if resp.OutputText != "" {
-		return resp.OutputText
-	}
-	for _, msg := range resp.Messages {
-		if strings.EqualFold(msg.Role, "assistant") {
-			if text := extractTextFromContent(msg.Content); text != "" {
-				return text
-			}
-		}
-	}
-	return ""
-}
-
-func extractTextFromContent(chunks []openAIMessageContent) string {
-	for _, c := range chunks {
-		if strings.TrimSpace(c.Text) != "" {
-			return c.Text
-		}
-	}
-	return ""
-}
-
 func parseUint(value any) (uint64, error) {
 	switch v := value.(type) {
 	case float64:
@@ -517,44 +247,6 @@ func parseUint(value any) (uint64, error) {
 	default:
 		return 0, fmt.Errorf("unsupported numeric type %T", value)
 	}
-}
-
-type openAIResponse struct {
-	ID             string               `json:"id"`
-	Status         string               `json:"status"`
-	Output         []openAIOutput       `json:"output"`
-	OutputText     string               `json:"output_text"`
-	RequiredAction *requiredActionBlock `json:"required_action"`
-	Messages       []openAIMessage      `json:"messages"`
-}
-
-type openAIOutput struct {
-	Content []openAIMessageContent `json:"content"`
-	ID      string                 `json:"id"`
-	Type    string                 `json:"type"`
-	Status  string                 `json:"status"`
-	Name    string                 `json:"name"`
-	CallID  string                 `json:"call_id"`
-	Args    string                 `json:"arguments"`
-}
-
-type openAIMessage struct {
-	Role    string                 `json:"role"`
-	Content []openAIMessageContent `json:"content"`
-}
-
-type openAIMessageContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type requiredActionBlock struct {
-	Type              string                  `json:"type"`
-	SubmitToolOutputs *submitToolOutputsBlock `json:"submit_tool_outputs"`
-}
-
-type submitToolOutputsBlock struct {
-	ToolCalls []openAIToolCall `json:"tool_calls"`
 }
 
 type openAIToolCall struct {
@@ -621,67 +313,6 @@ func copyArgs(src map[string]any) map[string]any {
 	return dst
 }
 
-func buildToolChoice(forced string) any {
-	if strings.TrimSpace(forced) == "" {
-		return "auto"
-	}
-	return map[string]any{
-		"type": "function",
-		"name": forced,
-	}
-}
-
-func pendingToolCalls(resp openAIResponse) []openAIToolCall {
-	if resp.RequiredAction == nil || resp.RequiredAction.SubmitToolOutputs == nil {
-		return nil
-	}
-	if len(resp.RequiredAction.SubmitToolOutputs.ToolCalls) == 0 {
-		return nil
-	}
-	return resp.RequiredAction.SubmitToolOutputs.ToolCalls
-}
-
-func mustMarshal(v any) []byte {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return []byte(fmt.Sprintf(`{"marshal_error":"%s"}`, sanitizeToolError(err)))
-	}
-	return b
-}
-
-func (c *client) backfillToolResults(ctx context.Context, outputs []openAIOutput, toolMap map[string]core.Tool, responseID string) error {
-	for _, out := range outputs {
-		if !strings.EqualFold(out.Type, "function_call") {
-			continue
-		}
-		if strings.TrimSpace(out.CallID) == "" || strings.TrimSpace(out.Name) == "" {
-			continue
-		}
-		calls := []openAIToolCall{{
-			ID:   out.CallID,
-			Type: "function",
-			Function: struct {
-				Name      string `json:"name"`
-				Arguments string `json:"arguments"`
-			}{
-				Name:      out.Name,
-				Arguments: out.Args,
-			},
-		}}
-		outputs, err := c.executeToolCalls(ctx, calls, toolMap)
-		if err != nil {
-			return err
-		}
-		if len(outputs) == 0 {
-			continue
-		}
-		if _, err := c.submitToolOutputs(ctx, responseID, outputs); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (c *client) respondWithChatTools(ctx context.Context, input string, tools []core.Tool, opts core.Options) (string, error) {
 	messages := make([]chatMessagePayload, 0, 4)
 	if strings.TrimSpace(opts.SystemPrompt) != "" {
@@ -691,6 +322,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 
 	toolDefs, toolMap, forced := buildChatToolsPayload(tools)
 	toolCache := make(map[string]string)
+	stallCount := 0
 
 	for iteration := 0; iteration < 20; iteration++ {
 		reqBody := map[string]any{
@@ -715,7 +347,6 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			}
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+c.apiKey)
-			addResponsesBetaHeader(req)
 			resp, err := c.httpClient.Do(req)
 			if err != nil {
 				return 0, nil, err
@@ -790,6 +421,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			}
 		}
 
+		pendingCallExecuted := false
 		for _, call := range convertedCalls {
 			content := callOutputs[call.ID]
 			messages = append(messages, chatMessagePayload{
@@ -798,6 +430,22 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 				Name:       call.Function.Name,
 				Content:    content,
 			})
+			if _, ok := pendingKeys[call.ID]; ok {
+				pendingCallExecuted = true
+			}
+		}
+
+		if !pendingCallExecuted {
+			stallCount++
+			if stallCount >= 2 {
+				messages = append(messages, chatMessagePayload{
+					Role:    "user",
+					Content: "You already retrieved the referendum metadata and content. Use the information you have and provide the final answer without calling the tool again.",
+				})
+				stallCount = 0
+			}
+		} else {
+			stallCount = 0
 		}
 	}
 
