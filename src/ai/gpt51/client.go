@@ -691,7 +691,10 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 
 	toolDefs, toolMap, forced := buildChatToolsPayload(tools)
 
-	for iteration := 0; iteration < 8; iteration++ {
+	toolDefs, toolMap, forced := buildChatToolsPayload(tools)
+	toolCache := make(map[string]string)
+
+	for iteration := 0; iteration < 20; iteration++ {
 		reqBody := map[string]any{
 			"model":       opts.Model,
 			"messages":    messages,
@@ -700,6 +703,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 		if opts.MaxCompletionTokens > 0 {
 			reqBody["max_completion_tokens"] = opts.MaxCompletionTokens
 		}
+
 		if len(toolDefs) > 0 {
 			reqBody["tools"] = toolDefs
 			reqBody["tool_choice"] = buildChatToolChoice(forced)
@@ -761,15 +765,35 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 		if len(convertedCalls) == 0 {
 			continue
 		}
-		outputs, err := c.executeToolCalls(ctx, convertedCalls, toolMap)
-		if err != nil {
-			return "", err
-		}
-		for idx, call := range convertedCalls {
-			var content string
-			if idx < len(outputs) {
-				content = outputs[idx].Output
+
+		callOutputs := make(map[string]string, len(convertedCalls))
+		pendingCalls := make([]openAIToolCall, 0, len(convertedCalls))
+		pendingKeys := make(map[string]string, len(convertedCalls))
+		for _, call := range convertedCalls {
+			key := toolCacheKey(call)
+			if val, ok := toolCache[key]; ok {
+				callOutputs[call.ID] = val
+				continue
 			}
+			pendingCalls = append(pendingCalls, call)
+			pendingKeys[call.ID] = key
+		}
+
+		if len(pendingCalls) > 0 {
+			outputs, err := c.executeToolCalls(ctx, pendingCalls, toolMap)
+			if err != nil {
+				return "", err
+			}
+			for _, out := range outputs {
+				callOutputs[out.ToolCallID] = out.Output
+				if key := pendingKeys[out.ToolCallID]; key != "" {
+					toolCache[key] = out.Output
+				}
+			}
+		}
+
+		for _, call := range convertedCalls {
+			content := callOutputs[call.ID]
 			messages = append(messages, chatMessagePayload{
 				Role:       "tool",
 				ToolCallID: call.ID,
@@ -870,4 +894,10 @@ func convertChatToolCalls(calls []chatToolCall) []openAIToolCall {
 		}
 	}
 	return out
+}
+
+func toolCacheKey(call openAIToolCall) string {
+	name := strings.ToLower(strings.TrimSpace(call.Function.Name))
+	args := strings.TrimSpace(call.Function.Arguments)
+	return name + "::" + args
 }
