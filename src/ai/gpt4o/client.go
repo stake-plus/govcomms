@@ -267,16 +267,10 @@ func (c *client) executeToolCalls(ctx context.Context, calls []openAIToolCall, t
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 			return nil, fmt.Errorf("gpt4omini: parse tool args: %w", err)
 		}
-		var result string
-		var err error
-		switch strings.ToLower(toolDef.Type) {
-		case "mcp_referenda":
-			result, err = c.invokeMCP(ctx, toolDef.MCP, args)
-		default:
-			err = fmt.Errorf("gpt4omini: unsupported tool type %s", toolDef.Type)
-		}
-		if err != nil {
-			return nil, err
+		args = mergeArgs(args, toolDef.Defaults)
+		result, execErr := c.dispatchTool(ctx, toolDef, args)
+		if execErr != nil {
+			result = fmt.Sprintf(`{"error":"%s"}`, sanitizeToolError(execErr))
 		}
 		outputs = append(outputs, toolOutput{
 			ToolCallID: call.ID,
@@ -284,6 +278,15 @@ func (c *client) executeToolCalls(ctx context.Context, calls []openAIToolCall, t
 		})
 	}
 	return outputs, nil
+}
+
+func (c *client) dispatchTool(ctx context.Context, toolDef core.Tool, args map[string]any) (string, error) {
+	switch strings.ToLower(toolDef.Type) {
+	case "mcp_referenda":
+		return c.invokeMCP(ctx, toolDef.MCP, args)
+	default:
+		return "", fmt.Errorf("unsupported tool %s", toolDef.Type)
+	}
 }
 
 func (c *client) invokeMCP(ctx context.Context, desc *core.MCPDescriptor, args map[string]any) (string, error) {
@@ -469,4 +472,24 @@ type openAIToolCall struct {
 type toolOutput struct {
 	ToolCallID string `json:"tool_call_id"`
 	Output     string `json:"output"`
+}
+
+func sanitizeToolError(err error) string {
+	msg := strings.TrimSpace(err.Error())
+	if len(msg) > 200 {
+		msg = msg[:200]
+	}
+	return msg
+}
+
+func mergeArgs(args map[string]any, defaults map[string]any) map[string]any {
+	if args == nil {
+		args = map[string]any{}
+	}
+	for k, v := range defaults {
+		if _, exists := args[k]; !exists {
+			args[k] = v
+		}
+	}
+	return args
 }

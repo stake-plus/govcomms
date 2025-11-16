@@ -32,7 +32,9 @@ type Module struct {
 	networkManager *sharedgov.NetworkManager
 	refManager     *sharedgov.ReferendumManager
 	cancel         context.CancelFunc
-	mcpTool        *aicore.Tool
+	mcpEnabled     bool
+	mcpBaseURL     string
+	mcpAuthToken   string
 }
 
 // NewModule wires dependencies for the question/refresh/context actions.
@@ -74,7 +76,7 @@ func NewModule(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Module, error) {
 		return nil, fmt.Errorf("question: cache manager: %w", err)
 	}
 
-	mcpTool := buildMCPReferendaTool(db)
+	mcpCfg := sharedconfig.LoadMCPConfig(db)
 
 	return &Module{
 		cfg:            cfg,
@@ -85,7 +87,9 @@ func NewModule(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Module, error) {
 		aiClient:       aiClient,
 		networkManager: networkManager,
 		refManager:     refManager,
-		mcpTool:        mcpTool,
+		mcpEnabled:     mcpCfg.Enabled,
+		mcpBaseURL:     mcpCfg.Listen,
+		mcpAuthToken:   mcpCfg.AuthToken,
 	}, nil
 }
 
@@ -217,7 +221,7 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 	contextBuilder.WriteString(fmt.Sprintf(
 		"You are assisting with %s referendum #%d.\n- Network: %s\n- Referendum ID: %d\n",
 		network.Name, threadInfo.RefID, network.Name, threadInfo.RefID))
-	if m.mcpTool != nil {
+	if m.mcpEnabled {
 		contextBuilder.WriteString("You do NOT have the proposal body in your context. You MUST call the tool `fetch_referendum_data` before answering. Example calls:\n")
 		contextBuilder.WriteString("1. metadata: {\"network\":\"" + strings.ToLower(network.Name) + "\",\"refId\":" + fmt.Sprint(threadInfo.RefID) + ",\"resource\":\"metadata\"}\n")
 		contextBuilder.WriteString("2. content: {\"network\":\"" + strings.ToLower(network.Name) + "\",\"refId\":" + fmt.Sprint(threadInfo.RefID) + ",\"resource\":\"content\"}\n")
@@ -234,8 +238,8 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 	input := contextBuilder.String() + "\n\nQuestion:\n" + question
 
 	tools := []aicore.Tool{{Type: "web_search"}}
-	if m.mcpTool != nil {
-		tools = append(tools, *m.mcpTool)
+	if mcptool := m.buildMCPTool(strings.ToLower(network.Name), uint32(threadInfo.RefID)); mcptool != nil {
+		tools = append(tools, *mcptool)
 	}
 
 	answer, err := m.aiClient.Respond(ctx, input, tools, opts)
@@ -256,12 +260,23 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 	m.sendLongMessageSlash(s, i.Interaction, question, answer)
 }
 
-func buildMCPReferendaTool(db *gorm.DB) *aicore.Tool {
-	mcpCfg := sharedconfig.LoadMCPConfig(db)
-	if !mcpCfg.Enabled {
+func (m *Module) buildMCPTool(network string, refID uint32) *aicore.Tool {
+	if !m.mcpEnabled {
 		return nil
 	}
-	return mcp.NewReferendaTool(mcpCfg.Listen, mcpCfg.AuthToken)
+	tool := mcp.NewReferendaTool(m.mcpBaseURL, m.mcpAuthToken)
+	if tool == nil {
+		return nil
+	}
+	if tool.Defaults == nil {
+		tool.Defaults = map[string]any{}
+	}
+	tool.Defaults["network"] = network
+	tool.Defaults["refId"] = refID
+	if _, ok := tool.Defaults["resource"]; !ok {
+		tool.Defaults["resource"] = "metadata"
+	}
+	return tool
 }
 
 func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {

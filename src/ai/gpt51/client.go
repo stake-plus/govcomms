@@ -270,6 +270,7 @@ func (c *client) executeToolCalls(ctx context.Context, calls []openAIToolCall, t
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 			return nil, fmt.Errorf("gpt51: parse tool args: %w", err)
 		}
+		args = mergeArgs(args, toolDef.Defaults)
 		result, execErr := c.dispatchTool(ctx, toolDef, args)
 		if execErr != nil {
 			result = fmt.Sprintf(`{"error":"%s"}`, sanitizeToolError(execErr))
@@ -491,4 +492,16 @@ func sanitizeToolError(err error) string {
 		msg = msg[:200]
 	}
 	return msg
+}
+
+func mergeArgs(args map[string]any, defaults map[string]any) map[string]any {
+	if args == nil {
+		args = map[string]any{}
+	}
+	for k, v := range defaults {
+		if _, exists := args[k]; !exists {
+			args[k] = v
+		}
+	}
+	return args
 }
