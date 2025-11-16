@@ -107,12 +107,22 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 		"max_output_tokens": merged.MaxCompletionTokens,
 	}
 	var toolMap map[string]core.Tool
+	var forcedTool string
 	if len(tools) > 0 {
 		var toolPayload []map[string]interface{}
-		toolPayload, toolMap = buildToolsPayload(tools)
+		toolPayload, toolMap, forcedTool = buildToolsPayload(tools)
 		if len(toolPayload) > 0 {
 			payload["tools"] = toolPayload
-			payload["tool_choice"] = "auto"
+			if forcedTool != "" {
+				payload["tool_choice"] = map[string]any{
+					"type": "function",
+					"function": map[string]any{
+						"name": forcedTool,
+					},
+				}
+			} else {
+				payload["tool_choice"] = "auto"
+			}
 		}
 	}
 	bodyBytes, _ := json.Marshal(payload)
@@ -179,9 +189,10 @@ func orFloat(v, d float64) float64 {
 	return d
 }
 
-func buildToolsPayload(tools []core.Tool) ([]map[string]interface{}, map[string]core.Tool) {
+func buildToolsPayload(tools []core.Tool) ([]map[string]interface{}, map[string]core.Tool, string) {
 	out := []map[string]interface{}{}
 	toolMap := map[string]core.Tool{}
+	var forced string
 	for idx, t := range tools {
 		switch strings.ToLower(t.Type) {
 		case "web_search":
@@ -210,9 +221,10 @@ func buildToolsPayload(tools []core.Tool) ([]map[string]interface{}, map[string]
 			toolCopy := t
 			toolCopy.Name = name
 			toolMap[name] = toolCopy
+			forced = name
 		}
 	}
-	return out, toolMap
+	return out, toolMap, forced
 }
 
 func (c *client) handleResponse(ctx context.Context, body []byte, toolMap map[string]core.Tool) (string, error) {
