@@ -198,10 +198,16 @@ func (c *client) invokeMCP(ctx context.Context, desc *core.MCPDescriptor, args m
 	}
 	resource := strings.TrimSpace(fmt.Sprint(args["resource"]))
 	resource = strings.ToLower(resource)
+	fileParam := strings.TrimSpace(fmt.Sprint(args["file"]))
 	base := strings.TrimRight(desc.BaseURL, "/")
 	endpoint := fmt.Sprintf("%s/v1/referenda/%s/%d", base, url.PathEscape(network), refID)
 	if resource != "" && resource != "metadata" {
 		endpoint += "/" + url.PathEscape(resource)
+	}
+	if resource == "attachments" && fileParam != "" {
+		query := url.Values{}
+		query.Set("file", fileParam)
+		endpoint += "?" + query.Encode()
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)

@@ -2,18 +2,23 @@ package mcp
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/stake-plus/govcomms/src/cache"
 )
+
+const maxAttachmentResponseBytes = 1 * 1024 * 1024
 
 // Config controls the MCP server runtime.
 type Config struct {
@@ -133,8 +138,13 @@ func (s *Server) handleReferenda(w http.ResponseWriter, r *http.Request) {
 		s.logf("mcp: content network=%s ref=%d", network, refID)
 		s.handleContent(w, network, uint32(refID))
 	case "attachments":
-		s.logf("mcp: attachments network=%s ref=%d", network, refID)
-		s.handleAttachments(w, network, uint32(refID))
+		fileParam := strings.TrimSpace(r.URL.Query().Get("file"))
+		if fileParam != "" {
+			s.logf("mcp: attachments network=%s ref=%d file=%s", network, refID, fileParam)
+		} else {
+			s.logf("mcp: attachments network=%s ref=%d", network, refID)
+		}
+		s.handleAttachments(w, network, uint32(refID), fileParam)
 	default:
 		http.NotFound(w, r)
 	}
@@ -172,18 +182,68 @@ func (s *Server) handleContent(w http.ResponseWriter, network string, refID uint
 	writeJSON(w, http.StatusOK, payload)
 }
 
-func (s *Server) handleAttachments(w http.ResponseWriter, network string, refID uint32) {
+func (s *Server) handleAttachments(w http.ResponseWriter, network string, refID uint32, fileName string) {
 	entry, err := s.cache.EnsureEntry(network, refID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("cache load failed: %v", err), http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"network":     entry.Network,
-		"refId":       entry.RefID,
-		"attachments": entry.Attachments,
-		"refreshedAt": entry.RefreshedAt,
-	})
+	if strings.TrimSpace(fileName) == "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"network":     entry.Network,
+			"refId":       entry.RefID,
+			"attachments": entry.Attachments,
+			"refreshedAt": entry.RefreshedAt,
+		})
+		return
+	}
+
+	var target *cache.Attachment
+	for idx := range entry.Attachments {
+		if equalAttachmentFile(entry.Attachments[idx].FileName, fileName) {
+			target = &entry.Attachments[idx]
+			break
+		}
+	}
+	if target == nil {
+		http.Error(w, "attachment not found", http.StatusNotFound)
+		return
+	}
+
+	path := entry.AttachmentPath(*target)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("read attachment failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	truncated := false
+	if len(data) > maxAttachmentResponseBytes {
+		data = data[:maxAttachmentResponseBytes]
+		truncated = true
+	}
+	payload := map[string]any{
+		"network":       entry.Network,
+		"refId":         entry.RefID,
+		"file":          target.FileName,
+		"category":      target.Category,
+		"contentType":   target.ContentType,
+		"sizeBytes":     target.SizeBytes,
+		"contentBase64": base64.StdEncoding.EncodeToString(data),
+		"truncated":     truncated,
+		"refreshedAt":   entry.RefreshedAt,
+		"sourceUrl":     target.SourceURL,
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func equalAttachmentFile(candidate, requested string) bool {
+	if strings.EqualFold(candidate, requested) {
+		return true
+	}
+	if strings.EqualFold(filepath.Base(candidate), requested) {
+		return true
+	}
+	return false
 }
 
 func (s *Server) logf(format string, args ...any) {
