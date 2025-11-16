@@ -325,6 +325,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 	stallCount := 0
 	metadataFetched := false
 	contentFetched := false
+	attachmentsFetched := false
 
 	for iteration := 0; iteration < 20; iteration++ {
 		reqBody := map[string]any{
@@ -474,7 +475,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 
 		if metadataAnnouncedAttachments && !attachmentsFetched {
 			messages = append(messages, chatMessagePayload{
-				Role: "user",
+				Role:    "user",
 				Content: "Metadata references attachments. Call fetch_referendum_data with resource:\"attachments\" to retrieve those files before answering.",
 			})
 		}
