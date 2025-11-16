@@ -323,6 +323,8 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 	toolDefs, toolMap, forced := buildChatToolsPayload(tools)
 	toolCache := make(map[string]string)
 	stallCount := 0
+	metadataFetched := false
+	contentFetched := false
 
 	for iteration := 0; iteration < 20; iteration++ {
 		reqBody := map[string]any{
@@ -336,7 +338,11 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 
 		if len(toolDefs) > 0 {
 			reqBody["tools"] = toolDefs
-			reqBody["tool_choice"] = buildChatToolChoice(forced)
+			if !(metadataFetched && contentFetched) && strings.TrimSpace(forced) != "" {
+				reqBody["tool_choice"] = buildChatToolChoice(forced)
+			} else {
+				reqBody["tool_choice"] = "auto"
+			}
 		}
 
 		bodyBytes, _ := json.Marshal(reqBody)
@@ -432,6 +438,12 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			})
 			if _, ok := pendingKeys[call.ID]; ok {
 				pendingCallExecuted = true
+			}
+			switch normalizeResource(resourceFromToolCall(call)) {
+			case "content":
+				contentFetched = true
+			case "metadata":
+				metadataFetched = true
 			}
 		}
 
@@ -546,4 +558,31 @@ func toolCacheKey(call openAIToolCall) string {
 	name := strings.ToLower(strings.TrimSpace(call.Function.Name))
 	args := strings.TrimSpace(call.Function.Arguments)
 	return name + "::" + args
+}
+
+func resourceFromToolCall(call openAIToolCall) string {
+	args := strings.TrimSpace(call.Function.Arguments)
+	if args == "" {
+		return "metadata"
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(args), &obj); err != nil {
+		return "metadata"
+	}
+	res := strings.TrimSpace(strings.ToLower(fmt.Sprint(obj["resource"])))
+	if res == "" {
+		return "metadata"
+	}
+	return res
+}
+
+func normalizeResource(res string) string {
+	r := strings.TrimSpace(strings.ToLower(res))
+	if r == "" {
+		return "metadata"
+	}
+	if strings.HasPrefix(r, "attachment") {
+		return "attachments"
+	}
+	return r
 }
