@@ -433,6 +433,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 		}
 
 		pendingCallExecuted := false
+		metadataAnnouncedAttachments := false
 		for _, call := range convertedCalls {
 			content := callOutputs[call.ID]
 			messages = append(messages, chatMessagePayload{
@@ -450,8 +451,11 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 				contentFetched = true
 			case "metadata":
 				metadataFetched = true
+				if !attachmentsFetched && metadataHasAttachments(content) {
+					metadataAnnouncedAttachments = true
+				}
 			case "attachments":
-				// keep track if needed later
+				attachmentsFetched = true
 			}
 		}
 
@@ -466,6 +470,13 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			}
 		} else {
 			stallCount = 0
+		}
+
+		if metadataAnnouncedAttachments && !attachmentsFetched {
+			messages = append(messages, chatMessagePayload{
+				Role: "user",
+				Content: "Metadata references attachments. Call fetch_referendum_data with resource:\"attachments\" to retrieve those files before answering.",
+			})
 		}
 	}
 
@@ -593,4 +604,14 @@ func normalizeResource(res string) string {
 		return "attachments"
 	}
 	return r
+}
+
+func metadataHasAttachments(content string) bool {
+	var payload struct {
+		Attachments []any `json:"attachments"`
+	}
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return false
+	}
+	return len(payload.Attachments) > 0
 }
