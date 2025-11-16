@@ -267,9 +267,14 @@ func (c *client) executeToolCalls(ctx context.Context, calls []openAIToolCall, t
 		if !ok {
 			return nil, fmt.Errorf("gpt4omini: unknown tool %s", call.Function.Name)
 		}
-		var args map[string]any
-		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
-			return nil, fmt.Errorf("gpt4omini: parse tool args: %w", err)
+		args, err := decodeToolArguments(call.Function.Arguments)
+		if err != nil {
+			log.Printf("gpt4o: tool %s arg parse error: %v", call.Function.Name, err)
+			outputs = append(outputs, toolOutput{
+				ToolCallID: call.ID,
+				Output:     fmt.Sprintf(`{"error":"invalid arguments: %s"}`, sanitizeToolError(err)),
+			})
+			continue
 		}
 		rawArgs := copyArgs(args)
 		args = mergeArgs(args, toolDef.Defaults)
@@ -488,6 +493,18 @@ func sanitizeToolError(err error) string {
 		msg = msg[:200]
 	}
 	return msg
+}
+
+func decodeToolArguments(raw string) (map[string]any, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || strings.EqualFold(trimmed, "null") {
+		return map[string]any{}, nil
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &args); err != nil {
+		return nil, err
+	}
+	return args, nil
 }
 
 func mergeArgs(args map[string]any, defaults map[string]any) map[string]any {
