@@ -27,6 +27,8 @@ type client struct {
 	defaults   core.Options
 }
 
+const responsesBetaHeader = "responses=v1"
+
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
 	if cfg.OpenAIKey == "" {
 		return nil, fmt.Errorf("gpt51: OpenAI API key not configured")
@@ -42,6 +44,10 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 			SystemPrompt:        cfg.SystemPrompt,
 		},
 	}, nil
+}
+
+func addResponsesBetaHeader(req *http.Request) {
+	req.Header.Set("OpenAI-Beta", responsesBetaHeader)
 }
 
 func (c *client) AnswerQuestion(ctx context.Context, content string, question string, opts core.Options) (string, error) {
@@ -64,6 +70,8 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		addResponsesBetaHeader(req)
+		addResponsesBetaHeader(req)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return 0, nil, err
@@ -426,6 +434,7 @@ func (c *client) fetchResponse(ctx context.Context, responseID string) ([]byte, 
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	addResponsesBetaHeader(req)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, err
