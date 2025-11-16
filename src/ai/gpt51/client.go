@@ -690,8 +690,6 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 	messages = append(messages, chatMessagePayload{Role: "user", Content: input})
 
 	toolDefs, toolMap, forced := buildChatToolsPayload(tools)
-
-	toolDefs, toolMap, forced := buildChatToolsPayload(tools)
 	toolCache := make(map[string]string)
 
 	for iteration := 0; iteration < 20; iteration++ {
