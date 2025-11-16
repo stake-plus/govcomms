@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -28,6 +29,8 @@ type client struct {
 }
 
 const responsesBetaHeader = "responses=v1"
+
+var errToolOutputsUnsupported = errors.New("responses tool outputs endpoint unavailable")
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
 	if cfg.OpenAIKey == "" {
@@ -70,7 +73,6 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-		addResponsesBetaHeader(req)
 		addResponsesBetaHeader(req)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -146,6 +148,7 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		addResponsesBetaHeader(req)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return 0, nil, err
@@ -163,7 +166,15 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 	if err != nil {
 		return "", fmt.Errorf("gpt51 API error: %w", err)
 	}
-	return c.handleResponse(ctx, body, toolMap)
+	result, herr := c.handleResponse(ctx, body, toolMap)
+	if herr == nil {
+		return result, nil
+	}
+	if errors.Is(herr, errToolOutputsUnsupported) {
+		log.Printf("gpt51: responses tool outputs unsupported; falling back to chat completions tool flow")
+		return c.respondWithChatTools(ctx, input, tools, merged)
+	}
+	return "", herr
 }
 
 func (c *client) merge(opts core.Options) core.Options {
@@ -395,6 +406,7 @@ func (c *client) submitToolOutputs(ctx context.Context, responseID string, outpu
 		fmt.Sprintf("https://api.openai.com/v1/beta/responses/%s/tool_outputs", responseID),
 	}
 	var lastErr error
+	all404 := true
 	for idx, endpoint := range endpoints {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(bodyBytes))
 		if err != nil {
@@ -402,6 +414,7 @@ func (c *client) submitToolOutputs(ctx context.Context, responseID string, outpu
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		addResponsesBetaHeader(req)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return nil, err
@@ -415,11 +428,18 @@ func (c *client) submitToolOutputs(ctx context.Context, responseID string, outpu
 			return body, nil
 		}
 		lastErr = fmt.Errorf("gpt51: submit tool outputs status %d: %s", resp.StatusCode, string(body))
-		if resp.StatusCode == http.StatusNotFound && idx < len(endpoints)-1 {
+		if resp.StatusCode == http.StatusNotFound {
 			log.Printf("gpt51: submit tool outputs endpoint %s unavailable (status %d), trying next fallback", endpoint, resp.StatusCode)
+			if idx == len(endpoints)-1 {
+				break
+			}
 			continue
 		}
+		all404 = false
 		return nil, lastErr
+	}
+	if all404 {
+		return nil, errToolOutputsUnsupported
 	}
 	if lastErr == nil {
 		lastErr = fmt.Errorf("gpt51: submit tool outputs failed without response")
@@ -660,4 +680,194 @@ func (c *client) backfillToolResults(ctx context.Context, outputs []openAIOutput
 		}
 	}
 	return nil
+}
+
+func (c *client) respondWithChatTools(ctx context.Context, input string, tools []core.Tool, opts core.Options) (string, error) {
+	messages := make([]chatMessagePayload, 0, 4)
+	if strings.TrimSpace(opts.SystemPrompt) != "" {
+		messages = append(messages, chatMessagePayload{Role: "system", Content: opts.SystemPrompt})
+	}
+	messages = append(messages, chatMessagePayload{Role: "user", Content: input})
+
+	toolDefs, toolMap, forced := buildChatToolsPayload(tools)
+
+	for iteration := 0; iteration < 8; iteration++ {
+		reqBody := map[string]any{
+			"model":       opts.Model,
+			"messages":    messages,
+			"temperature": opts.Temperature,
+		}
+		if opts.MaxCompletionTokens > 0 {
+			reqBody["max_tokens"] = opts.MaxCompletionTokens
+		}
+		if len(toolDefs) > 0 {
+			reqBody["tools"] = toolDefs
+			reqBody["tool_choice"] = buildChatToolChoice(forced)
+		}
+
+		bodyBytes, _ := json.Marshal(reqBody)
+		_, body, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(bodyBytes))
+			if err != nil {
+				return 0, nil, err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+c.apiKey)
+			addResponsesBetaHeader(req)
+			resp, err := c.httpClient.Do(req)
+			if err != nil {
+				return 0, nil, err
+			}
+			defer resp.Body.Close()
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return resp.StatusCode, nil, err
+			}
+			if resp.StatusCode != http.StatusOK {
+				return resp.StatusCode, b, fmt.Errorf("status %d: %s", resp.StatusCode, truncatePayload(b, 512))
+			}
+			return resp.StatusCode, b, nil
+		})
+		if err != nil {
+			return "", fmt.Errorf("gpt51 chat fallback error: %w", err)
+		}
+
+		var resp chatCompletionResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return "", err
+		}
+		if len(resp.Choices) == 0 {
+			return "", fmt.Errorf("gpt51: chat completion returned no choices")
+		}
+		msg := resp.Choices[0].Message
+
+		assistantPayload := chatMessagePayload{
+			Role:    "assistant",
+			Content: msg.Content,
+		}
+		if len(msg.ToolCalls) > 0 {
+			assistantPayload.ToolCalls = msg.ToolCalls
+		}
+		messages = append(messages, assistantPayload)
+
+		if len(msg.ToolCalls) == 0 {
+			if strings.TrimSpace(msg.Content) == "" {
+				continue
+			}
+			return msg.Content, nil
+		}
+
+		convertedCalls := convertChatToolCalls(msg.ToolCalls)
+		if len(convertedCalls) == 0 {
+			continue
+		}
+		outputs, err := c.executeToolCalls(ctx, convertedCalls, toolMap)
+		if err != nil {
+			return "", err
+		}
+		for idx, call := range convertedCalls {
+			var content string
+			if idx < len(outputs) {
+				content = outputs[idx].Output
+			}
+			messages = append(messages, chatMessagePayload{
+				Role:       "tool",
+				ToolCallID: call.ID,
+				Name:       call.Function.Name,
+				Content:    content,
+			})
+		}
+	}
+
+	return "", fmt.Errorf("gpt51: chat tool loop exceeded")
+}
+
+func buildChatToolsPayload(tools []core.Tool) ([]map[string]any, map[string]core.Tool, string) {
+	out := []map[string]any{}
+	toolMap := map[string]core.Tool{}
+	var forced string
+	for idx, t := range tools {
+		if strings.ToLower(t.Type) != "mcp_referenda" {
+			continue
+		}
+		name := t.Name
+		if strings.TrimSpace(name) == "" {
+			name = fmt.Sprintf("mcp_referendum_%d", idx+1)
+		}
+		funcDef := map[string]any{
+			"name":        name,
+			"description": t.Description,
+		}
+		if t.Parameters != nil {
+			funcDef["parameters"] = t.Parameters
+		}
+		out = append(out, map[string]any{
+			"type":     "function",
+			"function": funcDef,
+		})
+		toolCopy := t
+		toolCopy.Name = name
+		toolMap[name] = toolCopy
+		forced = name
+	}
+	return out, toolMap, forced
+}
+
+func buildChatToolChoice(forced string) any {
+	if strings.TrimSpace(forced) == "" {
+		return "auto"
+	}
+	return map[string]any{
+		"type": "function",
+		"function": map[string]any{
+			"name": forced,
+		},
+	}
+}
+
+type chatCompletionResponse struct {
+	Choices []struct {
+		Message chatMessage `json:"message"`
+	} `json:"choices"`
+}
+
+type chatMessage struct {
+	Role      string         `json:"role"`
+	Content   string         `json:"content"`
+	ToolCalls []chatToolCall `json:"tool_calls"`
+}
+
+type chatToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+type chatMessagePayload struct {
+	Role       string         `json:"role"`
+	Content    string         `json:"content,omitempty"`
+	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	ToolCallID string         `json:"tool_call_id,omitempty"`
+}
+
+func convertChatToolCalls(calls []chatToolCall) []openAIToolCall {
+	out := make([]openAIToolCall, len(calls))
+	for i, call := range calls {
+		out[i] = openAIToolCall{
+			ID:   call.ID,
+			Type: call.Type,
+			Function: struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			}{
+				Name:      call.Function.Name,
+				Arguments: call.Function.Arguments,
+			},
+		}
+	}
+	return out
 }

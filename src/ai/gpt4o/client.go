@@ -71,7 +71,6 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
 		addResponsesBetaHeader(req)
-		addResponsesBetaHeader(req)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return 0, nil, err
@@ -146,6 +145,7 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		addResponsesBetaHeader(req)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return 0, nil, err
@@ -394,6 +394,7 @@ func (c *client) submitToolOutputs(ctx context.Context, responseID string, outpu
 		}
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		addResponsesBetaHeader(req)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return nil, err
@@ -426,6 +427,7 @@ func (c *client) fetchResponse(ctx context.Context, responseID string) ([]byte, 
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	addResponsesBetaHeader(req)
 	addResponsesBetaHeader(req)
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
