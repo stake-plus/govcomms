@@ -380,27 +380,41 @@ func (c *client) submitToolOutputs(ctx context.Context, responseID string, outpu
 		"tool_outputs": outputs,
 	}
 	bodyBytes, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+	endpoints := []string{
 		fmt.Sprintf("https://api.openai.com/v1/responses/%s/submit_tool_outputs", responseID),
-		bytes.NewBuffer(bodyBytes))
-	if err != nil {
-		return nil, err
+		fmt.Sprintf("https://api.openai.com/v1/responses/%s/tool_outputs", responseID),
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
+	var lastErr error
+	for idx, endpoint := range endpoints {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(bodyBytes))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if resp.StatusCode == http.StatusOK {
+			return body, nil
+		}
+		lastErr = fmt.Errorf("gpt51: submit tool outputs status %d: %s", resp.StatusCode, string(body))
+		if resp.StatusCode == http.StatusNotFound && idx == 0 {
+			log.Printf("gpt51: submit_tool_outputs endpoint unavailable, retrying tool_outputs variant")
+			continue
+		}
+		return nil, lastErr
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+	if lastErr == nil {
+		lastErr = fmt.Errorf("gpt51: submit tool outputs failed without response")
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("gpt51: submit tool outputs status %d: %s", resp.StatusCode, string(body))
-	}
-	return body, nil
+	return nil, lastErr
 }
 
 func (c *client) fetchResponse(ctx context.Context, responseID string) ([]byte, error) {
