@@ -113,16 +113,7 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 		toolPayload, toolMap, forcedTool = buildToolsPayload(tools)
 		if len(toolPayload) > 0 {
 			payload["tools"] = toolPayload
-			if forcedTool != "" {
-				payload["tool_choice"] = map[string]any{
-					"type": "function",
-					"function": map[string]any{
-						"name": forcedTool,
-					},
-				}
-			} else {
-				payload["tool_choice"] = "auto"
-			}
+			payload["tool_choice"] = buildToolChoice(forcedTool)
 		}
 	}
 	bodyBytes, _ := json.Marshal(payload)
@@ -516,6 +507,16 @@ func truncatePayload(b []byte, limit int) string {
 		return string(b)
 	}
 	return string(b[:limit]) + "... (truncated)"
+}
+
+func buildToolChoice(forced string) any {
+	if strings.TrimSpace(forced) == "" {
+		return "auto"
+	}
+	return map[string]any{
+		"type": "function",
+		"name": forced,
+	}
 }
 
 func copyArgs(src map[string]any) map[string]any {
