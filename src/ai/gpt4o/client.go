@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -267,11 +268,15 @@ func (c *client) executeToolCalls(ctx context.Context, calls []openAIToolCall, t
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 			return nil, fmt.Errorf("gpt4omini: parse tool args: %w", err)
 		}
+		rawArgs := copyArgs(args)
 		args = mergeArgs(args, toolDef.Defaults)
+		log.Printf("gpt4o: tool call %s raw=%v merged=%v", call.Function.Name, rawArgs, args)
 		result, execErr := c.dispatchTool(ctx, toolDef, args)
 		if execErr != nil {
+			log.Printf("gpt4o: tool %s error: %v", call.Function.Name, execErr)
 			result = fmt.Sprintf(`{"error":"%s"}`, sanitizeToolError(execErr))
 		}
+		log.Printf("gpt4o: tool %s output=%s", call.Function.Name, truncatePayload([]byte(result), 256))
 		outputs = append(outputs, toolOutput{
 			ToolCallID: call.ID,
 			Output:     result,
@@ -492,4 +497,22 @@ func mergeArgs(args map[string]any, defaults map[string]any) map[string]any {
 		}
 	}
 	return args
+}
+
+func truncatePayload(b []byte, limit int) string {
+	if len(b) <= limit {
+		return string(b)
+	}
+	return string(b[:limit]) + "... (truncated)"
+}
+
+func copyArgs(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }

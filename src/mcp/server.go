@@ -127,10 +127,13 @@ func (s *Server) handleReferenda(w http.ResponseWriter, r *http.Request) {
 
 	switch segment {
 	case "", "metadata":
+		s.logf("mcp: metadata network=%s ref=%d", network, refID)
 		s.handleMetadata(w, network, uint32(refID))
 	case "content":
+		s.logf("mcp: content network=%s ref=%d", network, refID)
 		s.handleContent(w, network, uint32(refID))
 	case "attachments":
+		s.logf("mcp: attachments network=%s ref=%d", network, refID)
 		s.handleAttachments(w, network, uint32(refID))
 	default:
 		http.NotFound(w, r)

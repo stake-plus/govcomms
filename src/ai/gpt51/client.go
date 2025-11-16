@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -270,11 +271,15 @@ func (c *client) executeToolCalls(ctx context.Context, calls []openAIToolCall, t
 		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 			return nil, fmt.Errorf("gpt51: parse tool args: %w", err)
 		}
+		rawArgs := copyArgs(args)
 		args = mergeArgs(args, toolDef.Defaults)
+		log.Printf("gpt51: tool call %s raw=%v merged=%v", call.Function.Name, rawArgs, args)
 		result, execErr := c.dispatchTool(ctx, toolDef, args)
 		if execErr != nil {
+			log.Printf("gpt51: tool %s error: %v", call.Function.Name, execErr)
 			result = fmt.Sprintf(`{"error":"%s"}`, sanitizeToolError(execErr))
 		}
+		log.Printf("gpt51: tool %s output=%s", call.Function.Name, truncatePayload([]byte(result), 256))
 		outputs = append(outputs, toolOutput{
 			ToolCallID: call.ID,
 			Output:     result,
@@ -504,4 +509,15 @@ func mergeArgs(args map[string]any, defaults map[string]any) map[string]any {
 		}
 	}
 	return args
+}
+
+func copyArgs(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
