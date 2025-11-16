@@ -213,11 +213,26 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 		SystemPrompt: m.cfg.AISystemPrompt,
 	}
 
-	input := "Context:\n" + fullContent + "\n\nQuestion:\n" + question + "\n\nUse web search as needed to ensure the answer reflects the latest information."
+	var contextBuilder strings.Builder
+	contextBuilder.WriteString(fmt.Sprintf("You are assisting with %s referendum #%d.\n", network.Name, threadInfo.RefID))
+	if m.mcpTool != nil {
+		contextBuilder.WriteString("Use the `fetch_referendum_data` tool to retrieve proposal content or attachments as needed. Request metadata first, then fetch `content` only when you must quote the proposal.\n")
+	} else {
+		contextBuilder.WriteString("Full proposal text:\n")
+		contextBuilder.WriteString(content)
+	}
+	if strings.TrimSpace(qaContext) != "" {
+		contextBuilder.WriteString("\nRecent Q&A history:\n")
+		contextBuilder.WriteString(qaContext)
+	}
+
+	input := contextBuilder.String() + "\n\nQuestion:\n" + question
+
 	tools := []aicore.Tool{{Type: "web_search"}}
 	if m.mcpTool != nil {
 		tools = append(tools, *m.mcpTool)
 	}
+
 	answer, err := m.aiClient.Respond(ctx, input, tools, opts)
 	if err != nil {
 		log.Printf("question: web search failed, fallback: %v", err)
