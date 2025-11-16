@@ -73,7 +73,7 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 			return resp.StatusCode, nil, err
 		}
 		if resp.StatusCode != http.StatusOK {
-			return resp.StatusCode, b, fmt.Errorf("status %d", resp.StatusCode)
+			return resp.StatusCode, b, fmt.Errorf("status %d: %s", resp.StatusCode, truncatePayload(b, 512))
 		}
 		return resp.StatusCode, b, nil
 	})
@@ -132,7 +132,7 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 			return resp.StatusCode, nil, err
 		}
 		if resp.StatusCode != http.StatusOK {
-			return resp.StatusCode, b, fmt.Errorf("status %d", resp.StatusCode)
+			return resp.StatusCode, b, fmt.Errorf("status %d: %s", resp.StatusCode, truncatePayload(b, 512))
 		}
 		return resp.StatusCode, b, nil
 	})
@@ -447,4 +447,11 @@ type openAIToolCall struct {
 type toolOutput struct {
 	ToolCallID string `json:"tool_call_id"`
 	Output     string `json:"output"`
+}
+
+func truncatePayload(b []byte, limit int) string {
+	if len(b) <= limit {
+		return string(b)
+	}
+	return string(b[:limit]) + "... (truncated)"
 }
