@@ -97,12 +97,26 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 	return result.Choices[0].Message.Content, nil
 }
 
+func buildInputBlocks(text string) []map[string]any {
+	return []map[string]any{
+		{
+			"role": "user",
+			"content": []map[string]any{
+				{
+					"type": "input_text",
+					"text": text,
+				},
+			},
+		},
+	}
+}
+
 func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, opts core.Options) (string, error) {
 	// Use Responses API with optional tools like web_search
 	merged := c.merge(opts)
 	payload := map[string]interface{}{
 		"model":             merged.Model,
-		"input":             input,
+		"input":             buildInputBlocks(input),
 		"temperature":       merged.Temperature,
 		"max_output_tokens": merged.MaxCompletionTokens,
 	}
