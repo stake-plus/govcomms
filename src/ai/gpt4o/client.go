@@ -224,17 +224,9 @@ func (c *client) handleResponse(ctx context.Context, body []byte, toolMap map[st
 		return "", err
 	}
 	for {
-		switch envelope.Status {
-		case "completed":
-			if text := extractResponseText(envelope); text != "" {
-				return text, nil
-			}
-			return "", fmt.Errorf("gpt4omini: empty response")
-		case "requires_action":
-			if envelope.RequiredAction == nil || envelope.RequiredAction.SubmitToolOutputs == nil {
-				return "", fmt.Errorf("gpt4omini: required action missing tool outputs")
-			}
-			outputs, err := c.executeToolCalls(ctx, envelope.RequiredAction.SubmitToolOutputs.ToolCalls, toolMap)
+		if calls := pendingToolCalls(envelope); len(calls) > 0 {
+			log.Printf("gpt4o: requires action id=%s status=%s", envelope.ID, envelope.Status)
+			outputs, err := c.executeToolCalls(ctx, calls, toolMap)
 			if err != nil {
 				return "", err
 			}
@@ -245,6 +237,18 @@ func (c *client) handleResponse(ctx context.Context, body []byte, toolMap map[st
 			if err := json.Unmarshal(nextBody, &envelope); err != nil {
 				return "", err
 			}
+			continue
+		}
+
+		switch envelope.Status {
+		case "completed":
+			if text := extractResponseText(envelope); text != "" {
+				return text, nil
+			}
+			log.Printf("gpt4o: empty response envelope=%s", truncatePayload(mustMarshal(envelope), 2048))
+			return "", fmt.Errorf("gpt4omini: empty response")
+		case "requires_action":
+			return "", fmt.Errorf("gpt4omini: required action missing tool outputs")
 		case "queued", "in_progress":
 			time.Sleep(500 * time.Millisecond)
 			nextBody, err := c.fetchResponse(ctx, envelope.ID)
@@ -551,4 +555,22 @@ func copyArgs(src map[string]any) map[string]any {
 		dst[k] = v
 	}
 	return dst
+}
+
+func pendingToolCalls(resp openAIResponse) []openAIToolCall {
+	if resp.RequiredAction == nil || resp.RequiredAction.SubmitToolOutputs == nil {
+		return nil
+	}
+	if len(resp.RequiredAction.SubmitToolOutputs.ToolCalls) == 0 {
+		return nil
+	}
+	return resp.RequiredAction.SubmitToolOutputs.ToolCalls
+}
+
+func mustMarshal(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return []byte(fmt.Sprintf(`{"marshal_error":"%s"}`, sanitizeToolError(err)))
+	}
+	return b
 }

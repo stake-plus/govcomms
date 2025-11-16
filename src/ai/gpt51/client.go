@@ -228,19 +228,9 @@ func (c *client) handleResponse(ctx context.Context, body []byte, toolMap map[st
 	log.Printf("gpt51: response status=%s id=%s", envelope.Status, envelope.ID)
 
 	for {
-		switch envelope.Status {
-		case "completed":
-			log.Printf("gpt51: completed response id=%s", envelope.ID)
-			if text := extractResponseText(envelope); text != "" {
-				return text, nil
-			}
-			return "", fmt.Errorf("gpt51: empty response")
-		case "requires_action":
-			log.Printf("gpt51: requires action id=%s", envelope.ID)
-			if envelope.RequiredAction == nil || envelope.RequiredAction.SubmitToolOutputs == nil {
-				return "", fmt.Errorf("gpt51: required action missing tool outputs")
-			}
-			outputs, err := c.executeToolCalls(ctx, envelope.RequiredAction.SubmitToolOutputs.ToolCalls, toolMap)
+		if calls := pendingToolCalls(envelope); len(calls) > 0 {
+			log.Printf("gpt51: requires action id=%s status=%s", envelope.ID, envelope.Status)
+			outputs, err := c.executeToolCalls(ctx, calls, toolMap)
 			if err != nil {
 				return "", err
 			}
@@ -251,6 +241,19 @@ func (c *client) handleResponse(ctx context.Context, body []byte, toolMap map[st
 			if err := json.Unmarshal(nextBody, &envelope); err != nil {
 				return "", err
 			}
+			continue
+		}
+
+		switch envelope.Status {
+		case "completed":
+			log.Printf("gpt51: completed response id=%s", envelope.ID)
+			if text := extractResponseText(envelope); text != "" {
+				return text, nil
+			}
+			log.Printf("gpt51: empty response envelope=%s", truncatePayload(mustMarshal(envelope), 2048))
+			return "", fmt.Errorf("gpt51: empty response")
+		case "requires_action":
+			return "", fmt.Errorf("gpt51: required action missing tool outputs")
 		case "queued", "in_progress":
 			log.Printf("gpt51: status %s waiting...", envelope.Status)
 			time.Sleep(500 * time.Millisecond)
@@ -560,4 +563,22 @@ func buildToolChoice(forced string) any {
 		"type": "function",
 		"name": forced,
 	}
+}
+
+func pendingToolCalls(resp openAIResponse) []openAIToolCall {
+	if resp.RequiredAction == nil || resp.RequiredAction.SubmitToolOutputs == nil {
+		return nil
+	}
+	if len(resp.RequiredAction.SubmitToolOutputs.ToolCalls) == 0 {
+		return nil
+	}
+	return resp.RequiredAction.SubmitToolOutputs.ToolCalls
+}
+
+func mustMarshal(v any) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return []byte(fmt.Sprintf(`{"marshal_error":"%s"}`, sanitizeToolError(err)))
+	}
+	return b
 }
