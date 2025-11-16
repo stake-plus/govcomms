@@ -334,6 +334,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 	attachmentsFetched := false
 	var attachmentNames []string
 	finalReminderSent := false
+	base64ReminderSent := false
 
 	for iteration := 0; iteration < 20; iteration++ {
 		reqBody := map[string]any{
@@ -488,6 +489,14 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 				Content: "Metadata references attachments." + example + " Retrieve the file before answering.",
 			})
 			continue
+		}
+
+		if attachmentsFetched && !base64ReminderSent {
+			messages = append(messages, chatMessagePayload{
+				Role:    "user",
+				Content: "Attachment content is provided as base64 text in the tool response. Decode the base64 string to inspect the file before answering.",
+			})
+			base64ReminderSent = true
 		}
 
 		if metadataFetched && contentFetched && attachmentsFetched && !finalReminderSent {
