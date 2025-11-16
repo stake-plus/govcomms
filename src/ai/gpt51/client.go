@@ -261,6 +261,9 @@ func (c *client) handleResponse(ctx context.Context, body []byte, toolMap map[st
 		switch envelope.Status {
 		case "completed":
 			log.Printf("gpt51: completed response id=%s", envelope.ID)
+			if err := c.backfillToolResults(ctx, envelope.Output, toolMap, envelope.ID); err != nil {
+				return "", err
+			}
 			if text := extractResponseText(envelope); text != "" {
 				return text, nil
 			}
@@ -482,6 +485,12 @@ type openAIResponse struct {
 
 type openAIOutput struct {
 	Content []openAIMessageContent `json:"content"`
+	ID      string                 `json:"id"`
+	Type    string                 `json:"type"`
+	Status  string                 `json:"status"`
+	Name    string                 `json:"name"`
+	CallID  string                 `json:"call_id"`
+	Args    string                 `json:"arguments"`
 }
 
 type openAIMessage struct {
@@ -593,4 +602,37 @@ func mustMarshal(v any) []byte {
 		return []byte(fmt.Sprintf(`{"marshal_error":"%s"}`, sanitizeToolError(err)))
 	}
 	return b
+}
+
+func (c *client) backfillToolResults(ctx context.Context, outputs []openAIOutput, toolMap map[string]core.Tool, responseID string) error {
+	for _, out := range outputs {
+		if !strings.EqualFold(out.Type, "function_call") {
+			continue
+		}
+		if strings.TrimSpace(out.CallID) == "" || strings.TrimSpace(out.Name) == "" {
+			continue
+		}
+		calls := []openAIToolCall{{
+			ID:   out.CallID,
+			Type: "function",
+			Function: struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			}{
+				Name:      out.Name,
+				Arguments: out.Args,
+			},
+		}}
+		outputs, err := c.executeToolCalls(ctx, calls, toolMap)
+		if err != nil {
+			return err
+		}
+		if len(outputs) == 0 {
+			continue
+		}
+		if _, err := c.submitToolOutputs(ctx, responseID, outputs); err != nil {
+			return err
+		}
+	}
+	return nil
 }
