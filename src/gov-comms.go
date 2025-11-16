@@ -2,15 +2,22 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/stake-plus/govcomms/src/actions"
 	"github.com/stake-plus/govcomms/src/agents"
 	_ "github.com/stake-plus/govcomms/src/ai/providers"
+	cachepkg "github.com/stake-plus/govcomms/src/cache"
+	sharedconfig "github.com/stake-plus/govcomms/src/config"
 	shareddata "github.com/stake-plus/govcomms/src/data"
+	"github.com/stake-plus/govcomms/src/mcp"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -21,8 +28,14 @@ func main() {
 		log.Fatalf("db: %v", err)
 	}
 
+	if err := shareddata.LoadSettings(db); err != nil {
+		log.Printf("settings load failed: %v", err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	mcpServer := startMCPServer(ctx, db)
 
 	actionManager, err := actions.StartAll(ctx, db)
 	if err != nil {
@@ -45,4 +58,44 @@ func main() {
 	if agentManager != nil {
 		agentManager.Stop(ctx)
 	}
+	if mcpServer != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = mcpServer.Stop(shutdownCtx)
+	}
+}
+
+func startMCPServer(ctx context.Context, db *gorm.DB) *mcp.Server {
+	cfg := sharedconfig.LoadMCPConfig(db)
+	if !cfg.Enabled {
+		log.Printf("mcp: disabled via configuration")
+		return nil
+	}
+
+	cacheManager, err := cachepkg.NewManager(cfg.CacheDir)
+	if err != nil {
+		log.Printf("mcp: cache init failed: %v", err)
+		return nil
+	}
+
+	logger := log.New(os.Stdout, "[mcp] ", log.LstdFlags|log.Lmsgprefix)
+	server, err := mcp.NewServer(mcp.Config{
+		ListenAddr: cfg.Listen,
+		AuthToken:  cfg.AuthToken,
+		Logger:     logger,
+	}, cacheManager)
+	if err != nil {
+		log.Printf("mcp: server init failed: %v", err)
+		return nil
+	}
+
+	go func() {
+		if err := server.Start(ctx); err != nil &&
+			!errors.Is(err, context.Canceled) &&
+			!errors.Is(err, http.ErrServerClosed) {
+			log.Printf("mcp: server stopped: %v", err)
+		}
+	}()
+
+	return server
 }

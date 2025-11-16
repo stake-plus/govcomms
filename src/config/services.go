@@ -53,9 +53,9 @@ If information is not available in the provided content, clearly state that.`)
 	aiModel := GetSetting("ai_model", "AI_MODEL", "")
 	if aiModel == "" {
 		if aiProvider == "sonnet45" {
-			aiModel = "claude-sonnet-4.5"
+			aiModel = "claude-sonnet-4-5"
 		} else {
-			aiModel = "gpt5.1"
+			aiModel = "gpt-5.1"
 		}
 	}
 	aiEnableWeb := shareddata.GetSetting("ai_enable_web_search") == "1"
@@ -287,6 +287,14 @@ type FeedbackConfig struct {
 	Enabled                bool
 }
 
+// MCPConfig holds configuration for the local MCP server.
+type MCPConfig struct {
+	Enabled   bool
+	Listen    string
+	AuthToken string
+	CacheDir  string
+}
+
 // LoadFeedbackConfig loads Feedback bot configuration
 func LoadFeedbackConfig(db *gorm.DB) FeedbackConfig {
 	base := LoadBase(db)
@@ -315,5 +323,22 @@ func LoadFeedbackConfig(db *gorm.DB) FeedbackConfig {
 		IndexerIntervalMinutes: intervalMinutes,
 		PolkassemblyEndpoint:   polkassemblyEndpoint,
 		Enabled:                enabled,
+	}
+}
+
+// LoadMCPConfig loads configuration for the MCP server.
+func LoadMCPConfig(db *gorm.DB) MCPConfig {
+	enabled := getBoolSetting("enable_mcp", "ENABLE_MCP", true)
+	listen := GetSetting("mcp_listen_addr", "MCP_LISTEN_ADDR", "127.0.0.1:7081")
+	authToken := GetSetting("mcp_auth_token", "MCP_AUTH_TOKEN", "")
+
+	defaultCache := GetSetting("qa_temp_dir", "QA_TEMP_DIR", "/tmp/govcomms-qa")
+	cacheDir := GetSetting("mcp_cache_dir", "MCP_CACHE_DIR", defaultCache)
+
+	return MCPConfig{
+		Enabled:   enabled,
+		Listen:    listen,
+		AuthToken: authToken,
+		CacheDir:  cacheDir,
 	}
 }

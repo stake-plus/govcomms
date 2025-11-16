@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/stake-plus/govcomms/src/ai/core"
@@ -102,13 +105,14 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 		"temperature":       merged.Temperature,
 		"max_output_tokens": merged.MaxCompletionTokens,
 	}
+	var toolMap map[string]core.Tool
 	if len(tools) > 0 {
 		var toolPayload []map[string]interface{}
-		for _, t := range tools {
-			toolPayload = append(toolPayload, map[string]interface{}{"type": t.Type})
+		toolPayload, toolMap = buildToolsPayload(tools)
+		if len(toolPayload) > 0 {
+			payload["tools"] = toolPayload
+			payload["tool_choice"] = "auto"
 		}
-		payload["tools"] = toolPayload
-		payload["tool_choice"] = "auto"
 	}
 	bodyBytes, _ := json.Marshal(payload)
 	_, body, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
@@ -135,31 +139,7 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 	if err != nil {
 		return "", fmt.Errorf("gpt51 API error: %w", err)
 	}
-	// Tolerate multiple shapes by extracting text fields
-	var result struct {
-		Output []struct {
-			Content []struct {
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"output"`
-	}
-	if err := json.Unmarshal(body, &result); err == nil {
-		for _, o := range result.Output {
-			for _, c := range o.Content {
-				if c.Text != "" {
-					return c.Text, nil
-				}
-			}
-		}
-	}
-	// Fallback minimal parse for standard responses
-	var alt struct {
-		OutputText string `json:"output_text"`
-	}
-	if err := json.Unmarshal(body, &alt); err == nil && alt.OutputText != "" {
-		return alt.OutputText, nil
-	}
-	return "", fmt.Errorf("failed to parse GPT-5 response")
+	return c.handleResponse(ctx, body, toolMap)
 }
 
 func (c *client) merge(opts core.Options) core.Options {
@@ -196,4 +176,275 @@ func orFloat(v, d float64) float64 {
 		return v
 	}
 	return d
+}
+
+func buildToolsPayload(tools []core.Tool) ([]map[string]interface{}, map[string]core.Tool) {
+	out := []map[string]interface{}{}
+	toolMap := map[string]core.Tool{}
+	for idx, t := range tools {
+		switch strings.ToLower(t.Type) {
+		case "web_search":
+			out = append(out, map[string]interface{}{"type": "web_search"})
+		case "mcp_referenda":
+			name := t.Name
+			if strings.TrimSpace(name) == "" {
+				name = fmt.Sprintf("mcp_referendum_%d", idx+1)
+			}
+			funcDef := map[string]interface{}{
+				"name":        name,
+				"description": t.Description,
+			}
+			if t.Parameters != nil {
+				funcDef["parameters"] = t.Parameters
+			}
+			out = append(out, map[string]interface{}{
+				"type":     "function",
+				"function": funcDef,
+			})
+			toolCopy := t
+			toolCopy.Name = name
+			toolMap[name] = toolCopy
+		default:
+			// ignore unsupported tool types
+		}
+	}
+	return out, toolMap
+}
+
+func (c *client) handleResponse(ctx context.Context, body []byte, toolMap map[string]core.Tool) (string, error) {
+	var envelope openAIResponse
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return "", err
+	}
+
+	for {
+		switch envelope.Status {
+		case "completed":
+			if text := extractResponseText(envelope); text != "" {
+				return text, nil
+			}
+			return "", fmt.Errorf("gpt51: empty response")
+		case "requires_action":
+			if envelope.RequiredAction == nil || envelope.RequiredAction.SubmitToolOutputs == nil {
+				return "", fmt.Errorf("gpt51: required action missing tool outputs")
+			}
+			outputs, err := c.executeToolCalls(ctx, envelope.RequiredAction.SubmitToolOutputs.ToolCalls, toolMap)
+			if err != nil {
+				return "", err
+			}
+			nextBody, err := c.submitToolOutputs(ctx, envelope.ID, outputs)
+			if err != nil {
+				return "", err
+			}
+			if err := json.Unmarshal(nextBody, &envelope); err != nil {
+				return "", err
+			}
+		case "queued", "in_progress":
+			time.Sleep(500 * time.Millisecond)
+			nextBody, err := c.fetchResponse(ctx, envelope.ID)
+			if err != nil {
+				return "", err
+			}
+			if err := json.Unmarshal(nextBody, &envelope); err != nil {
+				return "", err
+			}
+		default:
+			return "", fmt.Errorf("gpt51: unexpected status %s", envelope.Status)
+		}
+	}
+}
+
+func (c *client) executeToolCalls(ctx context.Context, calls []openAIToolCall, toolMap map[string]core.Tool) ([]toolOutput, error) {
+	outputs := make([]toolOutput, 0, len(calls))
+	for _, call := range calls {
+		toolDef, ok := toolMap[call.Function.Name]
+		if !ok {
+			return nil, fmt.Errorf("gpt51: unknown tool %s", call.Function.Name)
+		}
+		var args map[string]any
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return nil, fmt.Errorf("gpt51: parse tool args: %w", err)
+		}
+		var result string
+		var err error
+		switch strings.ToLower(toolDef.Type) {
+		case "mcp_referenda":
+			result, err = c.invokeMCP(ctx, toolDef.MCP, args)
+		default:
+			err = fmt.Errorf("gpt51: unsupported tool type %s", toolDef.Type)
+		}
+		if err != nil {
+			return nil, err
+		}
+		outputs = append(outputs, toolOutput{
+			ToolCallID: call.ID,
+			Output:     result,
+		})
+	}
+	return outputs, nil
+}
+
+func (c *client) invokeMCP(ctx context.Context, desc *core.MCPDescriptor, args map[string]any) (string, error) {
+	if desc == nil || strings.TrimSpace(desc.BaseURL) == "" {
+		return "", fmt.Errorf("mcp descriptor missing")
+	}
+	network := strings.TrimSpace(fmt.Sprint(args["network"]))
+	if network == "" {
+		return "", fmt.Errorf("mcp: network argument required")
+	}
+	refIDRaw, ok := args["refId"]
+	if !ok {
+		return "", fmt.Errorf("mcp: refId argument required")
+	}
+	refID, err := parseUint(refIDRaw)
+	if err != nil {
+		return "", fmt.Errorf("mcp: invalid refId: %w", err)
+	}
+	resource := strings.TrimSpace(fmt.Sprint(args["resource"]))
+	resource = strings.ToLower(resource)
+	base := strings.TrimRight(desc.BaseURL, "/")
+	endpoint := fmt.Sprintf("%s/v1/referenda/%s/%d", base, url.PathEscape(network), refID)
+	if resource != "" && resource != "metadata" {
+		endpoint += "/" + url.PathEscape(resource)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	if desc.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+desc.AuthToken)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("mcp: status %d: %s", resp.StatusCode, string(body))
+	}
+	return string(body), nil
+}
+
+func (c *client) submitToolOutputs(ctx context.Context, responseID string, outputs []toolOutput) ([]byte, error) {
+	payload := map[string]any{
+		"tool_outputs": outputs,
+	}
+	bodyBytes, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		fmt.Sprintf("https://api.openai.com/v1/responses/%s/submit_tool_outputs", responseID),
+		bytes.NewBuffer(bodyBytes))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("gpt51: submit tool outputs status %d: %s", resp.StatusCode, string(body))
+	}
+	return body, nil
+}
+
+func (c *client) fetchResponse(ctx context.Context, responseID string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fmt.Sprintf("https://api.openai.com/v1/responses/%s", responseID), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("gpt51: fetch response status %d: %s", resp.StatusCode, string(body))
+	}
+	return body, nil
+}
+
+func extractResponseText(resp openAIResponse) string {
+	for _, o := range resp.Output {
+		for _, c := range o.Content {
+			if strings.TrimSpace(c.Text) != "" {
+				return c.Text
+			}
+		}
+	}
+	if resp.OutputText != "" {
+		return resp.OutputText
+	}
+	return ""
+}
+
+func parseUint(value any) (uint64, error) {
+	switch v := value.(type) {
+	case float64:
+		return uint64(v), nil
+	case int:
+		return uint64(v), nil
+	case int64:
+		return uint64(v), nil
+	case string:
+		return strconv.ParseUint(v, 10, 64)
+	default:
+		return 0, fmt.Errorf("unsupported numeric type %T", value)
+	}
+}
+
+type openAIResponse struct {
+	ID             string               `json:"id"`
+	Status         string               `json:"status"`
+	Output         []openAIOutput       `json:"output"`
+	OutputText     string               `json:"output_text"`
+	RequiredAction *requiredActionBlock `json:"required_action"`
+}
+
+type openAIOutput struct {
+	Content []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+}
+
+type requiredActionBlock struct {
+	Type              string                  `json:"type"`
+	SubmitToolOutputs *submitToolOutputsBlock `json:"submit_tool_outputs"`
+}
+
+type submitToolOutputsBlock struct {
+	ToolCalls []openAIToolCall `json:"tool_calls"`
+}
+
+type openAIToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+type toolOutput struct {
+	ToolCallID string `json:"tool_call_id"`
+	Output     string `json:"output"`
 }

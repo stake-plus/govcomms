@@ -25,6 +25,7 @@ Use this guide to understand every tunable and how it maps back to the source co
 | `AI_SYSTEM_PROMPT` | Optional | Custom prompt injected into AI calls. | `src/config/services.go` |
 | `AI_CONSENSUS_RESEARCHERS` / `AI_CONSENSUS_REVIEWERS` / `AI_CONSENSUS_VOTERS` | Optional | CSV/space separated provider keys (format `provider[:model]`) that participate in the consensus council. Defaults to all vendors you configured keys for. | `src/config/services.go` |
 | `AI_CONSENSUS_AGREEMENT` / `AI_CONSENSUS_ROUNDS` / `AI_CONSENSUS_ROUND_DELAY` | Optional | Control the quorum threshold (0.5–1), number of review rounds, and seconds between rounds (min 30). | `src/config/services.go` |
+| `ENABLE_MCP` / `MCP_LISTEN_ADDR` / `MCP_AUTH_TOKEN` / `MCP_CACHE_DIR` | Optional | Enables the local MCP server, chooses the listen address, optional bearer token, and cache directory to inspect. | `src/config/services.go`, `src/mcp/server.go` |
 | `ENABLE_QA` / `ENABLE_RESEARCH` / `ENABLE_FEEDBACK` | Optional | Mirrors CLI flags. Accepts `1`, `true`, `false`, `0`. | `src/gov-comms.go` |
 | `ENABLE_AGENTS` & `ENABLE_AGENT_*` | Optional | Gates the background agents runtime (`agents/start.go`). See `docs/AGENTS.md`. | `src/config/agents.go` |
 | `QA_TEMP_DIR` / `RESEARCH_TEMP_DIR` | Optional | Cache directories for proposal content and research attachments. | `src/config/services.go`, `src/cache` |
@@ -48,6 +49,7 @@ Store environment values in `/opt/govcomms/.env.govcomms` (Linux) or `C:\govcomm
 | `ai_consensus_researchers` / `ai_consensus_reviewers` / `ai_consensus_voters` | Override the consensus council roster (same syntax as the env vars). | `AI_CONSENSUS_*` |
 | `ai_consensus_agreement` / `ai_consensus_rounds` / `ai_consensus_round_delay` | Numeric knobs for quorum, iterations, and delay in seconds. | `AI_CONSENSUS_*` |
 | `ai_enable_web_search`, `ai_enable_deep_search` | `"1"` to enable optional tools. | — (DB only) |
+| `mcp_listen_addr`, `mcp_auth_token`, `mcp_cache_dir`, `enable_mcp` | Controls the local MCP server endpoint, token, cache root, and enable flag. | `ENABLE_MCP`, `MCP_LISTEN_ADDR`, etc. |
 | `qa_temp_dir` / `research_temp_dir` | Cache directories for QA and research modules. | env vars |
 | `indexer_workers` | Concurrency level for `src/actions/feedback/data/indexer.go`. Default `10`. | — (DB only) |
 | `indexer_interval_minutes` | Minutes between indexer passes. Default `60`. | — (DB only) |
@@ -84,7 +86,20 @@ Switch providers by updating `ai_provider` (DB) or `AI_PROVIDER` (env). Override
 tools (`ai_enable_web_search`, `ai_enable_deep_search`), the runtime will pass
 `web_search` tool descriptors to providers that support them.
 
-## 4. Network & Thread Configuration
+## 4. MCP Server
+
+Set `enable_mcp=1` (default) to start the local MCP server defined in
+`src/mcp`. It listens on `MCP_LISTEN_ADDR` (defaults to `127.0.0.1:7081`) and
+exposes cached referendum content via routes such as:
+
+- `GET /v1/referenda/<network>/<refId>` – metadata + attachment list
+- `GET /v1/referenda/<network>/<refId>/content` – full proposal text
+- `GET /v1/referenda/<network>/<refId>/attachments` – attachment metadata
+
+Set `MCP_AUTH_TOKEN` to require a `Bearer` token. By default the server reads
+from the same cache directory as the QA module (`QA_TEMP_DIR`).
+
+## 5. Network & Thread Configuration
 
 ### `networks` table
 
@@ -106,7 +121,7 @@ Provide at least one active RPC endpoint per network. The indexer rotates throug
 - When a thread is created or updated in the configured channel, `src/actions/feedback/module.go` parses the ref ID and populates `ref_threads`.
 - `GuildThreadsActive` reconciles mappings periodically in case the bot restarts.
 
-## 5. Polkassembly Integration
+## 6. Polkassembly Integration
 
 1. For each network you want to mirror feedback to, add a valid sr25519 seed (e.g., `//Alice` style or mnemonic).
 2. Ensure the `gc_url` setting points to the DAO’s discussion hub (configured via the `settings` table) so Polkassembly readers can follow links back.
@@ -115,7 +130,7 @@ Provide at least one active RPC endpoint per network. The indexer rotates throug
    - Save the returned comment ID to `ref_messages`.
    - Poll every 15 minutes for replies and echo them back into Discord threads.
 
-## 6. Module & Agent Toggles
+## 7. Module & Agent Toggles
 
 Use either CLI flags or environment variables (`ENABLE_QA`, etc.) when starting the binary:
 
@@ -130,7 +145,7 @@ Setting a flag to `false` (or the env variable to `0`) skips module startup—us
 
 For the agents runtime, use either the env vars (`ENABLE_AGENTS`, `ENABLE_AGENT_SOCIAL`, etc.) or update the `enable_agent_*` settings in MySQL. See `docs/AGENTS.md` for detailed behavior and monitoring tips.
 
-## 7. Cache & Storage Locations
+## 8. Cache & Storage Locations
 
 | Path | Purpose |
 | --- | --- |

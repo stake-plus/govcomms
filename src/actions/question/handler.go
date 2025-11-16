@@ -12,6 +12,7 @@ import (
 	cache "github.com/stake-plus/govcomms/src/cache"
 	sharedconfig "github.com/stake-plus/govcomms/src/config"
 	shareddiscord "github.com/stake-plus/govcomms/src/discord"
+	"github.com/stake-plus/govcomms/src/mcp"
 	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 	"gorm.io/gorm"
 )
@@ -31,6 +32,7 @@ type Module struct {
 	networkManager *sharedgov.NetworkManager
 	refManager     *sharedgov.ReferendumManager
 	cancel         context.CancelFunc
+	mcpTool        *aicore.Tool
 }
 
 // NewModule wires dependencies for the question/refresh/context actions.
@@ -72,6 +74,8 @@ func NewModule(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Module, error) {
 		return nil, fmt.Errorf("question: cache manager: %w", err)
 	}
 
+	mcpTool := buildMCPReferendaTool(db)
+
 	return &Module{
 		cfg:            cfg,
 		db:             db,
@@ -81,6 +85,7 @@ func NewModule(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Module, error) {
 		aiClient:       aiClient,
 		networkManager: networkManager,
 		refManager:     refManager,
+		mcpTool:        mcpTool,
 	}, nil
 }
 
@@ -209,7 +214,11 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 	}
 
 	input := "Context:\n" + fullContent + "\n\nQuestion:\n" + question + "\n\nUse web search as needed to ensure the answer reflects the latest information."
-	answer, err := m.aiClient.Respond(ctx, input, []aicore.Tool{{Type: "web_search"}}, opts)
+	tools := []aicore.Tool{{Type: "web_search"}}
+	if m.mcpTool != nil {
+		tools = append(tools, *m.mcpTool)
+	}
+	answer, err := m.aiClient.Respond(ctx, input, tools, opts)
 	if err != nil {
 		log.Printf("question: web search failed, fallback: %v", err)
 		answer, err = m.aiClient.AnswerQuestion(ctx, fullContent, question, opts)
@@ -225,6 +234,14 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 	}
 
 	m.sendLongMessageSlash(s, i.Interaction, question, answer)
+}
+
+func buildMCPReferendaTool(db *gorm.DB) *aicore.Tool {
+	mcpCfg := sharedconfig.LoadMCPConfig(db)
+	if !mcpCfg.Enabled {
+		return nil
+	}
+	return mcp.NewReferendaTool(mcpCfg.Listen, mcpCfg.AuthToken)
 }
 
 func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {

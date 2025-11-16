@@ -10,7 +10,17 @@ type Message struct {
 
 // Tool represents a tool capability (e.g., web_search) for providers that support it.
 type Tool struct {
-	Type string
+	Type        string
+	Name        string
+	Description string
+	Parameters  map[string]any
+	MCP         *MCPDescriptor
+}
+
+// MCPDescriptor describes how to reach the local MCP server for a tool call.
+type MCPDescriptor struct {
+	BaseURL   string
+	AuthToken string
 }
 
 // Options controls model behavior; fields are optional per provider.
