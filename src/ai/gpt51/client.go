@@ -235,13 +235,15 @@ func buildToolsPayload(tools []core.Tool) ([]map[string]interface{}, map[string]
 }
 
 func (c *client) handleResponse(ctx context.Context, body []byte, toolMap map[string]core.Tool) (string, error) {
-	var envelope openAIResponse
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return "", err
-	}
-	log.Printf("gpt51: response status=%s id=%s", envelope.Status, envelope.ID)
-
+	raw := body
 	for {
+		var envelope openAIResponse
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			log.Printf("gpt51: failed to decode response body=%s", truncatePayload(raw, 1024))
+			return "", err
+		}
+		log.Printf("gpt51: response status=%s id=%s", envelope.Status, envelope.ID)
+
 		if calls := pendingToolCalls(envelope); len(calls) > 0 {
 			log.Printf("gpt51: requires action id=%s status=%s", envelope.ID, envelope.Status)
 			outputs, err := c.executeToolCalls(ctx, calls, toolMap)
@@ -252,9 +254,7 @@ func (c *client) handleResponse(ctx context.Context, body []byte, toolMap map[st
 			if err != nil {
 				return "", err
 			}
-			if err := json.Unmarshal(nextBody, &envelope); err != nil {
-				return "", err
-			}
+			raw = nextBody
 			continue
 		}
 
@@ -264,7 +264,7 @@ func (c *client) handleResponse(ctx context.Context, body []byte, toolMap map[st
 			if text := extractResponseText(envelope); text != "" {
 				return text, nil
 			}
-			log.Printf("gpt51: empty response envelope=%s", truncatePayload(mustMarshal(envelope), 2048))
+			log.Printf("gpt51: empty response raw=%s", truncatePayload(raw, 2048))
 			return "", fmt.Errorf("gpt51: empty response")
 		case "requires_action":
 			return "", fmt.Errorf("gpt51: required action missing tool outputs")
@@ -275,9 +275,7 @@ func (c *client) handleResponse(ctx context.Context, body []byte, toolMap map[st
 			if err != nil {
 				return "", err
 			}
-			if err := json.Unmarshal(nextBody, &envelope); err != nil {
-				return "", err
-			}
+			raw = nextBody
 		default:
 			return "", fmt.Errorf("gpt51: unexpected status %s", envelope.Status)
 		}
