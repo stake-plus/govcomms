@@ -197,10 +197,15 @@ func buildToolsPayload(tools []core.Tool) ([]map[string]interface{}, map[string]
 			if t.Parameters != nil {
 				funcDef["parameters"] = t.Parameters
 			}
-			out = append(out, map[string]interface{}{
+			tool := map[string]interface{}{
 				"type":     "function",
+				"name":     name,
 				"function": funcDef,
-			})
+			}
+			if t.Description != "" {
+				tool["description"] = t.Description
+			}
+			out = append(out, tool)
 			toolCopy := t
 			toolCopy.Name = name
 			toolMap[name] = toolCopy
