@@ -214,9 +214,14 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 	}
 
 	var contextBuilder strings.Builder
-	contextBuilder.WriteString(fmt.Sprintf("You are assisting with %s referendum #%d.\n", network.Name, threadInfo.RefID))
+	contextBuilder.WriteString(fmt.Sprintf(
+		"You are assisting with %s referendum #%d.\n- Network: %s\n- Referendum ID: %d\n",
+		network.Name, threadInfo.RefID, network.Name, threadInfo.RefID))
 	if m.mcpTool != nil {
-		contextBuilder.WriteString("Use the `fetch_referendum_data` tool to retrieve proposal content or attachments as needed. Request metadata first, then fetch `content` only when you must quote the proposal.\n")
+		contextBuilder.WriteString("You do NOT have the proposal body in your context. You MUST call the tool `fetch_referendum_data` before answering. Example calls:\n")
+		contextBuilder.WriteString("1. metadata: {\"network\":\"" + strings.ToLower(network.Name) + "\",\"refId\":" + fmt.Sprint(threadInfo.RefID) + ",\"resource\":\"metadata\"}\n")
+		contextBuilder.WriteString("2. content: {\"network\":\"" + strings.ToLower(network.Name) + "\",\"refId\":" + fmt.Sprint(threadInfo.RefID) + ",\"resource\":\"content\"}\n")
+		contextBuilder.WriteString("Only after reviewing metadata/content should you answer. Fetch attachments if needed.\n")
 	} else {
 		contextBuilder.WriteString("Full proposal text:\n")
 		contextBuilder.WriteString(content)
