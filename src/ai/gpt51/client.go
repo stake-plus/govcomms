@@ -389,14 +389,28 @@ func (c *client) fetchResponse(ctx context.Context, responseID string) ([]byte, 
 
 func extractResponseText(resp openAIResponse) string {
 	for _, o := range resp.Output {
-		for _, c := range o.Content {
-			if strings.TrimSpace(c.Text) != "" {
-				return c.Text
-			}
+		if text := extractTextFromContent(o.Content); text != "" {
+			return text
 		}
 	}
 	if resp.OutputText != "" {
 		return resp.OutputText
+	}
+	for _, msg := range resp.Messages {
+		if strings.EqualFold(msg.Role, "assistant") {
+			if text := extractTextFromContent(msg.Content); text != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+func extractTextFromContent(chunks []openAIMessageContent) string {
+	for _, c := range chunks {
+		if strings.TrimSpace(c.Text) != "" {
+			return c.Text
+		}
 	}
 	return ""
 }
@@ -422,13 +436,21 @@ type openAIResponse struct {
 	Output         []openAIOutput       `json:"output"`
 	OutputText     string               `json:"output_text"`
 	RequiredAction *requiredActionBlock `json:"required_action"`
+	Messages       []openAIMessage      `json:"messages"`
 }
 
 type openAIOutput struct {
-	Content []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"content"`
+	Content []openAIMessageContent `json:"content"`
+}
+
+type openAIMessage struct {
+	Role    string                 `json:"role"`
+	Content []openAIMessageContent `json:"content"`
+}
+
+type openAIMessageContent struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
 }
 
 type requiredActionBlock struct {
