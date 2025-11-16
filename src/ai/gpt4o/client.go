@@ -532,7 +532,9 @@ func buildToolChoice(forced string) any {
 	}
 	return map[string]any{
 		"type": "function",
-		"name": forced,
+		"function": map[string]any{
+			"name": forced,
+		},
 	}
 }
 
