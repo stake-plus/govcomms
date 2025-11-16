@@ -698,7 +698,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			"temperature": opts.Temperature,
 		}
 		if opts.MaxCompletionTokens > 0 {
-			reqBody["max_tokens"] = opts.MaxCompletionTokens
+			reqBody["max_completion_tokens"] = opts.MaxCompletionTokens
 		}
 		if len(toolDefs) > 0 {
 			reqBody["tools"] = toolDefs
