@@ -341,7 +341,12 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			if !(metadataFetched && contentFetched) && strings.TrimSpace(forced) != "" {
 				reqBody["tool_choice"] = buildChatToolChoice(forced)
 			} else {
-				reqBody["tool_choice"] = "auto"
+				reqBody["tool_choice"] = map[string]any{
+					"type": "function",
+					"function": map[string]any{
+						"name": "fetch_referendum_data",
+					},
+				}
 			}
 		}
 
@@ -439,11 +444,14 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			if _, ok := pendingKeys[call.ID]; ok {
 				pendingCallExecuted = true
 			}
-			switch normalizeResource(resourceFromToolCall(call)) {
+			resType := normalizeResource(resourceFromToolCall(call))
+			switch resType {
 			case "content":
 				contentFetched = true
 			case "metadata":
 				metadataFetched = true
+			case "attachments":
+				// keep track if needed later
 			}
 		}
 
