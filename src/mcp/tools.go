@@ -20,7 +20,7 @@ func NewReferendaTool(baseURL, authToken string) *aicore.Tool {
 	return &aicore.Tool{
 		Type:        "mcp_referenda",
 		Name:        "fetch_referendum_data",
-		Description: "Fetch cached Polkadot/Kusama referendum data from GovComms. Provide `network` (e.g. polkadot), `refId` (integer), and optional `resource` (metadata|content|attachments).",
+		Description: "Fetch cached Polkadot/Kusama referendum data from GovComms. Provide `network` (e.g. polkadot), `refId` (integer), optional `resource` (metadata|content|attachments), and optional `file` name when retrieving attachment bytes.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -36,6 +36,10 @@ func NewReferendaTool(baseURL, authToken string) *aicore.Tool {
 					"type":        "string",
 					"description": "Optional data segment to fetch (metadata, content, attachments). Defaults to metadata.",
 					"enum":        []string{"metadata", "content", "attachments"},
+				},
+				"file": map[string]any{
+					"type":        "string",
+					"description": "Optional attachment path returned in metadata (only used when resource=attachments) to download the file content.",
 				},
 			},
 			"required": []string{"network", "refId"},

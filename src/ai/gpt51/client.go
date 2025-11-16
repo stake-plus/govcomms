@@ -326,6 +326,8 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 	metadataFetched := false
 	contentFetched := false
 	attachmentsFetched := false
+	var attachmentNames []string
+	finalReminderSent := false
 
 	for iteration := 0; iteration < 20; iteration++ {
 		reqBody := map[string]any{
@@ -339,15 +341,10 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 
 		if len(toolDefs) > 0 {
 			reqBody["tools"] = toolDefs
-			if !(metadataFetched && contentFetched) && strings.TrimSpace(forced) != "" {
+			if !(metadataFetched && contentFetched && attachmentsFetched) && strings.TrimSpace(forced) != "" {
 				reqBody["tool_choice"] = buildChatToolChoice(forced)
 			} else {
-				reqBody["tool_choice"] = map[string]any{
-					"type": "function",
-					"function": map[string]any{
-						"name": "fetch_referendum_data",
-					},
-				}
+				reqBody["tool_choice"] = "auto"
 			}
 		}
 
@@ -452,8 +449,10 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 				contentFetched = true
 			case "metadata":
 				metadataFetched = true
-				if !attachmentsFetched && metadataHasAttachments(content) {
+				names := metadataAttachmentNames(content)
+				if !attachmentsFetched && len(names) > 0 {
 					metadataAnnouncedAttachments = true
+					attachmentNames = names
 				}
 			case "attachments":
 				attachmentsFetched = true
@@ -474,18 +473,23 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 		}
 
 		if metadataAnnouncedAttachments && !attachmentsFetched {
+			example := ""
+			if len(attachmentNames) > 0 {
+				example = fmt.Sprintf(" For example: {\"resource\":\"attachments\",\"file\":\"%s\"}.", attachmentNames[0])
+			}
 			messages = append(messages, chatMessagePayload{
 				Role:    "user",
-				Content: "Metadata references attachments. Call fetch_referendum_data with resource:\"attachments\" to retrieve those files before answering.",
+				Content: "Metadata references attachments." + example + " Retrieve the file before answering.",
 			})
 			continue
 		}
 
-		if metadataFetched && contentFetched && attachmentsFetched {
+		if metadataFetched && contentFetched && attachmentsFetched && !finalReminderSent {
 			messages = append(messages, chatMessagePayload{
 				Role:    "user",
 				Content: "You now have metadata, the full proposal content, and attachments. Provide the final answer without calling the tool again.",
 			})
+			finalReminderSent = true
 		}
 	}
 
@@ -616,11 +620,23 @@ func normalizeResource(res string) string {
 }
 
 func metadataHasAttachments(content string) bool {
+	return len(metadataAttachmentNames(content)) > 0
+}
+
+func metadataAttachmentNames(content string) []string {
 	var payload struct {
-		Attachments []any `json:"attachments"`
+		Attachments []struct {
+			File string `json:"file"`
+		} `json:"attachments"`
 	}
 	if err := json.Unmarshal([]byte(content), &payload); err != nil {
-		return false
+		return nil
 	}
-	return len(payload.Attachments) > 0
+	names := make([]string, 0, len(payload.Attachments))
+	for _, att := range payload.Attachments {
+		if strings.TrimSpace(att.File) != "" {
+			names = append(names, att.File)
+		}
+	}
+	return names
 }
