@@ -478,6 +478,14 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 				Role:    "user",
 				Content: "Metadata references attachments. Call fetch_referendum_data with resource:\"attachments\" to retrieve those files before answering.",
 			})
+			continue
+		}
+
+		if metadataFetched && contentFetched && attachmentsFetched {
+			messages = append(messages, chatMessagePayload{
+				Role:    "user",
+				Content: "You now have metadata, the full proposal content, and attachments. Provide the final answer without calling the tool again.",
+			})
 		}
 	}
 
