@@ -439,6 +439,12 @@ func parseUint(value any) (uint64, error) {
 	switch v := value.(type) {
 	case float64:
 		return uint64(v), nil
+	case uint64:
+		return v, nil
+	case uint32:
+		return uint64(v), nil
+	case uint:
+		return uint64(v), nil
 	case int:
 		return uint64(v), nil
 	case int64:
@@ -552,8 +558,6 @@ func buildToolChoice(forced string) any {
 	}
 	return map[string]any{
 		"type": "function",
-		"function": map[string]any{
-			"name": forced,
-		},
+		"name": forced,
 	}
 }
