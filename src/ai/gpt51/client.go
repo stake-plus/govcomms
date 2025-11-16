@@ -222,15 +222,18 @@ func (c *client) handleResponse(ctx context.Context, body []byte, toolMap map[st
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return "", err
 	}
+	log.Printf("gpt51: response status=%s id=%s", envelope.Status, envelope.ID)
 
 	for {
 		switch envelope.Status {
 		case "completed":
+			log.Printf("gpt51: completed response id=%s", envelope.ID)
 			if text := extractResponseText(envelope); text != "" {
 				return text, nil
 			}
 			return "", fmt.Errorf("gpt51: empty response")
 		case "requires_action":
+			log.Printf("gpt51: requires action id=%s", envelope.ID)
 			if envelope.RequiredAction == nil || envelope.RequiredAction.SubmitToolOutputs == nil {
 				return "", fmt.Errorf("gpt51: required action missing tool outputs")
 			}
@@ -246,6 +249,7 @@ func (c *client) handleResponse(ctx context.Context, body []byte, toolMap map[st
 				return "", err
 			}
 		case "queued", "in_progress":
+			log.Printf("gpt51: status %s waiting...", envelope.Status)
 			time.Sleep(500 * time.Millisecond)
 			nextBody, err := c.fetchResponse(ctx, envelope.ID)
 			if err != nil {
