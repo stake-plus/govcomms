@@ -331,10 +331,29 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 	stallCount := 0
 	metadataFetched := false
 	contentFetched := false
-	attachmentsFetched := false
-	var attachmentNames []string
+	attachmentNames := []string{}
+	attachmentsRetrieved := map[string]bool{}
 	finalReminderSent := false
 	base64ReminderSent := false
+	toolsDisabled := false
+
+	hasPendingAttachments := func() bool {
+		for _, name := range attachmentNames {
+			if !attachmentsRetrieved[name] {
+				return true
+			}
+		}
+		return false
+	}
+
+	nextPendingAttachment := func() string {
+		for _, name := range attachmentNames {
+			if !attachmentsRetrieved[name] {
+				return name
+			}
+		}
+		return ""
+	}
 
 	for iteration := 0; iteration < 20; iteration++ {
 		reqBody := map[string]any{
@@ -346,9 +365,9 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			reqBody["max_completion_tokens"] = opts.MaxCompletionTokens
 		}
 
-		if len(toolDefs) > 0 {
+		if !toolsDisabled && len(toolDefs) > 0 {
 			reqBody["tools"] = toolDefs
-			if !(metadataFetched && contentFetched && attachmentsFetched) && strings.TrimSpace(forced) != "" {
+			if !(metadataFetched && contentFetched && !hasPendingAttachments()) && strings.TrimSpace(forced) != "" {
 				reqBody["tool_choice"] = buildChatToolChoice(forced)
 			} else {
 				reqBody["tool_choice"] = "auto"
@@ -457,12 +476,19 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			case "metadata":
 				metadataFetched = true
 				names := metadataAttachmentNames(content)
-				if !attachmentsFetched && len(names) > 0 {
-					metadataAnnouncedAttachments = true
-					attachmentNames = names
+				if len(names) > 0 {
+					if len(attachmentNames) == 0 {
+						attachmentNames = names
+					}
+					if hasPendingAttachments() {
+						metadataAnnouncedAttachments = true
+					}
 				}
 			case "attachments":
-				attachmentsFetched = true
+				fileArg := attachmentFileFromCall(call)
+				if fileArg != "" {
+					attachmentsRetrieved[fileArg] = true
+				}
 			}
 		}
 
@@ -479,19 +505,19 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			stallCount = 0
 		}
 
-		if metadataAnnouncedAttachments && !attachmentsFetched {
+		if metadataAnnouncedAttachments && hasPendingAttachments() {
 			example := ""
-			if len(attachmentNames) > 0 {
-				example = fmt.Sprintf(" For example: {\"resource\":\"attachments\",\"file\":\"%s\"}.", attachmentNames[0])
+			if next := nextPendingAttachment(); next != "" {
+				example = fmt.Sprintf(" For example: {\"resource\":\"attachments\",\"file\":\"%s\"}.", next)
 			}
 			messages = append(messages, chatMessagePayload{
 				Role:    "user",
-				Content: "Metadata references attachments." + example + " Retrieve the file before answering.",
+				Content: "Metadata references attachments." + example + " Retrieve each file before answering.",
 			})
 			continue
 		}
 
-		if attachmentsFetched && !base64ReminderSent {
+		if !hasPendingAttachments() && len(attachmentNames) > 0 && !base64ReminderSent {
 			messages = append(messages, chatMessagePayload{
 				Role:    "user",
 				Content: "Attachment content is provided as base64 text in the tool response. Decode the base64 string to inspect the file before answering.",
@@ -499,12 +525,13 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			base64ReminderSent = true
 		}
 
-		if metadataFetched && contentFetched && attachmentsFetched && !finalReminderSent {
+		if metadataFetched && contentFetched && !hasPendingAttachments() && !finalReminderSent {
 			messages = append(messages, chatMessagePayload{
 				Role:    "user",
 				Content: "You now have metadata, the full proposal content, and attachments. Provide the final answer without calling the tool again.",
 			})
 			finalReminderSent = true
+			toolsDisabled = true
 		}
 	}
 
@@ -654,4 +681,16 @@ func metadataAttachmentNames(content string) []string {
 		}
 	}
 	return names
+}
+
+func attachmentFileFromCall(call openAIToolCall) string {
+	args := strings.TrimSpace(call.Function.Arguments)
+	if args == "" {
+		return ""
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(args), &obj); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(obj["file"]))
 }
