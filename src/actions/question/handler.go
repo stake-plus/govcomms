@@ -444,8 +444,18 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 		log.Printf("question: failed to save summary: %v", err)
 	}
 
+	// Get channel name for title
+	channel, err := s.Channel(i.ChannelID)
+	channelName := ""
+	if err == nil && channel != nil {
+		channelName = channel.Name
+	}
+	if channelName == "" {
+		channelName = summary.Title // Fallback
+	}
+
 	// Format and send summary
-	summaryMessages := m.formatSummary(summary)
+	summaryMessages := m.formatSummary(summary, channelName)
 	log.Printf("question: formatted summary for %s #%d (%d messages)", network.Name, threadInfo.RefID, len(summaryMessages))
 
 	if len(summaryMessages) == 0 {
@@ -454,8 +464,8 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 		return
 	}
 
-	// Send first message as webhook edit
-	firstPayload := shareddiscord.BuildStyledMessage("Refresh", summaryMessages[0])
+	// Send first message as webhook edit (no title prefix)
+	firstPayload := shareddiscord.BuildStyledMessage("", summaryMessages[0])
 	edit := &discordgo.WebhookEdit{
 		Content: &firstPayload.Content,
 	}
@@ -978,44 +988,87 @@ func min(a, b int) int {
 	return b
 }
 
+// truncateToSentences truncates text to at most n sentences.
+func truncateToSentences(text string, n int) string {
+	if n <= 0 || text == "" {
+		return text
+	}
+	
+	// Find sentence boundaries
+	var sentences []string
+	current := strings.Builder{}
+	
+	for _, r := range text {
+		current.WriteRune(r)
+		if r == '.' || r == '!' || r == '?' {
+			sent := strings.TrimSpace(current.String())
+			if sent != "" {
+				sentences = append(sentences, sent)
+				current.Reset()
+			}
+		}
+	}
+	
+	// Add remaining text as last sentence if it exists
+	remaining := strings.TrimSpace(current.String())
+	if remaining != "" && len(sentences) < n {
+		sentences = append(sentences, remaining)
+	}
+	
+	if len(sentences) == 0 {
+		// No sentence endings found, return original text (truncated if too long)
+		if len(text) > 200 {
+			return text[:200] + "..."
+		}
+		return text
+	}
+	
+	if len(sentences) <= n {
+		return strings.Join(sentences, " ")
+	}
+	
+	// Return first n sentences
+	return strings.Join(sentences[:n], " ")
+}
+
 // formatSummary formats the summary data for Discord display, returning multiple messages if needed.
 // Sections are grouped: Summary & Context together, Claims together, Team Members together.
 // If any section exceeds 1999 characters, it will be split.
-func (m *Module) formatSummary(summary *cache.SummaryData) []string {
+func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) []string {
 	const maxChars = 1999
 	var messages []string
 
-	// Build header
-	header := fmt.Sprintf("**%s Referendum #%d**\n**Title:** %s\n\n", summary.Network, summary.RefID, summary.Title)
+	// Build header (no "Refresh" title, just start with referendum info)
+	header := fmt.Sprintf("**%s Referendum #%d**\n**%s**\n\n", summary.Network, summary.RefID, channelTitle)
 
 	// Section 1: Background Context & Summary (grouped together)
 	var contextSummaryBuilder strings.Builder
 	contextSummaryBuilder.WriteString(header)
-	contextSummaryBuilder.WriteString("📋 **Summary**\n\n")
-	contextSummaryBuilder.WriteString("**Background Context:**\n\n")
+	contextSummaryBuilder.WriteString("📋 **Overview**\n\n")
+	contextSummaryBuilder.WriteString("**📖 Background Context**\n\n")
 	contextSummaryBuilder.WriteString(summary.BackgroundContext)
 	contextSummaryBuilder.WriteString("\n\n")
-	contextSummaryBuilder.WriteString("**Summary:**\n\n")
+	contextSummaryBuilder.WriteString("**📝 Summary**\n\n")
 	contextSummaryBuilder.WriteString(summary.Summary)
 	contextSummaryBuilder.WriteString("\n\n")
 
 	contextSummaryText := contextSummaryBuilder.String()
 	if len(contextSummaryText) > maxChars {
 		// Split context and summary if needed
-		contextPart := fmt.Sprintf("%s📋 **Summary**\n\n**Background Context:**\n\n%s", header, summary.BackgroundContext)
-		summaryPart := fmt.Sprintf("**Summary:**\n\n%s", summary.Summary)
+		contextPart := fmt.Sprintf("%s📋 **Overview**\n\n**📖 Background Context**\n\n%s", header, summary.BackgroundContext)
+		summaryPart := fmt.Sprintf("**📝 Summary**\n\n%s", summary.Summary)
 
 		if len(contextPart) <= maxChars {
 			messages = append(messages, contextPart)
 		} else {
 			// Split context itself if too long
-			messages = append(messages, splitLongText(header+"📋 **Summary**\n\n**Background Context:**\n\n", summary.BackgroundContext, maxChars)...)
+			messages = append(messages, splitLongText(header+"📋 **Overview**\n\n**📖 Background Context**\n\n", summary.BackgroundContext, maxChars)...)
 		}
 
 		if len(summaryPart) <= maxChars {
 			messages = append(messages, summaryPart)
 		} else {
-			messages = append(messages, splitLongText("**Summary:**\n\n", summary.Summary, maxChars)...)
+			messages = append(messages, splitLongText("**📝 Summary**\n\n", summary.Summary, maxChars)...)
 		}
 	} else {
 		messages = append(messages, contextSummaryText)
@@ -1023,9 +1076,9 @@ func (m *Module) formatSummary(summary *cache.SummaryData) []string {
 
 	// Section 2: All Claims (grouped together)
 	var claimsBuilder strings.Builder
-	claimsBuilder.WriteString("🔍 **Claims**\n\n")
-	
-	claimsBuilder.WriteString(fmt.Sprintf("✅ **Valid Claims (%d):**\n\n", len(summary.ValidClaims)))
+	claimsBuilder.WriteString("🔍 **Claims Analysis**\n\n")
+
+	claimsBuilder.WriteString(fmt.Sprintf("✅ **Valid Claims** (%d)\n\n", len(summary.ValidClaims)))
 	if len(summary.ValidClaims) > 0 {
 		for _, claim := range summary.ValidClaims {
 			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n", claim))
@@ -1035,7 +1088,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData) []string {
 	}
 	claimsBuilder.WriteString("\n\n")
 
-	claimsBuilder.WriteString(fmt.Sprintf("❓ **Unverified/Unknown Claims (%d):**\n\n", len(summary.UnverifiedClaims)))
+	claimsBuilder.WriteString(fmt.Sprintf("❓ **Unverified/Unknown Claims** (%d)\n\n", len(summary.UnverifiedClaims)))
 	if len(summary.UnverifiedClaims) > 0 {
 		for _, claim := range summary.UnverifiedClaims {
 			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n", claim))
@@ -1045,7 +1098,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData) []string {
 	}
 	claimsBuilder.WriteString("\n\n")
 
-	claimsBuilder.WriteString(fmt.Sprintf("❌ **Invalid Claims (%d):**\n\n", len(summary.InvalidClaims)))
+	claimsBuilder.WriteString(fmt.Sprintf("❌ **Invalid Claims** (%d)\n\n", len(summary.InvalidClaims)))
 	if len(summary.InvalidClaims) > 0 {
 		for _, claim := range summary.InvalidClaims {
 			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n", claim))
@@ -1057,7 +1110,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData) []string {
 	claimsText := claimsBuilder.String()
 	if len(claimsText) > maxChars {
 		// Extract the content without the prefix for splitting
-		claimsPrefix := "🔍 **Claims**\n\n"
+		claimsPrefix := "🔍 **Claims Analysis**\n\n"
 		claimsContent := claimsText[len(claimsPrefix):]
 		messages = append(messages, splitLongText(claimsPrefix, claimsContent, maxChars)...)
 	} else {
@@ -1065,30 +1118,73 @@ func (m *Module) formatSummary(summary *cache.SummaryData) []string {
 	}
 
 	// Section 3: Team Members (all in one block)
+	// First, calculate team breakdown statistics
+	var realWithSkills, realNoSkills, notRealWithSkills, notRealNoSkills, notRealNoSkillsCount int
+	
+	if len(summary.TeamMembers) > 0 {
+		for _, member := range summary.TeamMembers {
+			isReal := member.IsReal
+			hasSkills := member.HasStatedSkills
+			
+			if isReal && hasSkills {
+				realWithSkills++
+			} else if isReal && !hasSkills {
+				realNoSkills++
+			} else if !isReal && hasSkills {
+				notRealWithSkills++
+			} else if !isReal && !hasSkills {
+				notRealNoSkills++
+			}
+		}
+		notRealNoSkillsCount = notRealNoSkills
+	}
+	
 	var teamContentBuilder strings.Builder
+	
+	// Add breakdown statistics
+	if len(summary.TeamMembers) > 0 {
+		teamContentBuilder.WriteString("**📊 Team Breakdown:**\n")
+		if realWithSkills > 0 {
+			teamContentBuilder.WriteString(fmt.Sprintf("  ✅ Real people with skills: **%d**\n", realWithSkills))
+		}
+		if realNoSkills > 0 {
+			teamContentBuilder.WriteString(fmt.Sprintf("  ⚠️ Real people without skills: **%d**\n", realNoSkills))
+		}
+		if notRealWithSkills > 0 {
+			teamContentBuilder.WriteString(fmt.Sprintf("  ⚠️ Not real people with skills: **%d**\n", notRealWithSkills))
+		}
+		if notRealNoSkillsCount > 0 {
+			teamContentBuilder.WriteString(fmt.Sprintf("  ❌ Not real people without skills: **%d**\n", notRealNoSkillsCount))
+		}
+		teamContentBuilder.WriteString("\n")
+	}
+	
+	// Add team member details
 	if len(summary.TeamMembers) > 0 {
 		for idx, member := range summary.TeamMembers {
-			isRealStr := "❌"
+			isRealStr := "No"
 			if member.IsReal {
-				isRealStr = "✅"
+				isRealStr = "Yes"
 			}
-			hasSkillsStr := "❌"
+			hasSkillsStr := "No"
 			if member.HasStatedSkills {
-				hasSkillsStr = "✅"
+				hasSkillsStr = "Yes"
 			}
-			
+
 			// Add spacing between team members
 			if idx > 0 {
 				teamContentBuilder.WriteString("\n")
 			}
-			
-			teamContentBuilder.WriteString(fmt.Sprintf("👤 **%s**\n", member.Name))
-			teamContentBuilder.WriteString(fmt.Sprintf("   Role: %s\n", member.Role))
-			teamContentBuilder.WriteString(fmt.Sprintf("   Is Real: %s  |  Has Skills: %s\n", isRealStr, hasSkillsStr))
-			teamContentBuilder.WriteString(fmt.Sprintf("   History: %s\n", member.History))
+
+			// Truncate history to 2 sentences
+			history := truncateToSentences(member.History, 2)
+
+			teamContentBuilder.WriteString(fmt.Sprintf("**%s** _(%s)_\n", member.Name, member.Role))
+			teamContentBuilder.WriteString(fmt.Sprintf("  • Real Person: **%s**  |  Has Skills: **%s**\n", isRealStr, hasSkillsStr))
+			teamContentBuilder.WriteString(fmt.Sprintf("  • History: %s\n", history))
 		}
 	} else {
-		teamContentBuilder.WriteString("_None_\n")
+		teamContentBuilder.WriteString("_No team members found_\n")
 	}
 
 	teamPrefix := "👥 **Team Members**\n\n"
@@ -1220,16 +1316,26 @@ func (m *Module) handleSummarySlash(s *discordgo.Session, i *discordgo.Interacti
 		return
 	}
 
+	// Get channel name for title
+	channel, err := s.Channel(i.ChannelID)
+	channelName := ""
+	if err == nil && channel != nil {
+		channelName = channel.Name
+	}
+	if channelName == "" && entry.Summary != nil {
+		channelName = entry.Summary.Title // Fallback
+	}
+
 	// Format and send summary
-	summaryMessages := m.formatSummary(entry.Summary)
+	summaryMessages := m.formatSummary(entry.Summary, channelName)
 
 	if len(summaryMessages) == 0 {
 		sendStyledWebhookEdit(s, i.Interaction, "Summary", "Summary formatting failed.")
 		return
 	}
 
-	// Send first message as webhook edit
-	firstPayload := shareddiscord.BuildStyledMessage("Summary", summaryMessages[0])
+	// Send first message as webhook edit (no title prefix)
+	firstPayload := shareddiscord.BuildStyledMessage("", summaryMessages[0])
 	edit := &discordgo.WebhookEdit{
 		Content: &firstPayload.Content,
 	}
