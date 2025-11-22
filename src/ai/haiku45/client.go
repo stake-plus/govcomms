@@ -33,7 +33,6 @@ const (
 	maxTopP               = 1.0
 	minTopK               = 1
 	maxTopK               = 500
-	metadataApplication   = "govcomms"
 )
 
 const (
@@ -108,7 +107,6 @@ func (c *client) invoke(ctx context.Context, opts core.Options, input string, to
 		"temperature": opts.Temperature,
 		"top_p":       c.topP,
 		"top_k":       c.topK,
-		"metadata":    requestMetadata(),
 		"messages": []map[string]interface{}{
 			{
 				"role": "user",
@@ -218,7 +216,6 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 			"temperature": opts.Temperature,
 			"top_p":       c.topP,
 			"top_k":       c.topK,
-			"metadata":    requestMetadata(),
 		}
 		if strings.TrimSpace(opts.SystemPrompt) != "" {
 			reqBody["system"] = opts.SystemPrompt
@@ -456,13 +453,6 @@ func shouldEnableWebSearch(opts core.Options, tools []core.Tool) bool {
 		}
 	}
 	return false
-}
-
-func requestMetadata() map[string]string {
-	return map[string]string{
-		"application": metadataApplication,
-		"provider":    providerKey,
-	}
 }
 
 func extractText(chunks []struct {
