@@ -162,8 +162,15 @@ func (g *Generator) drawGreenBox(pdf *gofpdf.Fpdf, x, y, w float64, title string
 	if len(items) == 0 {
 		return 0
 	}
+
+	// Sanitize each item first, then join
+	sanitizedItems := make([]string, len(items))
+	for i, item := range items {
+		sanitizedItems[i] = sanitizeTextForPDF(item)
+	}
+
 	// Use "-" instead of bullet to avoid encoding issues
-	content := strings.Join(items, "\n- ")
+	content := strings.Join(sanitizedItems, "\n- ")
 	if content != "" {
 		content = "- " + content
 	}
@@ -173,10 +180,44 @@ func (g *Generator) drawGreenBox(pdf *gofpdf.Fpdf, x, y, w float64, title string
 	titleHeight := 8.0
 
 	pdf.SetFont("Arial", "", 9)
-	// Measure content height using MultiCell
+	// Measure content height - calculate by processing each item separately to avoid SplitText issues
 	contentWidth := w - 6.0
-	lines := pdf.SplitText(sanitizeTextForPDF(content), contentWidth)
-	contentHeight := float64(len(lines)) * 4.5
+	totalLines := 0
+
+	// Process each item separately to calculate lines more safely
+	for _, item := range sanitizedItems {
+		itemText := "- " + item
+		// Use a safer method to calculate lines - split into chunks if needed
+		if len(itemText) > 500 {
+			// For very long items, estimate lines based on character count
+			// Estimate: roughly 50-60 characters per line at 9pt font
+			charsPerLine := 55
+			estimatedLines := (len(itemText) / charsPerLine) + 1
+			if estimatedLines < 1 {
+				estimatedLines = 1
+			}
+			totalLines += estimatedLines
+		} else {
+			// For shorter items, use SplitText safely with error recovery
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// If SplitText panics, estimate lines
+						charsPerLine := 55
+						estimatedLines := (len(itemText) / charsPerLine) + 1
+						if estimatedLines < 1 {
+							estimatedLines = 1
+						}
+						totalLines += estimatedLines
+					}
+				}()
+				lines := pdf.SplitText(itemText, contentWidth)
+				totalLines += len(lines)
+			}()
+		}
+	}
+
+	contentHeight := float64(totalLines) * 4.5
 
 	totalHeight := titleHeight + contentHeight + 10.0 // Add padding
 
@@ -200,8 +241,15 @@ func (g *Generator) drawRedBox(pdf *gofpdf.Fpdf, x, y, w float64, title string, 
 	if len(items) == 0 {
 		return 0
 	}
+
+	// Sanitize each item first, then join
+	sanitizedItems := make([]string, len(items))
+	for i, item := range items {
+		sanitizedItems[i] = sanitizeTextForPDF(item)
+	}
+
 	// Use "-" instead of bullet to avoid encoding issues
-	content := strings.Join(items, "\n- ")
+	content := strings.Join(sanitizedItems, "\n- ")
 	if content != "" {
 		content = "- " + content
 	}
@@ -211,10 +259,44 @@ func (g *Generator) drawRedBox(pdf *gofpdf.Fpdf, x, y, w float64, title string, 
 	titleHeight := 8.0
 
 	pdf.SetFont("Arial", "", 9)
-	// Measure content height using MultiCell
+	// Measure content height - calculate by processing each item separately to avoid SplitText issues
 	contentWidth := w - 6.0
-	lines := pdf.SplitText(sanitizeTextForPDF(content), contentWidth)
-	contentHeight := float64(len(lines)) * 4.5
+	totalLines := 0
+
+	// Process each item separately to calculate lines more safely
+	for _, item := range sanitizedItems {
+		itemText := "- " + item
+		// Use a safer method to calculate lines - split into chunks if needed
+		if len(itemText) > 500 {
+			// For very long items, estimate lines based on character count
+			// Estimate: roughly 50-60 characters per line at 9pt font
+			charsPerLine := 55
+			estimatedLines := (len(itemText) / charsPerLine) + 1
+			if estimatedLines < 1 {
+				estimatedLines = 1
+			}
+			totalLines += estimatedLines
+		} else {
+			// For shorter items, use SplitText safely with error recovery
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// If SplitText panics, estimate lines
+						charsPerLine := 55
+						estimatedLines := (len(itemText) / charsPerLine) + 1
+						if estimatedLines < 1 {
+							estimatedLines = 1
+						}
+						totalLines += estimatedLines
+					}
+				}()
+				lines := pdf.SplitText(itemText, contentWidth)
+				totalLines += len(lines)
+			}()
+		}
+	}
+
+	contentHeight := float64(totalLines) * 4.5
 
 	totalHeight := titleHeight + contentHeight + 10.0 // Add padding
 
