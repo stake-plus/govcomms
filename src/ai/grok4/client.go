@@ -27,7 +27,6 @@ const (
 	defaultTemperature      = 1.0
 	defaultTopP             = 0.9
 	defaultFrequencyPenalty = 0.0
-	defaultPresencePenalty  = 0.0
 	defaultRequestTimeout   = 240 * time.Second
 	defaultRetryAttempts    = 3
 	defaultRetryBackoff     = 2 * time.Second
@@ -41,7 +40,6 @@ const (
 const (
 	extraTopPKey             = "grok.top_p"
 	extraFrequencyPenaltyKey = "grok.frequency_penalty"
-	extraPresencePenaltyKey  = "grok.presence_penalty"
 )
 
 func init() {
@@ -54,7 +52,6 @@ type client struct {
 	defaults         core.Options
 	topP             float64
 	frequencyPenalty float64
-	presencePenalty  float64
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
@@ -64,7 +61,6 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 
 	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
 	frequencyPenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraFrequencyPenaltyKey, defaultFrequencyPenalty), penaltyMin, penaltyMax)
-	presencePenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraPresencePenaltyKey, defaultPresencePenalty), penaltyMin, penaltyMax)
 
 	return &client{
 		apiKey:     cfg.GrokKey,
@@ -77,7 +73,6 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 		},
 		topP:             topP,
 		frequencyPenalty: frequencyPenalty,
-		presencePenalty:  presencePenalty,
 	}, nil
 }
 
@@ -115,7 +110,6 @@ func (c *client) buildRequest(opts core.Options, userPrompt string, enableWeb bo
 		"n":                 1,
 		"top_p":             c.topP,
 		"frequency_penalty": c.frequencyPenalty,
-		"presence_penalty":  c.presencePenalty,
 	}
 
 	if enableWeb {
@@ -485,7 +479,6 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			"n":                 1,
 			"top_p":             c.topP,
 			"frequency_penalty": c.frequencyPenalty,
-			"presence_penalty":  c.presencePenalty,
 		}
 		if opts.MaxCompletionTokens > 0 {
 			reqBody["max_output_tokens"] = opts.MaxCompletionTokens
