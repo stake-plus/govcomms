@@ -1031,6 +1031,52 @@ func truncateToSentences(text string, n int) string {
 	return strings.Join(sentences[:n], " ")
 }
 
+// historyToBulletPoints converts history text to max 3 bullet points, each indented 4 spaces.
+func historyToBulletPoints(history string, maxBullets int) string {
+	if history == "" {
+		return ""
+	}
+
+	// Split into sentences
+	var sentences []string
+	current := strings.Builder{}
+
+	for _, r := range history {
+		current.WriteRune(r)
+		if r == '.' || r == '!' || r == '?' {
+			sent := strings.TrimSpace(current.String())
+			if sent != "" {
+				sentences = append(sentences, sent)
+				current.Reset()
+			}
+		}
+	}
+
+	// Add remaining text as last sentence if it exists
+	remaining := strings.TrimSpace(current.String())
+	if remaining != "" && len(sentences) < maxBullets {
+		sentences = append(sentences, remaining)
+	}
+
+	if len(sentences) == 0 {
+		// No sentence endings found, use the whole text as one bullet
+		return fmt.Sprintf("    • %s\n", history)
+	}
+
+	// Take up to maxBullets sentences
+	toUse := sentences
+	if len(toUse) > maxBullets {
+		toUse = toUse[:maxBullets]
+	}
+
+	var result strings.Builder
+	for _, sent := range toUse {
+		result.WriteString(fmt.Sprintf("    • %s\n", sent))
+	}
+
+	return result.String()
+}
+
 // formatSummary formats the summary data for Discord display, returning multiple messages if needed.
 // Sections are grouped: Summary & Context together, Claims together, Team Members together.
 // If any section exceeds 1999 characters, it will be split.
@@ -1039,8 +1085,8 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 	var messages []string
 
 	// Build header with Overview at the top
-	// Overview at top, 3 newlines, then referendum info, 2 newlines, then content
-	header := fmt.Sprintf("📋 Overview\n\n\n%s Referendum #%d\n%s\n\n", summary.Network, summary.RefID, channelTitle)
+	// Overview at top, 2 newlines, then referendum info, 2 newlines, then content
+	header := fmt.Sprintf("📋 Overview\n\n%s Referendum #%d\n%s\n\n", summary.Network, summary.RefID, channelTitle)
 
 	// Section 1: Background Context & Summary (grouped together)
 	var contextSummaryBuilder strings.Builder
@@ -1113,7 +1159,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 	claimsText := claimsBuilder.String()
 	if len(claimsText) > maxChars {
 		// Extract the content without the prefix for splitting
-		claimsPrefix := "🔍 Claims Analysis\n\n"
+		claimsPrefix := "🔍 Claims Analysis\n\n\n"
 		claimsContent := claimsText[len(claimsPrefix):]
 		messages = append(messages, splitLongText(claimsPrefix, claimsContent, maxChars)...)
 	} else {
@@ -1147,49 +1193,57 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 	if len(summary.TeamMembers) > 0 {
 		teamContentBuilder.WriteString("📊 Team Breakdown:\n")
 		if realWithSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("  ✅ Real people with skills: %d\n", realWithSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("   Real & Skilled: ✅ %d\n", realWithSkills))
 		}
 		if realNoSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("  ⚠️ Real people without skills: %d\n", realNoSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("  Real & Unskilled: ⚠️ %d\n", realNoSkills))
 		}
 		if notRealWithSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("  ⚠️ Not real people with skills: %d\n", notRealWithSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("  Fake & Skilled: ⚠️ %d\n", notRealWithSkills))
 		}
 		if notRealNoSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("  ❌ Not real people without skills: %d\n", notRealNoSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("  Fake & Unskilled: ❌ %d\n", notRealNoSkills))
 		}
-		teamContentBuilder.WriteString("\n")
+		teamContentBuilder.WriteString("\n\n")
 	}
 
 	// Add team member details
 	if len(summary.TeamMembers) > 0 {
 		for idx, member := range summary.TeamMembers {
-			isRealStr := "No"
-			if member.IsReal {
-				isRealStr = "Yes"
-			}
-			hasSkillsStr := "No"
-			if member.HasStatedSkills {
-				hasSkillsStr = "Yes"
-			}
-
 			// Add spacing between team members
 			if idx > 0 {
 				teamContentBuilder.WriteString("\n")
 			}
 
-			// Truncate history to 2 sentences
-			history := truncateToSentences(member.History, 2)
+			// Format team member with checkmarks
+			isRealMark := "❌"
+			if member.IsReal {
+				isRealMark = "✅"
+			}
+			hasSkillsMark := "❌"
+			if member.HasStatedSkills {
+				hasSkillsMark = "✅"
+			}
 
-			teamContentBuilder.WriteString(fmt.Sprintf("%s (%s)\n", member.Name, member.Role))
-			teamContentBuilder.WriteString(fmt.Sprintf("  • Real Person: %s  |  Has Skills: %s\n", isRealStr, hasSkillsStr))
-			teamContentBuilder.WriteString(fmt.Sprintf("  • History: %s\n", history))
+			// Convert history to bullet points (max 3, each indented 4 spaces)
+			historyBullets := historyToBulletPoints(member.History, 3)
+
+			teamContentBuilder.WriteString(fmt.Sprintf("Name: %s\n", member.Name))
+			teamContentBuilder.WriteString(fmt.Sprintf("Role: %s\n", member.Role))
+			teamContentBuilder.WriteString(fmt.Sprintf("Real Person: %s\n", isRealMark))
+			teamContentBuilder.WriteString(fmt.Sprintf("Has Necessary Skills: %s\n", hasSkillsMark))
+			teamContentBuilder.WriteString("History:\n")
+			if historyBullets != "" {
+				teamContentBuilder.WriteString(historyBullets)
+			} else {
+				teamContentBuilder.WriteString("    • No history available\n")
+			}
 		}
 	} else {
 		teamContentBuilder.WriteString("No team members found\n")
 	}
 
-	teamPrefix := "⚡ Team Members\n\n"
+	teamPrefix := "⚡ Team Members\n\n\n"
 	teamContent := teamContentBuilder.String()
 	teamText := teamPrefix + teamContent
 
