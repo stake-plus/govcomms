@@ -93,7 +93,6 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 	finalReminderSent := false
 	base64ReminderSent := false
 	toolsDisabled := false
-	webSearchHint := shouldEnableWebSearch(opts, tools)
 
 	hasPendingAttachments := func() bool {
 		for _, name := range attachmentNames {
@@ -122,9 +121,6 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 		}
 		if strings.TrimSpace(opts.SystemPrompt) != "" {
 			reqBody["system"] = opts.SystemPrompt
-		}
-		if webSearchHint {
-			reqBody["metadata"] = map[string]any{"web_search_hint": true}
 		}
 		if !toolsDisabled && len(toolDefs) > 0 {
 			reqBody["tools"] = toolDefs
@@ -332,12 +328,6 @@ func (c *client) invoke(ctx context.Context, opts core.Options, input string, to
 				},
 			},
 		},
-	}
-
-	if shouldEnableWebSearch(opts, tools) {
-		body["metadata"] = map[string]interface{}{
-			"web_search_hint": true,
-		}
 	}
 
 	bodyBytes, _ := json.Marshal(body)

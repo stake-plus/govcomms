@@ -373,7 +373,7 @@ func (c *client) callGenerateContent(ctx context.Context, model string, payload 
 			return resp.StatusCode, nil, err
 		}
 		if resp.StatusCode != http.StatusOK {
-			return resp.StatusCode, b, fmt.Errorf("status %d", resp.StatusCode)
+			return resp.StatusCode, b, fmt.Errorf("status %d: %s", resp.StatusCode, truncatePayload(b, 512))
 		}
 		return resp.StatusCode, b, nil
 	})
@@ -563,13 +563,11 @@ func convertGeminiToolCalls(calls []geminiFunctionCall, seq *int) []openAIToolCa
 }
 
 func geminiToolResponseContent(name, output string) geminiContent {
-	response := map[string]any{
-		"content": output,
-	}
+	resultValue := any(output)
 	if json.Valid([]byte(output)) {
 		var data any
 		if err := json.Unmarshal([]byte(output), &data); err == nil {
-			response["content"] = data
+			resultValue = data
 		}
 	}
 	return geminiContent{
@@ -577,8 +575,10 @@ func geminiToolResponseContent(name, output string) geminiContent {
 		Parts: []geminiPart{
 			{
 				FunctionResponse: &geminiFunctionResponse{
-					Name:     name,
-					Response: response,
+					Name: name,
+					Response: map[string]any{
+						"result": resultValue,
+					},
 				},
 			},
 		},
