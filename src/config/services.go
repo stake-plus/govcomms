@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log"
 	"strconv"
 	"strings"
 
@@ -354,7 +355,12 @@ func LoadReportsConfig(db *gorm.DB) ReportsConfig {
 	if tempDir == "" {
 		tempDir = GetSetting("qa_temp_dir", "QA_TEMP_DIR", "/tmp/govcomms-qa")
 	}
+	
+	// Debug: Check raw setting value
+	rawValue := shareddata.GetSetting("enable_reports")
+	log.Printf("config: enable_reports raw value from DB: %q", rawValue)
 	enabled := getBoolSetting("enable_reports", "ENABLE_REPORTS", true)
+	log.Printf("config: enable_reports parsed value: %v", enabled)
 
 	return ReportsConfig{
 		Base:          base,
