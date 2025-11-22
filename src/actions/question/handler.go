@@ -1090,7 +1090,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Section 2: All Claims (grouped together)
 	var claimsBuilder strings.Builder
-	claimsBuilder.WriteString("🔍 Claims Analysis\n\n")
+	claimsBuilder.WriteString("Referendum Claims and Warranties Analysis 🔍\n\n")
 
 	// Valid Claims
 	if len(summary.ValidClaims) > 0 {
@@ -1127,7 +1127,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 	claimsText := claimsBuilder.String()
 	if len(claimsText) > maxChars {
 		// Extract the content without the prefix for splitting
-		claimsPrefix := "🔍 Claims Analysis\n\n\n"
+		claimsPrefix := "Referendum Claims and Warranties Analysis 🔍\n\n\n"
 		claimsContent := claimsText[len(claimsPrefix):]
 		messages = append(messages, splitLongText(claimsPrefix, claimsContent, maxChars)...)
 	} else {
@@ -1209,7 +1209,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 		teamContentBuilder.WriteString("No team members found\n")
 	}
 
-	teamPrefix := "Team Background and Skill Analysis ⚡\n \n \n"
+	teamPrefix := "Team Background and Skill Summary ⚡\n \n \n"
 	teamContent := teamContentBuilder.String()
 	teamText := teamPrefix + teamContent
 	messages = append(messages, teamText)
