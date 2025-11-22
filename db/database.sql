@@ -165,3 +165,56 @@ INSERT INTO networks (id, name, symbol, url, discord_channel_id) VALUES
 INSERT INTO network_rpcs (network_id, url, active) VALUES
     (1, 'wss://polkadot.dotters.network/', 1),
     (2, 'wss://kusama.dotters.network/', 1);
+
+    CREATE TABLE IF NOT EXISTS `ref_claims` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `ref_db_id` bigint unsigned NOT NULL,
+  `network_id` tinyint unsigned NOT NULL,
+  `ref_id` bigint unsigned NOT NULL,
+  `claim_text` text NOT NULL,
+  `category` varchar(64) DEFAULT NULL,
+  `claim_urls` text DEFAULT NULL COMMENT 'JSON array of URLs from proposal',
+  `context` text DEFAULT NULL,
+  `status` varchar(32) NOT NULL COMMENT 'Valid, Rejected, Unknown',
+  `evidence` text DEFAULT NULL,
+  `source_urls` text DEFAULT NULL COMMENT 'JSON array of verification source URLs',
+  `provider_company` varchar(128) NOT NULL,
+  `ai_model` varchar(128) NOT NULL,
+  `total_claims_found` int unsigned DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_claims_ref` (`ref_db_id`),
+  KEY `idx_claims_network_ref` (`network_id`, `ref_id`),
+  KEY `idx_claims_status` (`status`),
+  KEY `idx_claims_created` (`created_at`),
+  CONSTRAINT `fk_claims_ref` FOREIGN KEY (`ref_db_id`) REFERENCES `refs` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Team member analysis results
+CREATE TABLE IF NOT EXISTS `ref_team_members` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `ref_db_id` bigint unsigned NOT NULL,
+  `network_id` tinyint unsigned NOT NULL,
+  `ref_id` bigint unsigned NOT NULL,
+  `name` varchar(255) NOT NULL,
+  `role` varchar(255) DEFAULT NULL,
+  `is_real` tinyint(1) DEFAULT NULL,
+  `has_stated_skills` tinyint(1) DEFAULT NULL,
+  `capability` text DEFAULT NULL,
+  `github_urls` text DEFAULT NULL COMMENT 'JSON array of GitHub URLs',
+  `twitter_urls` text DEFAULT NULL COMMENT 'JSON array of Twitter URLs',
+  `linkedin_urls` text DEFAULT NULL COMMENT 'JSON array of LinkedIn URLs',
+  `other_urls` text DEFAULT NULL COMMENT 'JSON array of other URLs',
+  `verified_urls` text DEFAULT NULL COMMENT 'JSON array of verified URLs',
+  `provider_company` varchar(128) NOT NULL,
+  `ai_model` varchar(128) NOT NULL,
+  `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `idx_team_ref` (`ref_db_id`),
+  KEY `idx_team_network_ref` (`network_id`, `ref_id`),
+  KEY `idx_team_name` (`name`),
+  KEY `idx_team_created` (`created_at`),
+  CONSTRAINT `fk_team_ref` FOREIGN KEY (`ref_db_id`) REFERENCES `refs` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

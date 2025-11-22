@@ -9,6 +9,8 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/core"
+	"github.com/stake-plus/govcomms/src/actions/research/components/claims"
+	"github.com/stake-plus/govcomms/src/actions/research/components/teams"
 	aicore "github.com/stake-plus/govcomms/src/ai/core"
 	cache "github.com/stake-plus/govcomms/src/cache"
 	sharedconfig "github.com/stake-plus/govcomms/src/config"
@@ -30,6 +32,7 @@ type Module struct {
 	session         *discordgo.Session
 	cacheManager    *cache.Manager
 	contextStore    *cache.ContextStore
+	researchStore   *cache.ResearchStore
 	networkManager  *sharedgov.NetworkManager
 	refManager      *sharedgov.ReferendumManager
 	cancel          context.CancelFunc
@@ -79,6 +82,7 @@ func NewModule(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Module, error) {
 		session:         session,
 		cacheManager:    cacheManager,
 		contextStore:    cache.NewContextStore(db),
+		researchStore:   cache.NewResearchStore(db),
 		networkManager:  networkManager,
 		refManager:      refManager,
 		mcpEnabled:      mcpCfg.Enabled,
@@ -414,6 +418,9 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 
 	msg := fmt.Sprintf("✅ Refreshed content for %s referendum #%d", network.Name, threadInfo.RefID)
 	sendStyledWebhookEdit(s, i.Interaction, "Refresh", msg)
+
+	// Trigger claims and teams analysis in background
+	go m.runSilentResearch(network.Name, uint32(threadInfo.RefID), threadInfo.RefDBID, threadInfo.NetworkID)
 }
 
 func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.Interaction, question string, message string, providerInfo aicore.ProviderInfo, model string) {
@@ -496,7 +503,151 @@ func buildQuestionResponseBody(providerInfo aicore.ProviderInfo, model, question
 	if providerCompany == "" {
 		providerCompany = "unknown"
 	}
+	providerWebsite := providerInfo.Website
+	if providerWebsite == "" {
+		providerWebsite = "unknown"
+	}
+	return fmt.Sprintf("Provider: %s    Model: %s    Website: %s\n\nQuestion: %s\n\nAnswer:\n\n%s",
+		providerCompany, model, providerWebsite, questionText, answer)
+}
 
-	return fmt.Sprintf("Provider: %s    Model: %s\n\nQuestion: %s\n\nAnswer:\n\n%s",
-		providerCompany, model, questionText, answer)
+// runSilentResearch runs claims and teams analysis silently and saves results to the database.
+func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64, networkID uint8) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	// Load AI config to get provider/model info
+	aiCfg := sharedconfig.LoadQAConfig(m.db).AIConfig
+	providerInfo, _ := aicore.GetProviderInfo(aiCfg.AIProvider)
+	modelName := aicore.ResolveModelName(aiCfg.AIProvider, aiCfg.AIModel)
+	if modelName == "" {
+		modelName = providerInfo.Model
+	}
+	if modelName == "" {
+		modelName = "unknown"
+	}
+	providerCompany := providerInfo.Company
+	if providerCompany == "" {
+		providerCompany = "unknown"
+	}
+
+	// Delete existing research data for this ref before running new analysis
+	m.researchStore.DeleteClaimsForRef(refDBID)
+	m.researchStore.DeleteTeamMembersForRef(refDBID)
+
+	// Get proposal content
+	proposalContent, err := m.cacheManager.GetProposalContent(network, refID)
+	if err != nil {
+		log.Printf("question: silent research: failed to get proposal content: %v", err)
+		return
+	}
+
+	// Create AI clients for claims and teams
+	factoryCfg := aiCfg.FactoryConfig()
+	claimsClient, err := aicore.NewClient(factoryCfg)
+	if err != nil {
+		log.Printf("question: silent research: failed to create claims client: %v", err)
+		return
+	}
+	claimsAnalyzer, err := claims.NewAnalyzer(claimsClient)
+	if err != nil {
+		log.Printf("question: silent research: failed to create claims analyzer: %v", err)
+		return
+	}
+
+	teamsClient, err := aicore.NewClient(factoryCfg)
+	if err != nil {
+		log.Printf("question: silent research: failed to create teams client: %v", err)
+		return
+	}
+	teamsAnalyzer, err := teams.NewAnalyzer(teamsClient)
+	if err != nil {
+		log.Printf("question: silent research: failed to create teams analyzer: %v", err)
+		return
+	}
+
+	// Run claims and teams analysis in parallel
+	var claimsErr, teamsErr error
+	done := make(chan bool, 2)
+
+	// Claims analysis
+	go func() {
+		defer func() { done <- true }()
+		topClaims, totalClaims, err := claimsAnalyzer.ExtractTopClaims(ctx, proposalContent)
+		if err != nil {
+			claimsErr = fmt.Errorf("extract claims: %w", err)
+			return
+		}
+		if len(topClaims) == 0 {
+			log.Printf("question: silent research: no claims found for %s #%d", network, refID)
+			return
+		}
+
+		results, err := claimsAnalyzer.VerifyClaims(ctx, topClaims)
+		if err != nil {
+			claimsErr = fmt.Errorf("verify claims: %w", err)
+			return
+		}
+
+		totalClaimsUint := uint32(totalClaims)
+		for i, result := range results {
+			claim := topClaims[i]
+			status := string(result.Status)
+			if err := m.researchStore.SaveClaim(
+				refDBID, networkID, refID,
+				claim.Claim, claim.Category, claim.URLs, claim.Context,
+				status, result.Evidence, result.SourceURLs,
+				providerCompany, modelName, &totalClaimsUint,
+			); err != nil {
+				log.Printf("question: silent research: failed to save claim: %v", err)
+			}
+		}
+		log.Printf("question: silent research: saved %d claims for %s #%d", len(results), network, refID)
+	}()
+
+	// Teams analysis
+	go func() {
+		defer func() { done <- true }()
+		members, err := teamsAnalyzer.ExtractTeamMembers(ctx, proposalContent)
+		if err != nil {
+			teamsErr = fmt.Errorf("extract team members: %w", err)
+			return
+		}
+		if len(members) == 0 {
+			log.Printf("question: silent research: no team members found for %s #%d", network, refID)
+			return
+		}
+
+		results, err := teamsAnalyzer.AnalyzeTeamMembers(ctx, members)
+		if err != nil {
+			teamsErr = fmt.Errorf("analyze team members: %w", err)
+			return
+		}
+
+		for i, result := range results {
+			member := members[i]
+			isReal := result.IsReal
+			hasStatedSkills := result.HasStatedSkills
+			if err := m.researchStore.SaveTeamMember(
+				refDBID, networkID, refID,
+				result.Name, result.Role, &isReal, &hasStatedSkills, result.Capability,
+				member.GitHub, member.Twitter, member.LinkedIn, member.Other, result.VerifiedURLs,
+				providerCompany, modelName,
+			); err != nil {
+				log.Printf("question: silent research: failed to save team member: %v", err)
+			}
+		}
+		log.Printf("question: silent research: saved %d team members for %s #%d", len(results), network, refID)
+	}()
+
+	// Wait for both to complete
+	<-done
+	<-done
+
+	if claimsErr != nil {
+		log.Printf("question: silent research: claims error: %v", claimsErr)
+	}
+	if teamsErr != nil {
+		log.Printf("question: silent research: teams error: %v", teamsErr)
+	}
 }
