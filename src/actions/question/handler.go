@@ -1113,15 +1113,15 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 		if len(contextPart) <= maxChars {
 			embeds = append(embeds, SummaryEmbed{
-				Title:       "Overview 📋",
+				Title:       "Background Context 📖",
 				Description: contextPart,
 				Color:       0x3B82F6, // Blue
 			})
 		} else {
 			// Split context itself if too long
-			chunks := splitLongText(header+"📖 Background Context\n\n", summary.BackgroundContext, maxChars)
+			chunks := splitLongText(header+"Background Context 📖\n\n", summary.BackgroundContext, maxChars)
 			for i, chunk := range chunks {
-				title := fmt.Sprintf("%s Referendum #%d", summary.Network, summary.RefID)
+				title := fmt.Sprintf("Background Context 📖", summary.Network, summary.RefID)
 				if i > 0 {
 					title += " (continued)"
 				}
@@ -1135,14 +1135,14 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 		if len(summaryPart) <= maxChars {
 			embeds = append(embeds, SummaryEmbed{
-				Title:       fmt.Sprintf("%s Referendum #%d - Summary", summary.Network, summary.RefID),
+				Title:       "Referendum Summary 📝",
 				Description: summaryPart,
 				Color:       0x3B82F6,
 			})
 		} else {
-			chunks := splitLongText("📝 Summary\n\n", summary.Summary, maxChars)
+			chunks := splitLongText("Referendum Summary 📝\n\n", summary.Summary, maxChars)
 			for i, chunk := range chunks {
-				title := fmt.Sprintf("%s Referendum #%d - Summary", summary.Network, summary.RefID)
+				title := fmt.Sprintf("Referendum Summary 📝", summary.Network, summary.RefID)
 				if i > 0 {
 					title += " (continued)"
 				}
