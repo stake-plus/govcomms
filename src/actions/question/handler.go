@@ -1178,18 +1178,18 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 	if len(summary.UnverifiedClaims) > 0 {
 		claimsBuilder.WriteString(fmt.Sprintf("❓ Unverified Claims — %d of %d\n\n", len(summary.UnverifiedClaims), len(summary.ValidClaims)+len(summary.InvalidClaims)+len(summary.UnverifiedClaims)))
 		for _, claim := range summary.UnverifiedClaims {
-			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n", claim))
+			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n\n", claim))
 		}
-		claimsBuilder.WriteString("\n")
+		claimsBuilder.WriteString("\n\n")
 	}
 
 	// Invalid Claims
 	if len(summary.InvalidClaims) > 0 {
 		claimsBuilder.WriteString(fmt.Sprintf("❌ Invalid Claims — %d of %d\n\n", len(summary.InvalidClaims), len(summary.ValidClaims)+len(summary.InvalidClaims)+len(summary.UnverifiedClaims)))
 		for _, claim := range summary.InvalidClaims {
-			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n", claim))
+			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n\n", claim))
 		}
-		claimsBuilder.WriteString("\n")
+		claimsBuilder.WriteString("\n\n")
 	}
 
 	// If no claims at all
