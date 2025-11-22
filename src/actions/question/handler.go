@@ -1107,7 +1107,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 	contextSummaryText := contextSummaryBuilder.String()
 	if len(contextSummaryText) > maxChars {
 		// Split context and summary if needed
-		header := fmt.Sprintf("📋 Overview\n\n%s Referendum #%d\n%s\n\n", summary.Network, summary.RefID, channelTitle)
+		header := fmt.Sprintf("%s\n\n", channelTitle)
 		contextPart := fmt.Sprintf("%s📖 Background Context\n\n%s", header, summary.BackgroundContext)
 		summaryPart := fmt.Sprintf("📝 Summary\n\n%s", summary.Summary)
 
@@ -1155,7 +1155,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 		}
 	} else {
 		embeds = append(embeds, SummaryEmbed{
-			Title:       fmt.Sprintf("%s Referendum #%d", summary.Network, summary.RefID),
+			Title:       "Referendum Overview 📋",
 			Description: contextSummaryText,
 			Color:       0x3B82F6,
 		})
@@ -1166,7 +1166,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Valid Claims
 	if len(summary.ValidClaims) > 0 {
-		claimsBuilder.WriteString(fmt.Sprintf("✅ Valid Claims — %d of %d\n\n", len(summary.ValidClaims), len(summary.ValidClaims)+len(summary.InvalidClaims)+len(summary.UnverifiedClaims)))
+		claimsBuilder.WriteString(fmt.Sprintf("✅ **Valid Claims** — **%d** of **%d**\n\n", len(summary.ValidClaims), len(summary.ValidClaims)+len(summary.InvalidClaims)+len(summary.UnverifiedClaims)))
 		for _, claim := range summary.ValidClaims {
 			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n\n", claim))
 		}
@@ -1175,7 +1175,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Unverified/Unknown Claims
 	if len(summary.UnverifiedClaims) > 0 {
-		claimsBuilder.WriteString(fmt.Sprintf("❓ Unverified Claims — %d of %d\n\n", len(summary.UnverifiedClaims), len(summary.ValidClaims)+len(summary.InvalidClaims)+len(summary.UnverifiedClaims)))
+		claimsBuilder.WriteString(fmt.Sprintf("❓ **Unverified Claims** — **%d** of **%d**\n\n", len(summary.UnverifiedClaims), len(summary.ValidClaims)+len(summary.InvalidClaims)+len(summary.UnverifiedClaims)))
 		for _, claim := range summary.UnverifiedClaims {
 			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n\n", claim))
 		}
@@ -1184,7 +1184,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Invalid Claims
 	if len(summary.InvalidClaims) > 0 {
-		claimsBuilder.WriteString(fmt.Sprintf("❌ Invalid Claims — %d of %d\n\n", len(summary.InvalidClaims), len(summary.ValidClaims)+len(summary.InvalidClaims)+len(summary.UnverifiedClaims)))
+		claimsBuilder.WriteString(fmt.Sprintf("❌ **Invalid Claims** — **%d** of **%d**\n\n", len(summary.InvalidClaims), len(summary.ValidClaims)+len(summary.InvalidClaims)+len(summary.UnverifiedClaims)))
 		for _, claim := range summary.InvalidClaims {
 			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n\n", claim))
 		}
