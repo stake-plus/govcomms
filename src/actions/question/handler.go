@@ -424,15 +424,13 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 		userID = interaction.User.ID
 	}
 
-	title := "Answer"
-
 	answerCleaned, refs := shareddiscord.ReplaceURLsAndCollect(message)
 	if strings.TrimSpace(answerCleaned) == "" {
 		answerCleaned = "_No content_"
 	}
 	answerBody := buildQuestionResponseBody(provider, model, question, strings.TrimSpace(answerCleaned))
 
-	payloads := shareddiscord.BuildStyledMessages(title, answerBody, userID)
+	payloads := shareddiscord.BuildStyledMessages("Answer", answerBody, userID)
 	if len(payloads) == 0 {
 		return
 	}
