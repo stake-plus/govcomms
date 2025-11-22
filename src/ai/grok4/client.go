@@ -20,26 +20,22 @@ import (
 )
 
 const (
-	providerKey             = "grok4"
-	apiURL                  = "https://api.x.ai/v1/chat/completions"
-	defaultModel            = "grok-4-fast-reasoning"
-	defaultMaxTokens        = 8192
-	defaultTemperature      = 1.0
-	defaultTopP             = 0.9
-	defaultFrequencyPenalty = 0.0
-	defaultRequestTimeout   = 240 * time.Second
-	defaultRetryAttempts    = 3
-	defaultRetryBackoff     = 2 * time.Second
-	maxToolIterations       = 20
-	minTopP                 = 0.01
-	maxTopP                 = 1.0
-	penaltyMin              = -2.0
-	penaltyMax              = 2.0
+	providerKey           = "grok4"
+	apiURL                = "https://api.x.ai/v1/chat/completions"
+	defaultModel          = "grok-4-fast-reasoning"
+	defaultMaxTokens      = 8192
+	defaultTemperature    = 1.0
+	defaultTopP           = 0.9
+	defaultRequestTimeout = 240 * time.Second
+	defaultRetryAttempts  = 3
+	defaultRetryBackoff   = 2 * time.Second
+	maxToolIterations     = 20
+	minTopP               = 0.01
+	maxTopP               = 1.0
 )
 
 const (
-	extraTopPKey             = "grok.top_p"
-	extraFrequencyPenaltyKey = "grok.frequency_penalty"
+	extraTopPKey = "grok.top_p"
 )
 
 func init() {
@@ -47,11 +43,10 @@ func init() {
 }
 
 type client struct {
-	apiKey           string
-	httpClient       *http.Client
-	defaults         core.Options
-	topP             float64
-	frequencyPenalty float64
+	apiKey     string
+	httpClient *http.Client
+	defaults   core.Options
+	topP       float64
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
@@ -60,7 +55,6 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 	}
 
 	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
-	frequencyPenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraFrequencyPenaltyKey, defaultFrequencyPenalty), penaltyMin, penaltyMax)
 
 	return &client{
 		apiKey:     cfg.GrokKey,
@@ -71,8 +65,7 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, defaultMaxTokens),
 			SystemPrompt:        cfg.SystemPrompt,
 		},
-		topP:             topP,
-		frequencyPenalty: frequencyPenalty,
+		topP: topP,
 	}, nil
 }
 
@@ -109,7 +102,6 @@ func (c *client) buildRequest(opts core.Options, userPrompt string, enableWeb bo
 		"stream":            false,
 		"n":                 1,
 		"top_p":             c.topP,
-		"frequency_penalty": c.frequencyPenalty,
 	}
 
 	if enableWeb {
@@ -472,13 +464,12 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 
 	for iteration := 0; iteration < maxToolIterations; iteration++ {
 		reqBody := map[string]any{
-			"model":             opts.Model,
-			"messages":          messages,
-			"temperature":       opts.Temperature,
-			"stream":            false,
-			"n":                 1,
-			"top_p":             c.topP,
-			"frequency_penalty": c.frequencyPenalty,
+			"model":       opts.Model,
+			"messages":    messages,
+			"temperature": opts.Temperature,
+			"stream":      false,
+			"n":           1,
+			"top_p":       c.topP,
 		}
 		if opts.MaxCompletionTokens > 0 {
 			reqBody["max_output_tokens"] = opts.MaxCompletionTokens
