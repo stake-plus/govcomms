@@ -3,7 +3,6 @@ package grok
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -11,7 +10,6 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -22,10 +20,9 @@ import (
 )
 
 const (
-	apiURL                   = "https://api.x.ai/v1/chat/completions"
-	defaultModel             = "grok-4-fast-reasoning"
-	defaultMaxTokens         = 16000
-	maxAttachmentTextPreview = 4000
+	apiURL           = "https://api.x.ai/v1/chat/completions"
+	defaultModel     = "grok-4-fast-reasoning"
+	defaultMaxTokens = 16000
 )
 
 func init() {
@@ -555,7 +552,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 		missingAttachmentFile := false
 		for _, call := range convertedCalls {
 			resType := normalizeResource(resourceFromToolCall(call))
-			content := sanitizeToolContent(resType, callOutputs[call.ID])
+			content := callOutputs[call.ID]
 			messages = append(messages, chatMessagePayload{
 				Role:       "tool",
 				ToolCallID: call.ID,
@@ -922,138 +919,4 @@ func strBefore(input, sep string) string {
 		return input[:idx]
 	}
 	return input
-}
-
-func sanitizeToolContent(resType string, raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return raw
-	}
-	switch resType {
-	case "attachments":
-		if summarized, err := summarizeAttachmentPayload(trimmed); err == nil {
-			return summarized
-		}
-	}
-	return raw
-}
-
-func summarizeAttachmentPayload(raw string) (string, error) {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return "", err
-	}
-
-	file := normalizedString(fmt.Sprint(payload["file"]))
-	category := normalizedString(fmt.Sprint(payload["category"]))
-	contentType := normalizedString(fmt.Sprint(payload["contentType"]))
-	sizeBytes := int64Value(payload["sizeBytes"])
-	truncated := boolValue(payload["truncated"])
-	sourceURL := normalizedString(fmt.Sprint(payload["sourceUrl"]))
-	contentBase64 := normalizedString(fmt.Sprint(payload["contentBase64"]))
-
-	displayName := file
-	if displayName == "" && sourceURL != "" {
-		displayName = sourceURL
-	}
-	if displayName == "" {
-		displayName = "Unnamed attachment"
-	} else {
-		displayName = filepath.Base(displayName)
-	}
-
-	var b strings.Builder
-	b.WriteString("Attachment Summary:\n")
-	b.WriteString(fmt.Sprintf("- File: %s\n", displayName))
-	if category != "" {
-		b.WriteString(fmt.Sprintf("- Category: %s\n", category))
-	}
-	if contentType != "" {
-		b.WriteString(fmt.Sprintf("- Content-Type: %s\n", contentType))
-	}
-	if sizeBytes > 0 {
-		b.WriteString(fmt.Sprintf("- Size: %d bytes\n", sizeBytes))
-	}
-	if sourceURL != "" {
-		b.WriteString(fmt.Sprintf("- Source URL: %s\n", sourceURL))
-	}
-
-	if contentBase64 != "" && isLikelyTextAttachment(contentType, file) {
-		if decoded, err := base64.StdEncoding.DecodeString(contentBase64); err == nil {
-			text := trimTextPreview(string(decoded), maxAttachmentTextPreview)
-			if truncated {
-				b.WriteString("- Note: Original file was truncated before encoding.\n")
-			}
-			b.WriteString("Preview:\n")
-			b.WriteString(text)
-			return b.String(), nil
-		}
-	}
-
-	if truncated {
-		b.WriteString("- Note: Original file was truncated in storage.\n")
-	}
-	b.WriteString("Binary content omitted; use the source URL if you need the full file.")
-	return b.String(), nil
-}
-
-func isLikelyTextAttachment(contentType, file string) bool {
-	if strings.HasPrefix(contentType, "text/") {
-		return true
-	}
-	ext := strings.ToLower(filepath.Ext(file))
-	switch ext {
-	case ".txt", ".md", ".json", ".csv", ".toml", ".yaml", ".yml":
-		return true
-	}
-	return false
-}
-
-func trimTextPreview(input string, limit int) string {
-	if len(input) <= limit {
-		return input
-	}
-	return input[:limit] + "... (truncated)"
-}
-
-func int64Value(val any) int64 {
-	switch v := val.(type) {
-	case float64:
-		return int64(v)
-	case float32:
-		return int64(v)
-	case int64:
-		return v
-	case int32:
-		return int64(v)
-	case int:
-		return int64(v)
-	case uint64:
-		return int64(v)
-	case uint32:
-		return int64(v)
-	case json.Number:
-		i, _ := v.Int64()
-		return i
-	case string:
-		if i, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
-			return i
-		}
-	}
-	return 0
-}
-
-func boolValue(val any) bool {
-	switch v := val.(type) {
-	case bool:
-		return v
-	case string:
-		lower := strings.ToLower(strings.TrimSpace(v))
-		return lower == "true" || lower == "1"
-	case float64:
-		return v != 0
-	case int:
-		return v != 0
-	}
-	return false
 }
