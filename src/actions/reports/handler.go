@@ -45,6 +45,13 @@ func NewHandler(cfg *sharedconfig.ReportsConfig, db *gorm.DB, networkManager *sh
 
 // GenerateReport generates a PDF report for a referendum
 func (h *Handler) GenerateReport(s *discordgo.Session, channelID string, network string, refID uint32, refDBID uint64) {
+	log.Printf("reports: GenerateReport called for %s #%d", network, refID)
+	
+	if h.cacheManager == nil {
+		log.Printf("reports: cache manager is nil, cannot generate report")
+		return
+	}
+	
 	// Get cache entry
 	entry, err := h.cacheManager.EnsureEntry(network, refID)
 	if err != nil {
@@ -58,6 +65,7 @@ func (h *Handler) GenerateReport(s *discordgo.Session, channelID string, network
 		return
 	}
 
+	log.Printf("reports: summary found, starting PDF generation for %s #%d", network, refID)
 	// Generate PDF in background
 	go h.generateAndSendPDF(s, channelID, network, refID, refDBID, entry)
 }
@@ -263,5 +271,71 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 	}
 
 	log.Printf("reports: PDF report successfully generated and uploaded for %s #%d", network, refID)
+}
+
+// HandleReportSlash handles the /report slash command
+func (h *Handler) HandleReportSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	// Respond immediately
+	if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+	}); err != nil {
+		log.Printf("reports: slash ack failed: %v", err)
+		return
+	}
+
+	// Find thread info
+	threadInfo, err := h.RefManager.FindThread(i.ChannelID)
+	if err != nil || threadInfo == nil {
+		formatted := shareddiscord.FormatStyledBlock("Report", "This command must be used in a referendum thread.")
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
+			Content: &formatted,
+		})
+		return
+	}
+
+	network := h.NetworkManager.GetByID(threadInfo.NetworkID)
+	if network == nil {
+		formatted := shareddiscord.FormatStyledBlock("Report", "Failed to identify network.")
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
+			Content: &formatted,
+		})
+		return
+	}
+
+	if h.cacheManager == nil {
+		formatted := shareddiscord.FormatStyledBlock("Report", "Cache manager not initialized. Please check server configuration.")
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
+			Content: &formatted,
+		})
+		log.Printf("reports: cache manager is nil in HandleReportSlash")
+		return
+	}
+
+	// Check if summary exists
+	entry, err := h.cacheManager.EnsureEntry(network.Name, uint32(threadInfo.RefID))
+	if err != nil {
+		formatted := shareddiscord.FormatStyledBlock("Report", fmt.Sprintf("Failed to get cache entry: %v", err))
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
+			Content: &formatted,
+		})
+		return
+	}
+
+	if entry.Summary == nil {
+		formatted := shareddiscord.FormatStyledBlock("Report", "No report has been generated yet. Run /refresh to download the most recent data and generate a report.")
+		shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
+			Content: &formatted,
+		})
+		return
+	}
+
+	// Generate and send PDF
+	go h.generateAndSendPDF(s, i.ChannelID, network.Name, uint32(threadInfo.RefID), threadInfo.RefDBID, entry)
+	
+	// Send initial response
+	formatted := shareddiscord.FormatStyledBlock("Report", fmt.Sprintf("Generating PDF report for %s referendum #%d...", network.Name, threadInfo.RefID))
+	shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
+		Content: &formatted,
+	})
 }
 

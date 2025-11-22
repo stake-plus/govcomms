@@ -8,6 +8,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/core"
 	sharedconfig "github.com/stake-plus/govcomms/src/config"
+	shareddiscord "github.com/stake-plus/govcomms/src/discord"
 	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 	"gorm.io/gorm"
 )
@@ -104,6 +105,20 @@ func (m *Module) initHandlers() {
 	m.session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		username := formatDiscordUsername(s.State.User.Username, s.State.User.Discriminator)
 		log.Printf("reports: logged in as %s", username)
+		if err := shareddiscord.RegisterSlashCommands(s, m.cfg.Base.GuildID,
+			shareddiscord.CommandReport,
+		); err != nil {
+			log.Printf("reports: register commands failed: %v", err)
+		}
+	})
+
+	m.session.AddHandler(func(s *discordgo.Session, i *discordgo.InteractionCreate) {
+		if i.Type != discordgo.InteractionApplicationCommand {
+			return
+		}
+		if i.ApplicationCommandData().Name == shareddiscord.CommandReport {
+			m.handler.HandleReportSlash(s, i)
+		}
 	})
 }
 

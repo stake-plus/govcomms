@@ -576,7 +576,10 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 
 	// Trigger PDF report generation if reports module is available
 	if m.reportsGen != nil {
+		log.Printf("question: triggering PDF report generation for %s #%d", network.Name, threadInfo.RefID)
 		go m.reportsGen.GenerateReport(s, i.ChannelID, network.Name, uint32(threadInfo.RefID), threadInfo.RefDBID)
+	} else {
+		log.Printf("question: reports generator not available, skipping PDF generation")
 	}
 }
 
