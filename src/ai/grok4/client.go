@@ -609,8 +609,10 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 				attachmentNames = nil
 				messages = append(messages, chatMessagePayload{
 					Role:    "user",
-					Content: "You have attempted to fetch attachments without a file parameter multiple times. Proceed using the metadata and content you already retrieved and provide the final answer.",
+					Content: "You have attempted to fetch attachments without a file parameter multiple times. Proceed using the metadata and content you already retrieved and provide the final answer without calling attachments again.",
 				})
+				toolsDisabled = true
+				finalReminderSent = true
 			}
 			continue
 		}
@@ -923,12 +925,13 @@ func strBefore(input, sep string) string {
 }
 
 func sanitizeToolContent(resType string, raw string) string {
-	if strings.TrimSpace(raw) == "" {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
 		return raw
 	}
 	switch resType {
 	case "attachments":
-		if summarized, err := summarizeAttachmentPayload(raw); err == nil {
+		if summarized, err := summarizeAttachmentPayload(trimmed); err == nil {
 			return summarized
 		}
 	}
@@ -949,38 +952,49 @@ func summarizeAttachmentPayload(raw string) (string, error) {
 	sourceURL := normalizedString(fmt.Sprint(payload["sourceUrl"]))
 	contentBase64 := normalizedString(fmt.Sprint(payload["contentBase64"]))
 
-	summary := map[string]any{
-		"network":     payload["network"],
-		"refId":       payload["refId"],
-		"file":        file,
-		"category":    category,
-		"contentType": contentType,
-		"sizeBytes":   sizeBytes,
-		"truncated":   truncated,
+	displayName := file
+	if displayName == "" && sourceURL != "" {
+		displayName = sourceURL
+	}
+	if displayName == "" {
+		displayName = "Unnamed attachment"
+	} else {
+		displayName = filepath.Base(displayName)
+	}
+
+	var b strings.Builder
+	b.WriteString("Attachment Summary:\n")
+	b.WriteString(fmt.Sprintf("- File: %s\n", displayName))
+	if category != "" {
+		b.WriteString(fmt.Sprintf("- Category: %s\n", category))
+	}
+	if contentType != "" {
+		b.WriteString(fmt.Sprintf("- Content-Type: %s\n", contentType))
+	}
+	if sizeBytes > 0 {
+		b.WriteString(fmt.Sprintf("- Size: %d bytes\n", sizeBytes))
 	}
 	if sourceURL != "" {
-		summary["sourceUrl"] = sourceURL
+		b.WriteString(fmt.Sprintf("- Source URL: %s\n", sourceURL))
 	}
 
 	if contentBase64 != "" && isLikelyTextAttachment(contentType, file) {
 		if decoded, err := base64.StdEncoding.DecodeString(contentBase64); err == nil {
 			text := trimTextPreview(string(decoded), maxAttachmentTextPreview)
-			summary["contentText"] = text
-		} else {
-			summary["contentSummary"] = fmt.Sprintf("Unable to decode attachment %s (%s). Base64 omitted.", file, contentType)
+			if truncated {
+				b.WriteString("- Note: Original file was truncated before encoding.\n")
+			}
+			b.WriteString("Preview:\n")
+			b.WriteString(text)
+			return b.String(), nil
 		}
-	} else {
-		if file == "" && sourceURL != "" {
-			file = sourceURL
-		}
-		summary["contentSummary"] = fmt.Sprintf("Attachment %s (%s, %d bytes). Binary content omitted.", file, contentType, sizeBytes)
 	}
 
-	bytes, err := json.Marshal(summary)
-	if err != nil {
-		return "", err
+	if truncated {
+		b.WriteString("- Note: Original file was truncated in storage.\n")
 	}
-	return string(bytes), nil
+	b.WriteString("Binary content omitted; use the source URL if you need the full file.")
+	return b.String(), nil
 }
 
 func isLikelyTextAttachment(contentType, file string) bool {
