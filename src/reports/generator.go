@@ -19,10 +19,10 @@ func sanitizeTextForPDF(text string) string {
 	if text == "" {
 		return text
 	}
-	
+
 	var result strings.Builder
 	result.Grow(len(text))
-	
+
 	for _, r := range text {
 		switch r {
 		// Common UTF-8 characters that cause issues
@@ -65,7 +65,7 @@ func sanitizeTextForPDF(text string) string {
 			}
 		}
 	}
-	
+
 	return result.String()
 }
 
@@ -112,12 +112,12 @@ type ReportData struct {
 
 // FinancialAnalysis contains financial breakdown
 type FinancialAnalysis struct {
-	TotalAmount    string
-	Breakdown      []BudgetItem
-	Milestones     []Milestone
-	ROI            string
-	Concerns       []string
-	GeneratedAt    time.Time
+	TotalAmount string
+	Breakdown   []BudgetItem
+	Milestones  []Milestone
+	ROI         string
+	Concerns    []string
+	GeneratedAt time.Time
 }
 
 type BudgetItem struct {
@@ -135,12 +135,12 @@ type Milestone struct {
 
 // RiskAnalysis contains risk assessment
 type RiskAnalysis struct {
-	TechnicalRisks  []RiskItem
-	FinancialRisks   []RiskItem
-	ExecutionRisks  []RiskItem
-	OverallRisk     string // Low/Medium/High
-	Mitigation      []string
-	GeneratedAt     time.Time
+	TechnicalRisks []RiskItem
+	FinancialRisks []RiskItem
+	ExecutionRisks []RiskItem
+	OverallRisk    string // Low/Medium/High
+	Mitigation     []string
+	GeneratedAt    time.Time
 }
 
 type RiskItem struct {
@@ -155,7 +155,7 @@ type TimelineAnalysis struct {
 	ProposedTimeline string
 	Feasibility      string // Realistic/Unrealistic/Ambitious
 	Concerns         []string
-	Recommendations []string
+	Recommendations  []string
 	GeneratedAt      time.Time
 }
 
@@ -171,30 +171,30 @@ type GovernanceAnalysis struct {
 
 // PositiveAnalysis contains positive aspects
 type PositiveAnalysis struct {
-	Strengths      []string
-	Opportunities  []string
+	Strengths        []string
+	Opportunities    []string
 	ValueProposition string
-	Innovation     []string
-	GeneratedAt    time.Time
+	Innovation       []string
+	GeneratedAt      time.Time
 }
 
 // SteelManAnalysis contains steel manning (why it's bad)
 type SteelManAnalysis struct {
-	Concerns      []string
-	Weaknesses    []string
-	RedFlags      []string
-	Alternatives  []string
-	GeneratedAt   time.Time
+	Concerns     []string
+	Weaknesses   []string
+	RedFlags     []string
+	Alternatives []string
+	GeneratedAt  time.Time
 }
 
 // Recommendations contains final recommendations
 type Recommendations struct {
-	Verdict       string // Approve/Deny/Modify
-	Confidence    string // High/Medium/Low
-	Reasoning     string
-	Conditions    []string // If modifying
-	KeyPoints     []string
-	GeneratedAt   time.Time
+	Verdict     string // Approve/Deny/Modify
+	Confidence  string // High/Medium/Low
+	Reasoning   string
+	Conditions  []string // If modifying
+	KeyPoints   []string
+	GeneratedAt time.Time
 }
 
 // GeneratePDF creates a comprehensive PDF report
@@ -247,12 +247,12 @@ func (g *Generator) GeneratePDF(data *ReportData) (string, error) {
 	g.addRecommendationsPage(pdf, data)
 
 	// Save PDF
-	filename := fmt.Sprintf("referendum-%s-%d-%s.pdf", 
-		strings.ToLower(data.Network), 
-		data.RefID, 
+	filename := fmt.Sprintf("referendum-%s-%d-%s.pdf",
+		strings.ToLower(data.Network),
+		data.RefID,
 		time.Now().Format("20060102-150405"))
 	filepath := fmt.Sprintf("%s/%s", g.tempDir, filename)
-	
+
 	if err := pdf.OutputFileAndClose(filepath); err != nil {
 		return "", fmt.Errorf("save PDF: %w", err)
 	}
@@ -263,7 +263,7 @@ func (g *Generator) GeneratePDF(data *ReportData) (string, error) {
 
 func (g *Generator) addOverviewPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.AddPage()
-	
+
 	// Title
 	pdf.SetFont("Arial", "B", 20)
 	pdf.SetTextColor(0, 0, 0)
@@ -276,7 +276,7 @@ func (g *Generator) addOverviewPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.Ln(8)
 	pdf.CellFormat(0, 10, fmt.Sprintf("Referendum #%d", data.RefID), "", 0, "L", false, 0, "")
 	pdf.Ln(8)
-	
+
 	// Title
 	pdf.SetFont("Arial", "B", 12)
 	pdf.CellFormat(0, 10, "Title:", "", 0, "L", false, 0, "")
@@ -289,7 +289,7 @@ func (g *Generator) addOverviewPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	if data.Summary != nil {
 		pdf.SetFont("Arial", "I", 10)
 		pdf.SetTextColor(128, 128, 128)
-		pdf.CellFormat(0, 8, fmt.Sprintf("Report Generated: %s", 
+		pdf.CellFormat(0, 8, fmt.Sprintf("Report Generated: %s",
 			time.Now().Format("January 2, 2006 at 3:04 PM")), "", 0, "L", false, 0, "")
 		pdf.Ln(10)
 	}
@@ -300,22 +300,22 @@ func (g *Generator) addOverviewPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.CellFormat(0, 10, "Quick Statistics", "", 0, "L", false, 0, "")
 	pdf.Ln(8)
 	pdf.SetFont("Arial", "", 10)
-	
+
 	if data.Claims != nil {
 		pdf.CellFormat(0, 7, fmt.Sprintf("Total Claims Analyzed: %d", data.Claims.TotalClaims), "", 0, "L", false, 0, "")
 		pdf.Ln(6)
 	}
-	
+
 	if data.TeamMembers != nil {
 		pdf.CellFormat(0, 7, fmt.Sprintf("Team Members: %d", len(data.TeamMembers.Members)), "", 0, "L", false, 0, "")
 		pdf.Ln(6)
 	}
-	
+
 	if data.Summary != nil {
 		validCount := len(data.Summary.ValidClaims)
 		invalidCount := len(data.Summary.InvalidClaims)
 		unverifiedCount := len(data.Summary.UnverifiedClaims)
-		pdf.CellFormat(0, 7, fmt.Sprintf("Claims Status: %d Valid, %d Invalid, %d Unverified", 
+		pdf.CellFormat(0, 7, fmt.Sprintf("Claims Status: %d Valid, %d Invalid, %d Unverified",
 			validCount, invalidCount, unverifiedCount), "", 0, "L", false, 0, "")
 		pdf.Ln(6)
 	}
@@ -323,7 +323,7 @@ func (g *Generator) addOverviewPage(pdf *gofpdf.Fpdf, data *ReportData) {
 
 func (g *Generator) addSummaryPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.AddPage()
-	
+
 	pdf.SetFont("Arial", "B", 16)
 	pdf.CellFormat(0, 12, "Context & Summary", "", 0, "L", false, 0, "")
 	pdf.Ln(15)
@@ -354,7 +354,7 @@ func (g *Generator) addSummaryPage(pdf *gofpdf.Fpdf, data *ReportData) {
 
 func (g *Generator) addFinancialsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.AddPage()
-	
+
 	pdf.SetFont("Arial", "B", 16)
 	pdf.CellFormat(0, 12, "Project Financials", "", 0, "L", false, 0, "")
 	pdf.Ln(15)
@@ -368,7 +368,7 @@ func (g *Generator) addFinancialsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 
 	// Total Amount
 	pdf.SetFont("Arial", "B", 12)
-		g.cellFormat(pdf, 0, 10, fmt.Sprintf("Total Requested: %s", data.Financials.TotalAmount), "", 0, "L", false, 0, "")
+	g.cellFormat(pdf, 0, 10, fmt.Sprintf("Total Requested: %s", data.Financials.TotalAmount), "", 0, "L", false, 0, "")
 	pdf.Ln(12)
 
 	// Budget Breakdown
@@ -446,7 +446,7 @@ func (g *Generator) addTeamPages(pdf *gofpdf.Fpdf, data *ReportData) {
 
 	for _, member := range data.TeamMembers.Members {
 		pdf.AddPage()
-		
+
 		pdf.SetFont("Arial", "B", 16)
 		pdf.CellFormat(0, 12, "Team Member Analysis", "", 0, "L", false, 0, "")
 		pdf.Ln(15)
@@ -466,28 +466,28 @@ func (g *Generator) addTeamPages(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.CellFormat(0, 8, "Verification Status", "", 0, "L", false, 0, "")
 		pdf.Ln(8)
 		pdf.SetFont("Arial", "", 10)
-		
+
 		isReal := "Unknown"
 		if member.IsReal != nil {
 			if *member.IsReal {
-				isReal = "✓ Verified Real Person"
+				isReal = "[VERIFIED] Verified Real Person"
 				pdf.SetTextColor(0, 150, 0)
 			} else {
-				isReal = "✗ Not Verified"
+				isReal = "[NOT VERIFIED] Not Verified"
 				pdf.SetTextColor(200, 0, 0)
 			}
 		}
 		pdf.CellFormat(0, 7, isReal, "", 0, "L", false, 0, "")
 		pdf.Ln(6)
 		pdf.SetTextColor(0, 0, 0)
-		
+
 		hasSkills := "Unknown"
 		if member.HasStatedSkills != nil {
 			if *member.HasStatedSkills {
-				hasSkills = "✓ Skills Verified"
+				hasSkills = "[VERIFIED] Skills Verified"
 				pdf.SetTextColor(0, 150, 0)
 			} else {
-				hasSkills = "⚠ Skills Unverified"
+				hasSkills = "[WARNING] Skills Unverified"
 				pdf.SetTextColor(200, 150, 0)
 			}
 		}
@@ -510,14 +510,14 @@ func (g *Generator) addTeamPages(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.CellFormat(0, 8, "Profile Links", "", 0, "L", false, 0, "")
 		pdf.Ln(8)
 		pdf.SetFont("Arial", "", 9)
-		
+
 		allURLs := []string{}
 		allURLs = append(allURLs, member.GitHub...)
 		allURLs = append(allURLs, member.Twitter...)
 		allURLs = append(allURLs, member.LinkedIn...)
 		allURLs = append(allURLs, member.Other...)
 		allURLs = append(allURLs, member.VerifiedURLs...)
-		
+
 		if len(allURLs) > 0 {
 			for _, url := range allURLs {
 				pdf.CellFormat(0, 6, url, "", 0, "L", false, 0, "")
@@ -534,7 +534,7 @@ func (g *Generator) addTeamPages(pdf *gofpdf.Fpdf, data *ReportData) {
 
 func (g *Generator) addClaimsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.AddPage()
-	
+
 	pdf.SetFont("Arial", "B", 16)
 	pdf.CellFormat(0, 12, "Claims Analysis", "", 0, "L", false, 0, "")
 	pdf.Ln(15)
@@ -566,7 +566,7 @@ func (g *Generator) addClaimsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	if len(valid) > 0 {
 		pdf.SetFont("Arial", "B", 12)
 		pdf.SetTextColor(0, 150, 0)
-		pdf.CellFormat(0, 10, fmt.Sprintf("✓ Valid Claims (%d)", len(valid)), "", 0, "L", false, 0, "")
+		g.cellFormat(pdf, 0, 10, fmt.Sprintf("[VALID] Valid Claims (%d)", len(valid)), "", 0, "L", false, 0, "")
 		pdf.Ln(10)
 		pdf.SetTextColor(0, 0, 0)
 		pdf.SetFont("Arial", "", 9)
@@ -587,7 +587,7 @@ func (g *Generator) addClaimsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	if len(invalid) > 0 {
 		pdf.SetFont("Arial", "B", 12)
 		pdf.SetTextColor(200, 0, 0)
-		pdf.CellFormat(0, 10, fmt.Sprintf("✗ Invalid Claims (%d)", len(invalid)), "", 0, "L", false, 0, "")
+		g.cellFormat(pdf, 0, 10, fmt.Sprintf("[INVALID] Invalid Claims (%d)", len(invalid)), "", 0, "L", false, 0, "")
 		pdf.Ln(10)
 		pdf.SetTextColor(0, 0, 0)
 		pdf.SetFont("Arial", "", 9)
@@ -608,7 +608,7 @@ func (g *Generator) addClaimsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	if len(unknown) > 0 {
 		pdf.SetFont("Arial", "B", 12)
 		pdf.SetTextColor(150, 150, 0)
-		pdf.CellFormat(0, 10, fmt.Sprintf("? Unverified Claims (%d)", len(unknown)), "", 0, "L", false, 0, "")
+		g.cellFormat(pdf, 0, 10, fmt.Sprintf("[UNVERIFIED] Unverified Claims (%d)", len(unknown)), "", 0, "L", false, 0, "")
 		pdf.Ln(10)
 		pdf.SetTextColor(0, 0, 0)
 		pdf.SetFont("Arial", "", 9)
@@ -622,7 +622,7 @@ func (g *Generator) addClaimsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 
 func (g *Generator) addPositiveAnalysisPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.AddPage()
-	
+
 	pdf.SetFont("Arial", "B", 16)
 	pdf.CellFormat(0, 12, "Positive Analysis", "", 0, "L", false, 0, "")
 	pdf.Ln(15)
@@ -690,7 +690,7 @@ func (g *Generator) addPositiveAnalysisPage(pdf *gofpdf.Fpdf, data *ReportData) 
 
 func (g *Generator) addSteelManningPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.AddPage()
-	
+
 	pdf.SetFont("Arial", "B", 16)
 	pdf.SetTextColor(200, 0, 0)
 	pdf.CellFormat(0, 12, "Steel Manning Analysis", "", 0, "L", false, 0, "")
@@ -741,7 +741,7 @@ func (g *Generator) addSteelManningPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.SetTextColor(0, 0, 0)
 		pdf.SetFont("Arial", "", 9)
 		for _, flag := range data.SteelManning.RedFlags {
-			pdf.CellFormat(5, 6, "⚠", "", 0, "L", false, 0, "")
+			pdf.CellFormat(5, 6, "[!]", "", 0, "L", false, 0, "")
 			g.multiCell(pdf, 0, 6, flag, "", "", false)
 			pdf.Ln(3)
 		}
@@ -764,7 +764,7 @@ func (g *Generator) addSteelManningPage(pdf *gofpdf.Fpdf, data *ReportData) {
 
 func (g *Generator) addRecommendationsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.AddPage()
-	
+
 	pdf.SetFont("Arial", "B", 16)
 	pdf.CellFormat(0, 12, "Recommendations", "", 0, "L", false, 0, "")
 	pdf.Ln(15)
@@ -790,7 +790,7 @@ func (g *Generator) addRecommendationsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		verdictColor = 0x000000 // Black
 	}
 	pdf.SetTextColor(verdictColor>>16, (verdictColor>>8)&0xFF, verdictColor&0xFF)
-		g.cellFormat(pdf, 0, 12, fmt.Sprintf("Verdict: %s", strings.ToUpper(data.Recommendations.Verdict)), "", 0, "L", false, 0, "")
+	g.cellFormat(pdf, 0, 12, fmt.Sprintf("Verdict: %s", strings.ToUpper(data.Recommendations.Verdict)), "", 0, "L", false, 0, "")
 	pdf.Ln(12)
 	pdf.SetTextColor(0, 0, 0)
 
@@ -804,7 +804,7 @@ func (g *Generator) addRecommendationsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.CellFormat(0, 10, "Reasoning", "", 0, "L", false, 0, "")
 	pdf.Ln(8)
 	pdf.SetFont("Arial", "", 9)
-		g.multiCell(pdf, 0, 6, data.Recommendations.Reasoning, "", "", false)
+	g.multiCell(pdf, 0, 6, data.Recommendations.Reasoning, "", "", false)
 	pdf.Ln(10)
 
 	// Key Points
@@ -834,4 +834,3 @@ func (g *Generator) addRecommendationsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		}
 	}
 }
-
