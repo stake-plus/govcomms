@@ -29,6 +29,7 @@ const (
 	defaultRetryAttempts  = 3
 	defaultRetryBackoff   = 2 * time.Second
 	maxToolIterations     = 20
+	maxAttachmentFetches  = 6
 	minTopP               = 0.01
 	maxTopP               = 1.0
 	minTopK               = 1
@@ -190,6 +191,9 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 	historyFetched := false
 	attachmentNames := []string{}
 	attachmentsRetrieved := map[string]bool{}
+	attachmentFetches := 0
+	attachmentLimitHit := false
+	attachmentLimitNotified := false
 	finalReminderSent := false
 	base64ReminderSent := false
 	historyReminderSent := false
@@ -290,11 +294,20 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 		callOutputs := make(map[string]string, len(convertedCalls))
 		pendingCalls := make([]openAIToolCall, 0, len(convertedCalls))
 		pendingKeys := make(map[string]string, len(convertedCalls))
+		skippedCalls := make(map[string]bool, len(convertedCalls))
 
 		for _, call := range convertedCalls {
 			key := toolCacheKey(call)
 			if val, ok := toolCache[key]; ok {
 				callOutputs[call.ID] = val
+				continue
+			}
+			resType := normalizeResource(resourceFromToolCall(call))
+			if resType == "attachments" && attachmentFetches >= maxAttachmentFetches {
+				msg := attachmentLimitToolResult(attachmentFileFromCall(call))
+				callOutputs[call.ID] = msg
+				skippedCalls[call.ID] = true
+				attachmentLimitHit = true
 				continue
 			}
 			pendingCalls = append(pendingCalls, call)
@@ -345,6 +358,18 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 				}
 			case "attachments":
 				fileArg := attachmentFileFromCall(call)
+				if skippedCalls[call.ID] {
+					if len(attachmentNames) > 0 {
+						markAllAttachmentsRetrieved(attachmentNames, attachmentsRetrieved)
+					} else if fileArg != "" {
+						attachmentsRetrieved[fileArg] = true
+					}
+					continue
+				}
+				attachmentFetches++
+				if attachmentFetches >= maxAttachmentFetches {
+					attachmentLimitHit = true
+				}
 				if fileArg != "" {
 					attachmentsRetrieved[fileArg] = true
 				}
@@ -357,6 +382,19 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 			Role:    "user",
 			Content: toolResultBlocks,
 		})
+		if attachmentLimitHit && !attachmentLimitNotified {
+			messages = append(messages, anthropicMessage{
+				Role: "user",
+				Content: []anthropicContentBlock{
+					textBlock("Token budget is limited, so additional attachments will not be retrieved. Use the metadata and previously downloaded attachments to continue."),
+				},
+			})
+			attachmentLimitHit = false
+			attachmentLimitNotified = true
+			if len(attachmentNames) > 0 {
+				markAllAttachmentsRetrieved(attachmentNames, attachmentsRetrieved)
+			}
+		}
 
 		if !pendingCallExecuted {
 			stallCount++
@@ -456,6 +494,22 @@ func shouldEnableWebSearch(opts core.Options, tools []core.Tool) bool {
 		}
 	}
 	return false
+}
+
+func markAllAttachmentsRetrieved(names []string, retrieved map[string]bool) {
+	for _, name := range names {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		retrieved[name] = true
+	}
+}
+
+func attachmentLimitToolResult(file string) string {
+	if strings.TrimSpace(file) == "" {
+		return "Attachment skipped: token budget is limited. Continue with the metadata and attachments already downloaded."
+	}
+	return fmt.Sprintf("Attachment %s skipped: token budget is limited. Continue with the metadata and attachments already downloaded.", file)
 }
 
 func (c *client) applySampling(target map[string]any, temperature float64) {
