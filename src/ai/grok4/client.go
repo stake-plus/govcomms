@@ -261,7 +261,7 @@ func (c *client) invokeMCP(ctx context.Context, desc *core.MCPDescriptor, args m
 	if desc == nil || strings.TrimSpace(desc.BaseURL) == "" {
 		return "", fmt.Errorf("mcp descriptor missing")
 	}
-	network := strings.TrimSpace(fmt.Sprint(args["network"]))
+	network := normalizedArgValue(args["network"])
 	if network == "" {
 		return "", fmt.Errorf("network argument required")
 	}
@@ -273,9 +273,8 @@ func (c *client) invokeMCP(ctx context.Context, desc *core.MCPDescriptor, args m
 	if err != nil {
 		return "", fmt.Errorf("invalid refId: %w", err)
 	}
-	resource := strings.TrimSpace(fmt.Sprint(args["resource"]))
-	resource = strings.ToLower(resource)
-	fileParam := strings.TrimSpace(fmt.Sprint(args["file"]))
+	resource := strings.ToLower(normalizedArgValue(args["resource"]))
+	fileParam := normalizedArgValue(args["file"])
 	if resource == "attachments" && fileParam == "" {
 		return "", fmt.Errorf("file argument required for attachments")
 	}
@@ -827,7 +826,7 @@ func attachmentFileFromCall(call openAIToolCall) string {
 	if err != nil || len(args) == 0 {
 		return ""
 	}
-	return strings.TrimSpace(fmt.Sprint(args["file"]))
+	return normalizedArgValue(args["file"])
 }
 
 var weirdParamPattern = regexp.MustCompile(`parameter name="([^"]+)">([^<]+)`)
@@ -839,12 +838,19 @@ func normalizeToolArguments(args map[string]any) map[string]any {
 	for key, val := range args {
 		strVal, ok := val.(string)
 		if !ok {
+			args[key] = normalizedArgValue(val)
 			continue
 		}
 		if !strings.Contains(strVal, "parameter name=") {
+			clean := normalizedString(strVal)
+			if clean == "" {
+				delete(args, key)
+			} else {
+				args[key] = clean
+			}
 			continue
 		}
-		base := strings.TrimSpace(strBefore(strVal, "<"))
+		base := normalizedString(strBefore(strVal, "<"))
 		if base != "" {
 			args[key] = base
 		} else {
@@ -853,6 +859,10 @@ func normalizeToolArguments(args map[string]any) map[string]any {
 		extracted := extractWeirdParameters(strVal)
 		for name, value := range extracted {
 			if strings.TrimSpace(name) == "" {
+				continue
+			}
+			if value == "" {
+				delete(args, name)
 				continue
 			}
 			args[name] = value
@@ -872,13 +882,34 @@ func extractWeirdParameters(input string) map[string]string {
 			continue
 		}
 		name := strings.TrimSpace(match[1])
-		value := strings.TrimSpace(html.UnescapeString(match[2]))
+		value := normalizedString(html.UnescapeString(match[2]))
 		if name == "" {
 			continue
 		}
 		out[name] = value
 	}
 	return out
+}
+
+func normalizedString(value string) string {
+	trimmed := strings.TrimSpace(value)
+	lowered := strings.ToLower(trimmed)
+	if trimmed == "" || trimmed == "<nil>" || lowered == "null" || lowered == "nil" {
+		return ""
+	}
+	return trimmed
+}
+
+func normalizedArgValue(val any) string {
+	if val == nil {
+		return ""
+	}
+	switch v := val.(type) {
+	case string:
+		return normalizedString(v)
+	default:
+		return normalizedString(fmt.Sprint(v))
+	}
 }
 
 func strBefore(input, sep string) string {
