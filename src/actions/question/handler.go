@@ -550,23 +550,13 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 		}
 	}
 
-	// Send first embed as webhook edit
-	firstEmbed := []*discordgo.MessageEmbed{discordEmbeds[0]}
-	edit := &discordgo.WebhookEdit{
-		Embeds: &firstEmbed,
-	}
-	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, edit); err != nil {
-		log.Printf("question: summary send failed: %v", err)
-		return
-	}
-
-	// Send follow-up embeds
-	for idx := 1; idx < len(discordEmbeds); idx++ {
+	// Send all embeds as new messages (don't edit the original "Starting refresh..." message)
+	for _, embed := range discordEmbeds {
 		msg := &discordgo.MessageSend{
-			Embeds: []*discordgo.MessageEmbed{discordEmbeds[idx]},
+			Embeds: []*discordgo.MessageEmbed{embed},
 		}
 		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, i.ChannelID, msg); err != nil {
-			log.Printf("question: summary follow-up send failed: %v", err)
+			log.Printf("question: summary embed send failed: %v", err)
 			return
 		}
 	}
