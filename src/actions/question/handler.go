@@ -454,37 +454,40 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 		channelName = summary.Title // Fallback
 	}
 
-	// Format and send summary
-	summaryMessages := m.formatSummary(summary, channelName)
-	log.Printf("question: formatted summary for %s #%d (%d messages)", network.Name, threadInfo.RefID, len(summaryMessages))
+	// Format and send summary as embeds
+	summaryEmbeds := m.formatSummary(summary, channelName)
+	log.Printf("question: formatted summary for %s #%d (%d embeds)", network.Name, threadInfo.RefID, len(summaryEmbeds))
 
-	if len(summaryMessages) == 0 {
-		log.Printf("question: no messages generated for summary")
+	if len(summaryEmbeds) == 0 {
+		log.Printf("question: no embeds generated for summary")
 		sendStyledWebhookEdit(s, i.Interaction, "Refresh", "Summary generated but formatting failed.")
 		return
 	}
 
-	// Send first message as webhook edit (no title prefix)
-	firstPayload := shareddiscord.BuildStyledMessage("", summaryMessages[0])
-	edit := &discordgo.WebhookEdit{
-		Content: &firstPayload.Content,
+	// Convert to Discord embeds
+	discordEmbeds := make([]*discordgo.MessageEmbed, len(summaryEmbeds))
+	for i, embed := range summaryEmbeds {
+		discordEmbeds[i] = &discordgo.MessageEmbed{
+			Title:       embed.Title,
+			Description: embed.Description,
+			Color:       embed.Color,
+		}
 	}
-	if len(firstPayload.Components) > 0 {
-		edit.Components = &firstPayload.Components
+
+	// Send first embed as webhook edit
+	firstEmbed := []*discordgo.MessageEmbed{discordEmbeds[0]}
+	edit := &discordgo.WebhookEdit{
+		Embeds: &firstEmbed,
 	}
 	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, edit); err != nil {
 		log.Printf("question: summary send failed: %v", err)
 		return
 	}
 
-	// Send follow-up messages
-	for idx := 1; idx < len(summaryMessages); idx++ {
-		payload := shareddiscord.BuildStyledMessage("", summaryMessages[idx])
+	// Send follow-up embeds
+	for idx := 1; idx < len(discordEmbeds); idx++ {
 		msg := &discordgo.MessageSend{
-			Content: payload.Content,
-		}
-		if len(payload.Components) > 0 {
-			msg.Components = payload.Components
+			Embeds: []*discordgo.MessageEmbed{discordEmbeds[idx]},
 		}
 		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, i.ChannelID, msg); err != nil {
 			log.Printf("question: summary follow-up send failed: %v", err)
@@ -1077,12 +1080,19 @@ func historyToBulletPoints(history string, maxBullets int) string {
 	return result.String()
 }
 
-// formatSummary formats the summary data for Discord display, returning multiple messages if needed.
+// SummaryEmbed represents a Discord embed for summary sections
+type SummaryEmbed struct {
+	Title       string
+	Description string
+	Color       int
+}
+
+// formatSummary formats the summary data for Discord embeds, returning multiple embeds if needed.
 // Sections are grouped: Summary & Context together, Claims together, Team Members together.
-// If any section exceeds 1999 characters, it will be split.
-func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) []string {
-	const maxChars = 1999
-	var messages []string
+// If any section exceeds 4096 characters, it will be split.
+func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) []SummaryEmbed {
+	const maxChars = 4096
+	var embeds []SummaryEmbed
 
 	// Section 1: Background Context & Summary (grouped together)
 	var contextSummaryBuilder strings.Builder
@@ -1102,19 +1112,53 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 		summaryPart := fmt.Sprintf("📝 Summary\n\n%s", summary.Summary)
 
 		if len(contextPart) <= maxChars {
-			messages = append(messages, contextPart)
+			embeds = append(embeds, SummaryEmbed{
+				Title:       fmt.Sprintf("%s Referendum #%d", summary.Network, summary.RefID),
+				Description: contextPart,
+				Color:       0x3B82F6, // Blue
+			})
 		} else {
 			// Split context itself if too long
-			messages = append(messages, splitLongText(header+"📖 Background Context\n\n", summary.BackgroundContext, maxChars)...)
+			chunks := splitLongText(header+"📖 Background Context\n\n", summary.BackgroundContext, maxChars)
+			for i, chunk := range chunks {
+				title := fmt.Sprintf("%s Referendum #%d", summary.Network, summary.RefID)
+				if i > 0 {
+					title += " (continued)"
+				}
+				embeds = append(embeds, SummaryEmbed{
+					Title:       title,
+					Description: chunk,
+					Color:       0x3B82F6,
+				})
+			}
 		}
 
 		if len(summaryPart) <= maxChars {
-			messages = append(messages, summaryPart)
+			embeds = append(embeds, SummaryEmbed{
+				Title:       fmt.Sprintf("%s Referendum #%d - Summary", summary.Network, summary.RefID),
+				Description: summaryPart,
+				Color:       0x3B82F6,
+			})
 		} else {
-			messages = append(messages, splitLongText("📝 Summary\n\n", summary.Summary, maxChars)...)
+			chunks := splitLongText("📝 Summary\n\n", summary.Summary, maxChars)
+			for i, chunk := range chunks {
+				title := fmt.Sprintf("%s Referendum #%d - Summary", summary.Network, summary.RefID)
+				if i > 0 {
+					title += " (continued)"
+				}
+				embeds = append(embeds, SummaryEmbed{
+					Title:       title,
+					Description: chunk,
+					Color:       0x3B82F6,
+				})
+			}
 		}
 	} else {
-		messages = append(messages, contextSummaryText)
+		embeds = append(embeds, SummaryEmbed{
+			Title:       fmt.Sprintf("%s Referendum #%d", summary.Network, summary.RefID),
+			Description: contextSummaryText,
+			Color:       0x3B82F6,
+		})
 	}
 
 	// Section 2: All Claims (grouped together)
@@ -1158,9 +1202,24 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 		// Extract the content without the prefix for splitting
 		claimsPrefix := "Referendum Claims and Warranties Analysis 🔍\n\n\n"
 		claimsContent := claimsText[len(claimsPrefix):]
-		messages = append(messages, splitLongText(claimsPrefix, claimsContent, maxChars)...)
+		chunks := splitLongText(claimsPrefix, claimsContent, maxChars)
+		for i, chunk := range chunks {
+			title := "Referendum Claims and Warranties Analysis 🔍"
+			if i > 0 {
+				title += " (continued)"
+			}
+			embeds = append(embeds, SummaryEmbed{
+				Title:       title,
+				Description: chunk,
+				Color:       0x10B981, // Green
+			})
+		}
 	} else {
-		messages = append(messages, claimsText)
+		embeds = append(embeds, SummaryEmbed{
+			Title:       "Referendum Claims and Warranties Analysis 🔍",
+			Description: claimsText,
+			Color:       0x10B981,
+		})
 	}
 
 	// Section 3: Team Members (all in one block)
@@ -1243,12 +1302,27 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 	teamText := teamPrefix + teamContent
 
 	if len(teamText) > maxChars {
-		messages = append(messages, splitLongText(teamPrefix, teamContent, maxChars)...)
+		chunks := splitLongText(teamPrefix, teamContent, maxChars)
+		for i, chunk := range chunks {
+			title := "Team Background and Skill Summary ⚡"
+			if i > 0 {
+				title += " (continued)"
+			}
+			embeds = append(embeds, SummaryEmbed{
+				Title:       title,
+				Description: chunk,
+				Color:       0xF59E0B, // Amber/Orange
+			})
+		}
 	} else {
-		messages = append(messages, teamText)
+		embeds = append(embeds, SummaryEmbed{
+			Title:       "Team Background and Skill Summary ⚡",
+			Description: teamText,
+			Color:       0xF59E0B,
+		})
 	}
 
-	return messages
+	return embeds
 }
 
 // splitLongText splits a long text into chunks that fit within maxChars, preserving line breaks.
@@ -1377,35 +1451,38 @@ func (m *Module) handleSummarySlash(s *discordgo.Session, i *discordgo.Interacti
 		channelName = entry.Summary.Title // Fallback
 	}
 
-	// Format and send summary
-	summaryMessages := m.formatSummary(entry.Summary, channelName)
+	// Format and send summary as embeds
+	summaryEmbeds := m.formatSummary(entry.Summary, channelName)
 
-	if len(summaryMessages) == 0 {
+	if len(summaryEmbeds) == 0 {
 		sendStyledWebhookEdit(s, i.Interaction, "Summary", "Summary formatting failed.")
 		return
 	}
 
-	// Send first message as webhook edit (no title prefix)
-	firstPayload := shareddiscord.BuildStyledMessage("", summaryMessages[0])
-	edit := &discordgo.WebhookEdit{
-		Content: &firstPayload.Content,
+	// Convert to Discord embeds
+	discordEmbeds := make([]*discordgo.MessageEmbed, len(summaryEmbeds))
+	for i, embed := range summaryEmbeds {
+		discordEmbeds[i] = &discordgo.MessageEmbed{
+			Title:       embed.Title,
+			Description: embed.Description,
+			Color:       embed.Color,
+		}
 	}
-	if len(firstPayload.Components) > 0 {
-		edit.Components = &firstPayload.Components
+
+	// Send first embed as webhook edit
+	firstEmbed := []*discordgo.MessageEmbed{discordEmbeds[0]}
+	edit := &discordgo.WebhookEdit{
+		Embeds: &firstEmbed,
 	}
 	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, edit); err != nil {
 		log.Printf("question: summary send failed: %v", err)
 		return
 	}
 
-	// Send follow-up messages
-	for idx := 1; idx < len(summaryMessages); idx++ {
-		payload := shareddiscord.BuildStyledMessage("", summaryMessages[idx])
+	// Send follow-up embeds
+	for idx := 1; idx < len(discordEmbeds); idx++ {
 		msg := &discordgo.MessageSend{
-			Content: payload.Content,
-		}
-		if len(payload.Components) > 0 {
-			msg.Components = payload.Components
+			Embeds: []*discordgo.MessageEmbed{discordEmbeds[idx]},
 		}
 		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, i.ChannelID, msg); err != nil {
 			log.Printf("question: summary follow-up send failed: %v", err)
