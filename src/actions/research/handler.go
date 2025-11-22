@@ -137,11 +137,22 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 	unknownCount := 0
 
 	var claimPanels []shareddiscord.StyledMessage
-	for i, result := range results {
-		if i >= len(topClaims) {
-			log.Printf("research: result index %d out of bounds for claims (results=%d, topClaims=%d)", i, len(results), len(topClaims))
-			break
-		}
+	maxLen := len(results)
+	if len(topClaims) < maxLen {
+		maxLen = len(topClaims)
+	}
+	if len(results) < maxLen {
+		maxLen = len(results)
+	}
+	
+	if len(results) != len(topClaims) {
+		log.Printf("research: mismatch between results (%d) and topClaims (%d), processing %d", len(results), len(topClaims), maxLen)
+	}
+
+	for i := 0; i < maxLen; i++ {
+		result := results[i]
+		claim := topClaims[i]
+		
 		statusEmoji := "❓"
 		switch result.Status {
 		case claims.StatusValid:
@@ -155,7 +166,7 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 			unknownCount++
 		}
 
-		title := fmt.Sprintf("Claim: %s", topClaims[i].Claim)
+		title := fmt.Sprintf("Claim: %s", claim.Claim)
 		assessmentText := strings.TrimSpace(result.Evidence)
 		if assessmentText == "" {
 			assessmentText = "_No assessment provided_"
@@ -232,11 +243,22 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 	unknownCount := 0
 
 	var claimPanels []shareddiscord.StyledMessage
-	for idx, result := range results {
-		if idx >= len(topClaims) {
-			log.Printf("research: result index %d out of bounds for claims (results=%d, topClaims=%d)", idx, len(results), len(topClaims))
-			break
-		}
+	maxLen := len(results)
+	if len(topClaims) < maxLen {
+		maxLen = len(topClaims)
+	}
+	if len(results) < maxLen {
+		maxLen = len(results)
+	}
+	
+	if len(results) != len(topClaims) {
+		log.Printf("research: mismatch between results (%d) and topClaims (%d), processing %d", len(results), len(topClaims), maxLen)
+	}
+
+	for idx := 0; idx < maxLen; idx++ {
+		result := results[idx]
+		claim := topClaims[idx]
+		
 		statusEmoji := "❓"
 		switch result.Status {
 		case claims.StatusValid:
@@ -250,7 +272,7 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 			unknownCount++
 		}
 
-		title := fmt.Sprintf("Claim: %s", topClaims[idx].Claim)
+		title := fmt.Sprintf("Claim: %s", claim.Claim)
 		assessmentText := strings.TrimSpace(result.Evidence)
 		if assessmentText == "" {
 			assessmentText = "_No assessment provided_"

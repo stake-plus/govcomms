@@ -198,14 +198,12 @@ func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]Verifica
 
 		// Create a new context with timeout for this claim
 		claimCtx, claimCancel := context.WithTimeout(ctx, 3*time.Minute)
+		defer claimCancel() // Ensure cleanup even on panic or early return
 
 		log.Printf("Verifying claim %d of %d: %s", i+1, len(claims), claims[i].Claim)
 		result := a.VerifySingleClaim(claimCtx, claims[i])
 		results[i] = result
 		log.Printf("Claim %d verification result: %s", i+1, result.Status)
-		
-		// Cancel context immediately after processing to free resources
-		claimCancel()
 
 		// Wait 5 seconds between each claim to avoid rate limiting
 		if i < len(claims)-1 {

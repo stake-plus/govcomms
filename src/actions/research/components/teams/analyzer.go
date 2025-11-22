@@ -116,13 +116,11 @@ func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember)
 
 		// Create a new context with timeout for this member
 		memberCtx, memberCancel := context.WithTimeout(ctx, 3*time.Minute)
+		defer memberCancel() // Ensure cleanup even on panic or early return
 
 		log.Printf("Analyzing team member %d of %d: %s", i+1, len(members), members[i].Name)
 		result := a.analyzeSingleMember(memberCtx, members[i])
 		results[i] = result
-		
-		// Cancel context immediately after processing to free resources
-		memberCancel()
 
 		// Wait 5 seconds between each member to avoid rate limiting
 		if i < len(members)-1 {

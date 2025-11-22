@@ -849,21 +849,33 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 		log.Printf("question: silent research: processed %d team members for %s #%d", len(memberData), network, refID)
 	}()
 
-	// Collect results from both goroutines
+	// Collect results from both goroutines with timeout protection
 	var finalResult researchResult
+resultLoop:
 	for i := 0; i < 2; i++ {
-		r := <-resultCh
-		if r.claimsData != nil {
-			finalResult.claimsData = r.claimsData
-		}
-		if r.teamsData != nil {
-			finalResult.teamsData = r.teamsData
-		}
-		if r.claimsErr != nil {
-			finalResult.claimsErr = r.claimsErr
-		}
-		if r.teamsErr != nil {
-			finalResult.teamsErr = r.teamsErr
+		select {
+		case r := <-resultCh:
+			if r.claimsData != nil {
+				finalResult.claimsData = r.claimsData
+			}
+			if r.teamsData != nil {
+				finalResult.teamsData = r.teamsData
+			}
+			if r.claimsErr != nil {
+				finalResult.claimsErr = r.claimsErr
+			}
+			if r.teamsErr != nil {
+				finalResult.teamsErr = r.teamsErr
+			}
+		case <-ctx.Done():
+			log.Printf("question: silent research: context cancelled while waiting for results")
+			if finalResult.claimsErr == nil {
+				finalResult.claimsErr = ctx.Err()
+			}
+			if finalResult.teamsErr == nil {
+				finalResult.teamsErr = ctx.Err()
+			}
+			break resultLoop
 		}
 	}
 

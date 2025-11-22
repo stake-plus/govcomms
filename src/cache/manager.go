@@ -81,7 +81,7 @@ func (e *Entry) BaseDir() string {
 type Manager struct {
 	root              string
 	httpClient        *http.Client
-	mu                sync.Mutex
+	mu                sync.RWMutex
 	pdfToolsAvailable bool
 }
 
@@ -209,20 +209,25 @@ func (m *Manager) GetProposalContent(network string, refID uint32) (string, erro
 
 // EnsureEntry loads metadata or refreshes if absent.
 func (m *Manager) EnsureEntry(network string, refID uint32) (*Entry, error) {
-	entry, err := m.loadEntry(network, refID)
+	// Try to load with read lock first
+	m.mu.RLock()
+	entry, err := m.loadEntryUnlocked(network, refID)
+	m.mu.RUnlock()
+	
 	if err == nil {
 		return entry, nil
 	}
 
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, os.ErrNotExist) {
+		// Need write lock for refresh
 		return m.Refresh(network, refID)
 	}
 
 	return nil, err
 }
 
-// loadEntry loads metadata for a cached referendum.
-func (m *Manager) loadEntry(network string, refID uint32) (*Entry, error) {
+// loadEntryUnlocked loads metadata without acquiring locks (caller must hold lock).
+func (m *Manager) loadEntryUnlocked(network string, refID uint32) (*Entry, error) {
 	paths := m.cachePaths(network, refID)
 	data, err := os.ReadFile(paths.MetadataPath)
 	if err != nil {
@@ -256,12 +261,19 @@ func (m *Manager) loadEntry(network string, refID uint32) (*Entry, error) {
 	return entry, nil
 }
 
+// loadEntry loads metadata for a cached referendum.
+func (m *Manager) loadEntry(network string, refID uint32) (*Entry, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.loadEntryUnlocked(network, refID)
+}
+
 // UpdateResearchData updates the cache entry with claims and team analysis data.
 func (m *Manager) UpdateResearchData(network string, refID uint32, claims *ClaimsData, teamMembers *TeamsData) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	entry, err := m.loadEntry(network, refID)
+	entry, err := m.loadEntryUnlocked(network, refID)
 	if err != nil {
 		return fmt.Errorf("load entry: %w", err)
 	}
@@ -278,7 +290,7 @@ func (m *Manager) UpdateSummary(network string, refID uint32, summary *SummaryDa
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	entry, err := m.loadEntry(network, refID)
+	entry, err := m.loadEntryUnlocked(network, refID)
 	if err != nil {
 		return fmt.Errorf("load entry: %w", err)
 	}
