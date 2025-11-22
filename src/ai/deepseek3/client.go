@@ -19,7 +19,7 @@ import (
 
 const (
 	apiURL             = "https://api.deepseek.com/chat/completions"
-	defaultModel       = "deepseek-reasoner"
+	defaultModel       = "deepseek-chat"
 	defaultMaxTokens   = 16000
 	defaultTemperature = 0.7
 )
@@ -458,7 +458,9 @@ func buildChatToolsPayload(tools []core.Tool, includeWeb bool) ([]map[string]any
 		toolMap[name] = toolCopy
 		forced = name
 	}
-	if includeWeb {
+	if includeWeb && len(out) == 0 {
+		// DeepSeek's API rejects mixed tool types; only expose the native
+		// web_search capability when no custom function tools are present.
 		out = append(out, map[string]any{
 			"type": "web_search",
 		})
