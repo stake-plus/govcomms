@@ -676,9 +676,14 @@ func metadataAttachmentNames(content string) []string {
 	}
 	names := make([]string, 0, len(payload.Attachments))
 	for _, att := range payload.Attachments {
-		if strings.TrimSpace(att.File) != "" {
-			names = append(names, att.File)
+		file := strings.TrimSpace(att.File)
+		if file == "" {
+			continue
 		}
+		if !strings.HasPrefix(strings.ToLower(file), "files/") {
+			continue
+		}
+		names = append(names, file)
 	}
 	return names
 }

@@ -210,6 +210,12 @@ func (s *Server) handleAttachments(w http.ResponseWriter, network string, refID 
 		return
 	}
 
+	normalized := filepath.ToSlash(strings.TrimSpace(target.FileName))
+	if !strings.HasPrefix(strings.ToLower(normalized), "files/") {
+		http.Error(w, "binary attachments are not available via MCP; use metadata summary instead", http.StatusBadRequest)
+		return
+	}
+
 	path := entry.AttachmentPath(*target)
 	data, err := os.ReadFile(path)
 	if err != nil {

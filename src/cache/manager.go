@@ -440,6 +440,25 @@ func (m *Manager) processAttachments(paths cachePaths, links []string, builder *
 				ContentType: contentType,
 				SizeBytes:   int64(len(data)),
 			})
+
+			summaryName := fmt.Sprintf("%s-summary-%02d.txt", prefix, counters[category])
+			summaryPath := filepath.Join(paths.FilesDir, summaryName)
+			summaryContent := fmt.Sprintf("Attachment summary\n\n"+
+				"- Original URL: %s\n- Cached path: %s\n- Category: %s\n- Content-Type: %s\n- Size: %d bytes\n"+
+				"Use this summary to describe the attachment without downloading the binary.",
+				link, toRelative(dirName, fileName), category, contentType, len(data))
+			if err := os.WriteFile(summaryPath, []byte(summaryContent), 0o644); err != nil {
+				log.Printf("cache: write attachment summary failed %s: %v", link, err)
+				continue
+			}
+			attachments = append(attachments, Attachment{
+				Category:    FileCategoryDocument,
+				FileName:    toRelative(directoryFiles, summaryName),
+				SourceURL:   link,
+				ContentType: "text/plain",
+				Kind:        "summary",
+				SizeBytes:   int64(len(summaryContent)),
+			})
 		default:
 			continue
 		}
