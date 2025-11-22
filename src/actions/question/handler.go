@@ -731,7 +731,7 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 				continue
 			}
 			if i >= len(topClaims) {
-				log.Printf("question: silent research: result index %d out of bounds for claims", i)
+				log.Printf("question: silent research: result index %d out of bounds for claims (results=%d, topClaims=%d)", i, len(results), len(topClaims))
 				break
 			}
 			claim := topClaims[i]
@@ -796,7 +796,7 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 				continue
 			}
 			if i >= len(members) {
-				log.Printf("question: silent research: result index %d out of bounds for members", i)
+				log.Printf("question: silent research: result index %d out of bounds for members (results=%d, members=%d)", i, len(results), len(members))
 				break
 			}
 			member := members[i]
@@ -1309,10 +1309,9 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	claimsText := claimsBuilder.String()
 	if len(claimsText) > maxChars {
-		// Extract the content without the prefix for splitting
-		claimsPrefix := "Referendum Claims and Warranties Analysis 🔍\n\n\n"
-		claimsContent := claimsText[len(claimsPrefix):]
-		chunks := splitLongText(claimsPrefix, claimsContent, maxChars)
+		// Split the claims text directly (no prefix assumption)
+		claimsPrefix := ""
+		chunks := splitLongText(claimsPrefix, claimsText, maxChars)
 		for i, chunk := range chunks {
 			title := "Referendum Claims and Warranties Analysis 🔍"
 			if i > 0 {

@@ -138,6 +138,10 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 
 	var claimPanels []shareddiscord.StyledMessage
 	for i, result := range results {
+		if i >= len(topClaims) {
+			log.Printf("research: result index %d out of bounds for claims (results=%d, topClaims=%d)", i, len(results), len(topClaims))
+			break
+		}
 		statusEmoji := "❓"
 		switch result.Status {
 		case claims.StatusValid:
@@ -229,6 +233,10 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 
 	var claimPanels []shareddiscord.StyledMessage
 	for idx, result := range results {
+		if idx >= len(topClaims) {
+			log.Printf("research: result index %d out of bounds for claims (results=%d, topClaims=%d)", idx, len(results), len(topClaims))
+			break
+		}
 		statusEmoji := "❓"
 		switch result.Status {
 		case claims.StatusValid:
