@@ -1159,18 +1159,18 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Add breakdown statistics
 	if len(summary.TeamMembers) > 0 {
-		teamContentBuilder.WriteString("📊 Team Breakdown:\n")
+		teamContentBuilder.WriteString("Team Breakdown 📊\n\n")
 		if realWithSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("   Real & Skilled: ✅ %d\n", realWithSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("Real & Skilled: ✅ %d\n", realWithSkills))
 		}
 		if realNoSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("  Real & Unskilled: ⚠️ %d\n", realNoSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("Real & Unskilled: ⚠️ %d\n", realNoSkills))
 		}
 		if notRealWithSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("  Fake & Skilled: ⚠️ %d\n", notRealWithSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("Fake & Skilled: ⚠️ %d\n", notRealWithSkills))
 		}
 		if notRealNoSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("  Fake & Unskilled: ❌ %d\n", notRealNoSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("Fake & Unskilled: ❌ %d\n", notRealNoSkills))
 		}
 		teamContentBuilder.WriteString("\n\n")
 	}
@@ -1196,12 +1196,11 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 			// Convert history to bullet points (max 3, each indented 4 spaces)
 			historyBullets := historyToBulletPoints(member.History, 3)
 
-			teamContentBuilder.WriteString(fmt.Sprintf("Name: %s\n", member.Name))
-			teamContentBuilder.WriteString(fmt.Sprintf("Role: %s\n", member.Role))
-			teamContentBuilder.WriteString(fmt.Sprintf("Real: %s\nSkilled: %s\n\n", isRealMark, hasSkillsMark))
+			teamContentBuilder.WriteString(fmt.Sprintf("Name: %s Role: %s\n", member.Name, member.Role))
+			teamContentBuilder.WriteString(fmt.Sprintf("Real: %s\nSkilled: %s\n", isRealMark, hasSkillsMark))
 			teamContentBuilder.WriteString("History:\n")
 			if historyBullets != "" {
-				teamContentBuilder.WriteString(fmt.Sprintf("%s\n\n", historyBullets))
+				teamContentBuilder.WriteString(fmt.Sprintf("%s\n\n\n", historyBullets))
 			} else {
 				teamContentBuilder.WriteString("    • No history available\n")
 			}
@@ -1210,7 +1209,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 		teamContentBuilder.WriteString("No team members found\n")
 	}
 
-	teamPrefix := "⚡ Team Members\n\n\n"
+	teamPrefix := "Team Members ⚡\n \n \n"
 	teamContent := teamContentBuilder.String()
 	teamText := teamPrefix + teamContent
 
