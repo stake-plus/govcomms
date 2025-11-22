@@ -169,6 +169,13 @@ func (m *Module) initHandlers() {
 	m.session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		username := formatDiscordUsername(s.State.User.Username, s.State.User.Discriminator)
 		log.Printf("question: logged in as %s", username)
+
+		// Delete old/unwanted commands first
+		unwantedCommands := []string{"research", "team"}
+		if err := shareddiscord.DeleteUnwantedCommands(s, m.cfg.Base.GuildID, unwantedCommands); err != nil {
+			log.Printf("question: failed to delete unwanted commands: %v", err)
+		}
+
 		commands := []string{
 			shareddiscord.CommandQuestion,
 			shareddiscord.CommandRefresh,

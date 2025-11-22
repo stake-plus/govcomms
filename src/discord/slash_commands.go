@@ -127,6 +127,40 @@ func DeleteSlashCommands(s *discordgo.Session, guildID string) error {
 	return nil
 }
 
+// DeleteUnwantedCommands removes specific commands that are no longer used
+func DeleteUnwantedCommands(s *discordgo.Session, guildID string, unwantedNames []string) error {
+	if guildID == "" {
+		return fmt.Errorf("discord: guildID is required to delete slash commands")
+	}
+
+	if len(unwantedNames) == 0 {
+		return nil
+	}
+
+	commands, err := s.ApplicationCommands(s.State.User.ID, guildID)
+	if err != nil {
+		return err
+	}
+
+	unwantedMap := make(map[string]bool)
+	for _, name := range unwantedNames {
+		unwantedMap[name] = true
+	}
+
+	for _, cmd := range commands {
+		if unwantedMap[cmd.Name] {
+			log.Printf("discord: deleting unwanted command %q", cmd.Name)
+			if err := s.ApplicationCommandDelete(s.State.User.ID, guildID, cmd.ID); err != nil {
+				log.Printf("discord: failed to delete command %q: %v", cmd.Name, err)
+				continue
+			}
+			log.Printf("discord: successfully deleted command %q", cmd.Name)
+		}
+	}
+
+	return nil
+}
+
 func isDuplicateCommandError(err error) bool {
 	var restErr *discordgo.RESTError
 	if errors.As(err, &restErr) {
