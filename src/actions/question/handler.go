@@ -26,6 +26,11 @@ const defaultInteractionTimeout = 2 * time.Minute
 
 var _ core.Module = (*Module)(nil)
 
+// ReportsGenerator is an interface for generating PDF reports
+type ReportsGenerator interface {
+	GenerateReport(s *discordgo.Session, channelID string, network string, refID uint32, refDBID uint64)
+}
+
 // Module owns the Discord session and logic for the Q&A action set.
 type Module struct {
 	cfg             *sharedconfig.QAConfig
@@ -40,10 +45,16 @@ type Module struct {
 	mcpBaseURL      string
 	mcpAuthToken    string
 	responseTimeout time.Duration
+	reportsGen      ReportsGenerator // Optional reports generator
 }
 
 // NewModule wires dependencies for the question/refresh/context actions.
 func NewModule(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Module, error) {
+	return NewModuleWithReports(cfg, db, nil)
+}
+
+// NewModuleWithReports creates a question module with an optional reports generator
+func NewModuleWithReports(cfg *sharedconfig.QAConfig, db *gorm.DB, reportsGen ReportsGenerator) (*Module, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("qa config is nil")
 	}
@@ -562,6 +573,11 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 	}
 
 	log.Printf("question: summary successfully sent for %s #%d", network.Name, threadInfo.RefID)
+
+	// Trigger PDF report generation if reports module is available
+	if m.reportsGen != nil {
+		go m.reportsGen.GenerateReport(s, i.ChannelID, network.Name, uint32(threadInfo.RefID), threadInfo.RefDBID)
+	}
 }
 
 func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.Interaction, question string, message string, providerInfo aicore.ProviderInfo, model string) {

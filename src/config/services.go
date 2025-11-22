@@ -335,3 +335,32 @@ func LoadMCPConfig(db *gorm.DB) MCPConfig {
 		CacheDir:  cacheDir,
 	}
 }
+
+// ReportsConfig holds Reports bot configuration
+type ReportsConfig struct {
+	Base
+	AIConfig
+	ReportsRoleID string
+	TempDir        string
+	Enabled        bool
+}
+
+// LoadReportsConfig loads Reports bot configuration
+func LoadReportsConfig(db *gorm.DB) ReportsConfig {
+	base := LoadBase(db)
+	ai := LoadAIConfig(db)
+	reportsRoleID := GetSetting("reports_role_id", "REPORTS_ROLE_ID", "")
+	tempDir := GetSetting("reports_temp_dir", "REPORTS_TEMP_DIR", "")
+	if tempDir == "" {
+		tempDir = GetSetting("qa_temp_dir", "QA_TEMP_DIR", "/tmp/govcomms-qa")
+	}
+	enabled := getBoolSetting("enable_reports", "ENABLE_REPORTS", true)
+
+	return ReportsConfig{
+		Base:          base,
+		AIConfig:      ai,
+		ReportsRoleID: reportsRoleID,
+		TempDir:       tempDir,
+		Enabled:       enabled,
+	}
+}
