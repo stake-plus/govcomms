@@ -69,8 +69,13 @@ func main() {
 		}
 	}
 
-	if sqlDB, err := db.DB(); err == nil && sqlDB != nil {
-		sqlDB.Close()
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Printf("db: failed to get sql.DB: %v", err)
+	} else if sqlDB != nil {
+		if err := sqlDB.Close(); err != nil {
+			log.Printf("db: close error: %v", err)
+		}
 	}
 }
 

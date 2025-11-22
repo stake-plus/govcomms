@@ -159,6 +159,10 @@ func (s *Server) handleReferenda(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMetadata(w http.ResponseWriter, network string, refID uint32) {
+	if s.cache == nil {
+		http.Error(w, "cache manager not available", http.StatusInternalServerError)
+		return
+	}
 	entry, err := s.cache.EnsureEntry(network, refID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("cache load failed: %v", err), http.StatusInternalServerError)
@@ -174,6 +178,10 @@ func (s *Server) handleMetadata(w http.ResponseWriter, network string, refID uin
 }
 
 func (s *Server) handleContent(w http.ResponseWriter, network string, refID uint32) {
+	if s.cache == nil {
+		http.Error(w, "cache manager not available", http.StatusInternalServerError)
+		return
+	}
 	content, err := s.cache.GetProposalContent(network, refID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("read content failed: %v", err), http.StatusInternalServerError)
@@ -195,6 +203,10 @@ func (s *Server) handleContent(w http.ResponseWriter, network string, refID uint
 }
 
 func (s *Server) handleAttachments(w http.ResponseWriter, network string, refID uint32, fileName string) {
+	if s.cache == nil {
+		http.Error(w, "cache manager not available", http.StatusInternalServerError)
+		return
+	}
 	entry, err := s.cache.EnsureEntry(network, refID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("cache load failed: %v", err), http.StatusInternalServerError)

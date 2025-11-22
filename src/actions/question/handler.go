@@ -698,24 +698,30 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 	}
 
 	// Run claims and teams analysis in parallel
-	var claimsData *cache.ClaimsData
-	var teamsData *cache.TeamsData
-	var claimsErr, teamsErr error
-	done := make(chan bool, 2)
+	// Use channels to safely communicate results between goroutines
+	type researchResult struct {
+		claimsData *cache.ClaimsData
+		teamsData  *cache.TeamsData
+		claimsErr  error
+		teamsErr   error
+	}
+	resultCh := make(chan researchResult, 2)
 
 	// Claims analysis
 	go func() {
-		defer func() { done <- true }()
+		var result researchResult
+		defer func() { resultCh <- result }()
+
 		// Check context cancellation
 		select {
 		case <-ctx.Done():
-			claimsErr = ctx.Err()
+			result.claimsErr = ctx.Err()
 			return
 		default:
 		}
 		topClaims, totalClaims, err := claimsAnalyzer.ExtractTopClaims(ctx, proposalContent)
 		if err != nil {
-			claimsErr = fmt.Errorf("extract claims: %w", err)
+			result.claimsErr = fmt.Errorf("extract claims: %w", err)
 			return
 		}
 		if len(topClaims) == 0 {
@@ -726,23 +732,25 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 		// Check context cancellation before verification
 		select {
 		case <-ctx.Done():
-			claimsErr = ctx.Err()
+			result.claimsErr = ctx.Err()
 			return
 		default:
 		}
 		results, err := claimsAnalyzer.VerifyClaims(ctx, topClaims)
 		if err != nil {
-			claimsErr = fmt.Errorf("verify claims: %w", err)
+			result.claimsErr = fmt.Errorf("verify claims: %w", err)
 			return
 		}
 
-		claimResults := make([]cache.ClaimResult, 0, len(results))
-		for i, result := range results {
-			// Check bounds before accessing array
-			if i >= len(topClaims) {
-				log.Printf("question: silent research: result index %d out of bounds for claims (results=%d, topClaims=%d)", i, len(results), len(topClaims))
-				break
-			}
+		// Safely process results with proper bounds checking
+		maxLen := len(topClaims)
+		if len(results) < maxLen {
+			maxLen = len(results)
+		}
+
+		claimResults := make([]cache.ClaimResult, 0, maxLen)
+		for i := 0; i < maxLen; i++ {
+			result := results[i]
 			// Skip zero-value results (from cancelled/partial processing)
 			if result.Claim == "" && result.Status == "" && result.Evidence == "" {
 				continue
@@ -759,29 +767,31 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 			})
 		}
 
-		claimsData = &cache.ClaimsData{
+		result.claimsData = &cache.ClaimsData{
 			ProviderCompany: providerCompany,
 			AIModel:         modelName,
 			ProcessedAt:     time.Now().UTC(),
 			TotalClaims:     totalClaims,
 			Results:         claimResults,
 		}
-		log.Printf("question: silent research: processed %d claims for %s #%d", len(results), network, refID)
+		log.Printf("question: silent research: processed %d claims for %s #%d", len(claimResults), network, refID)
 	}()
 
 	// Teams analysis
 	go func() {
-		defer func() { done <- true }()
+		var result researchResult
+		defer func() { resultCh <- result }()
+
 		// Check context cancellation
 		select {
 		case <-ctx.Done():
-			teamsErr = ctx.Err()
+			result.teamsErr = ctx.Err()
 			return
 		default:
 		}
 		members, err := teamsAnalyzer.ExtractTeamMembers(ctx, proposalContent)
 		if err != nil {
-			teamsErr = fmt.Errorf("extract team members: %w", err)
+			result.teamsErr = fmt.Errorf("extract team members: %w", err)
 			return
 		}
 		if len(members) == 0 {
@@ -792,23 +802,25 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 		// Check context cancellation before analysis
 		select {
 		case <-ctx.Done():
-			teamsErr = ctx.Err()
+			result.teamsErr = ctx.Err()
 			return
 		default:
 		}
 		results, err := teamsAnalyzer.AnalyzeTeamMembers(ctx, members)
 		if err != nil {
-			teamsErr = fmt.Errorf("analyze team members: %w", err)
+			result.teamsErr = fmt.Errorf("analyze team members: %w", err)
 			return
 		}
 
-		memberData := make([]cache.TeamMemberData, 0, len(results))
-		for i, result := range results {
-			// Check bounds before accessing array
-			if i >= len(members) {
-				log.Printf("question: silent research: result index %d out of bounds for members (results=%d, members=%d)", i, len(results), len(members))
-				break
-			}
+		// Safely process results with proper bounds checking
+		maxLen := len(members)
+		if len(results) < maxLen {
+			maxLen = len(results)
+		}
+
+		memberData := make([]cache.TeamMemberData, 0, maxLen)
+		for i := 0; i < maxLen; i++ {
+			result := results[i]
 			// Skip zero-value results (from cancelled/partial processing)
 			if result.Name == "" && result.Role == "" && result.Capability == "" {
 				continue
@@ -828,37 +840,51 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 			})
 		}
 
-		teamsData = &cache.TeamsData{
+		result.teamsData = &cache.TeamsData{
 			ProviderCompany: providerCompany,
 			AIModel:         modelName,
 			ProcessedAt:     time.Now().UTC(),
 			Members:         memberData,
 		}
-		log.Printf("question: silent research: processed %d team members for %s #%d", len(results), network, refID)
+		log.Printf("question: silent research: processed %d team members for %s #%d", len(memberData), network, refID)
 	}()
 
-	// Wait for both to complete
-	<-done
-	<-done
-
-	if claimsErr != nil {
-		log.Printf("question: silent research: claims error: %v", claimsErr)
+	// Collect results from both goroutines
+	var finalResult researchResult
+	for i := 0; i < 2; i++ {
+		r := <-resultCh
+		if r.claimsData != nil {
+			finalResult.claimsData = r.claimsData
+		}
+		if r.teamsData != nil {
+			finalResult.teamsData = r.teamsData
+		}
+		if r.claimsErr != nil {
+			finalResult.claimsErr = r.claimsErr
+		}
+		if r.teamsErr != nil {
+			finalResult.teamsErr = r.teamsErr
+		}
 	}
-	if teamsErr != nil {
-		log.Printf("question: silent research: teams error: %v", teamsErr)
+
+	if finalResult.claimsErr != nil {
+		log.Printf("question: silent research: claims error: %v", finalResult.claimsErr)
+	}
+	if finalResult.teamsErr != nil {
+		log.Printf("question: silent research: teams error: %v", finalResult.teamsErr)
 	}
 
 	// Save to cache metadata
-	if claimsData != nil || teamsData != nil {
-		if err := m.cacheManager.UpdateResearchData(network, refID, claimsData, teamsData); err != nil {
+	if finalResult.claimsData != nil || finalResult.teamsData != nil {
+		if err := m.cacheManager.UpdateResearchData(network, refID, finalResult.claimsData, finalResult.teamsData); err != nil {
 			return fmt.Errorf("update cache metadata: %w", err)
 		}
 		log.Printf("question: silent research: saved research data to cache for %s #%d", network, refID)
 	}
 
 	// If both failed, return error
-	if claimsErr != nil && teamsErr != nil {
-		return fmt.Errorf("both research tasks failed: claims=%v, teams=%v", claimsErr, teamsErr)
+	if finalResult.claimsErr != nil && finalResult.teamsErr != nil {
+		return fmt.Errorf("both research tasks failed: claims=%v, teams=%v", finalResult.claimsErr, finalResult.teamsErr)
 	}
 
 	return nil
