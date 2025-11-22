@@ -20,7 +20,7 @@ import (
 const (
 	apiURL             = "https://api.deepseek.com/chat/completions"
 	defaultModel       = "deepseek-chat"
-	defaultMaxTokens   = 16000
+	defaultMaxTokens   = 8192
 	defaultTemperature = 0.7
 )
 
@@ -516,6 +516,9 @@ func hasWebSearch(opts core.Options, tools []core.Tool) bool {
 
 func maxTokens(requested int) int {
 	if requested <= 0 {
+		return defaultMaxTokens
+	}
+	if requested > defaultMaxTokens {
 		return defaultMaxTokens
 	}
 	return requested
