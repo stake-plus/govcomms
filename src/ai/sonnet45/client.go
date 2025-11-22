@@ -94,7 +94,6 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 	finalReminderSent := false
 	base64ReminderSent := false
 	toolsDisabled := false
-	currentPromptTokens := promptTokenCount(opts.SystemPrompt, messages)
 	promptBudgetExceeded := false
 
 	hasPendingAttachments := func() bool {
@@ -176,7 +175,6 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 			Role:    "assistant",
 			Content: resp.Content,
 		})
-		currentPromptTokens = promptTokenCount(opts.SystemPrompt, messages)
 
 		if len(toolUses) == 0 {
 			if strings.TrimSpace(textOutput) == "" {
@@ -234,7 +232,6 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 					},
 				},
 			})
-			currentPromptTokens = promptTokenCount(opts.SystemPrompt, messages)
 
 			if !cacheHit || skippedDueToBudget {
 				pendingCallExecuted = true
@@ -260,7 +257,7 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 				}
 			}
 
-			if !promptBudgetExceeded && currentPromptTokens >= sonnetPromptSoftLimit {
+			if !promptBudgetExceeded && promptTokenCount(opts.SystemPrompt, messages) >= sonnetPromptSoftLimit {
 				promptBudgetExceeded = true
 				toolsDisabled = true
 				markAllAttachmentsRetrieved(attachmentNames, attachmentsRetrieved)
@@ -270,7 +267,6 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 						textBlock("Token budget is nearly exhausted. Use the information collected so far and provide the final answer without calling tools again."),
 					},
 				})
-				currentPromptTokens = promptTokenCount(opts.SystemPrompt, messages)
 				finalReminderSent = true
 				base64ReminderSent = true
 			}
@@ -285,7 +281,6 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 						textBlock("You already retrieved the referendum metadata and content. Use the information you have and provide the final answer without calling the tool again."),
 					},
 				})
-				currentPromptTokens = promptTokenCount(opts.SystemPrompt, messages)
 				stallCount = 0
 			}
 		} else {
@@ -303,7 +298,6 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 					textBlock("Metadata references attachments." + example + " Retrieve each file before answering."),
 				},
 			})
-			currentPromptTokens = promptTokenCount(opts.SystemPrompt, messages)
 			continue
 		}
 
@@ -314,7 +308,6 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 					textBlock("Attachment content is provided as base64 text in the tool response. Decode the base64 string to inspect the file before answering."),
 				},
 			})
-			currentPromptTokens = promptTokenCount(opts.SystemPrompt, messages)
 			base64ReminderSent = true
 		}
 
@@ -325,7 +318,6 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 					textBlock("You now have metadata, the full proposal content, and attachments. Provide the final answer without calling the tool again."),
 				},
 			})
-			currentPromptTokens = promptTokenCount(opts.SystemPrompt, messages)
 			finalReminderSent = true
 			toolsDisabled = true
 		}
