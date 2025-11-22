@@ -1096,7 +1096,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Section 1: Background Context & Summary (grouped together)
 	var contextSummaryBuilder strings.Builder
-	contextSummaryBuilder.WriteString(fmt.Sprintf("📋 Overview\n\n%s Referendum #%d\n%s\n\n", summary.Network, summary.RefID, channelTitle))
+	contextSummaryBuilder.WriteString(fmt.Sprintf("\n\n%s Referendum #%d\n%s\n\n", summary.Network, summary.RefID, channelTitle))
 	contextSummaryBuilder.WriteString("📖 Background Context\n\n")
 	contextSummaryBuilder.WriteString(summary.BackgroundContext)
 	contextSummaryBuilder.WriteString("\n\n")
@@ -1113,7 +1113,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 		if len(contextPart) <= maxChars {
 			embeds = append(embeds, SummaryEmbed{
-				Title:       fmt.Sprintf("%s Referendum #%d", summary.Network, summary.RefID),
+				Title:       "Overview 📋",
 				Description: contextPart,
 				Color:       0x3B82F6, // Blue
 			})
@@ -1163,15 +1163,14 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Section 2: All Claims (grouped together)
 	var claimsBuilder strings.Builder
-	claimsBuilder.WriteString("Referendum Claims and Warranties Analysis 🔍\n\n\n")
 
 	// Valid Claims
 	if len(summary.ValidClaims) > 0 {
 		claimsBuilder.WriteString(fmt.Sprintf("✅ Valid Claims — %d of %d\n\n", len(summary.ValidClaims), len(summary.ValidClaims)+len(summary.InvalidClaims)+len(summary.UnverifiedClaims)))
 		for _, claim := range summary.ValidClaims {
-			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n", claim))
+			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n\n", claim))
 		}
-		claimsBuilder.WriteString("\n")
+		claimsBuilder.WriteString("\n\n")
 	}
 
 	// Unverified/Unknown Claims
@@ -1297,9 +1296,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 		teamContentBuilder.WriteString("No team members found\n")
 	}
 
-	teamPrefix := "Team Background and Skill Summary ⚡\n\n\n"
-	teamContent := teamContentBuilder.String()
-	teamText := teamPrefix + teamContent
+	teamText := teamContentBuilder.String()
 
 	if len(teamText) > maxChars {
 		chunks := splitLongText(teamPrefix, teamContent, maxChars)
