@@ -20,6 +20,8 @@ import (
 )
 
 const (
+	providerCompany       = "X.ai"
+	providerWebsite       = "https://x.ai"
 	providerKey           = "grok4"
 	apiURL                = "https://api.x.ai/v1/chat/completions"
 	defaultModel          = "grok-4-fast-reasoning"

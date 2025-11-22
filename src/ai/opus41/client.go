@@ -18,6 +18,8 @@ import (
 )
 
 const (
+	providerCompany       = "Anthropic"
+	providerWebsite       = "https://anthropic.com"
 	providerKey           = "opus41"
 	defaultModel          = "claude-opus-4-1"
 	anthropicEndpoint     = "https://api.anthropic.com/v1/messages"

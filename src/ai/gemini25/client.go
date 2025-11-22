@@ -18,6 +18,8 @@ import (
 )
 
 const (
+	providerCompany         = "Google"
+	providerWebsite         = "https://ai.google.com"
 	providerKey             = "gemini25"
 	baseURL                 = "https://generativelanguage.googleapis.com/v1beta"
 	defaultModelName        = "gemini-2.5-flash"

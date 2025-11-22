@@ -18,6 +18,8 @@ import (
 )
 
 const (
+	providerCompany         = "OpenAI"
+	providerWebsite         = "https://openai.com"
 	providerKey             = "gpt51"
 	chatCompletionsURL      = "https://api.openai.com/v1/chat/completions"
 	defaultModel            = "gpt-5.1"

@@ -18,6 +18,8 @@ import (
 )
 
 const (
+	providerCompany         = "HangZhou DeepSeek"
+	providerWebsite         = "https://deepseek.com"
 	providerKey             = "deepseek3"
 	apiURL                  = "https://api.deepseek.com/chat/completions"
 	defaultModel            = "deepseek-chat"
