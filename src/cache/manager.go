@@ -55,6 +55,8 @@ type Entry struct {
 	ProposalFile string       `json:"proposalFile"`
 	Attachments  []Attachment `json:"attachments"`
 	RefreshedAt  time.Time    `json:"refreshedAt"`
+	Claims       *ClaimsData  `json:"claims,omitempty"`
+	TeamMembers  *TeamsData   `json:"teamMembers,omitempty"`
 
 	baseDir string
 }
@@ -240,6 +242,8 @@ func (m *Manager) loadEntry(network string, refID uint32) (*Entry, error) {
 		ProposalFile: stored.ProposalFile,
 		Attachments:  stored.Attachments,
 		RefreshedAt:  stored.RefreshedAt,
+		Claims:       stored.Claims,
+		TeamMembers:  stored.TeamMembers,
 		baseDir:      paths.BaseDir,
 	}
 
@@ -248,6 +252,23 @@ func (m *Manager) loadEntry(network string, refID uint32) (*Entry, error) {
 	}
 
 	return entry, nil
+}
+
+// UpdateResearchData updates the cache entry with claims and team analysis data.
+func (m *Manager) UpdateResearchData(network string, refID uint32, claims *ClaimsData, teamMembers *TeamsData) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entry, err := m.loadEntry(network, refID)
+	if err != nil {
+		return fmt.Errorf("load entry: %w", err)
+	}
+
+	entry.Claims = claims
+	entry.TeamMembers = teamMembers
+
+	paths := m.cachePaths(network, refID)
+	return saveMetadata(paths, entry)
 }
 
 func (m *Manager) cachePaths(network string, refID uint32) cachePaths {
@@ -297,6 +318,8 @@ func saveMetadata(paths cachePaths, entry *Entry) error {
 		ProposalFile: entry.ProposalFile,
 		Attachments:  entry.Attachments,
 		RefreshedAt:  entry.RefreshedAt,
+		Claims:       entry.Claims,
+		TeamMembers:  entry.TeamMembers,
 	}
 
 	data, err := json.MarshalIndent(record, "", "  ")
@@ -317,6 +340,51 @@ type metadataRecord struct {
 	ProposalFile string       `json:"proposalFile"`
 	Attachments  []Attachment `json:"attachments"`
 	RefreshedAt  time.Time    `json:"refreshedAt"`
+	// Research data
+	Claims       *ClaimsData  `json:"claims,omitempty"`
+	TeamMembers  *TeamsData   `json:"teamMembers,omitempty"`
+}
+
+// ClaimsData stores claim verification results
+type ClaimsData struct {
+	ProviderCompany string          `json:"providerCompany"`
+	AIModel         string          `json:"aiModel"`
+	ProcessedAt     time.Time       `json:"processedAt"`
+	TotalClaims     int             `json:"totalClaims"`
+	Results         []ClaimResult   `json:"results"`
+}
+
+// ClaimResult represents a single verified claim
+type ClaimResult struct {
+	Claim      string   `json:"claim"`
+	Category   string   `json:"category"`
+	URLs       []string `json:"urls,omitempty"`
+	Context    string   `json:"context,omitempty"`
+	Status     string   `json:"status"` // Valid, Rejected, Unknown
+	Evidence   string   `json:"evidence"`
+	SourceURLs []string `json:"sourceUrls,omitempty"`
+}
+
+// TeamsData stores team member analysis results
+type TeamsData struct {
+	ProviderCompany string           `json:"providerCompany"`
+	AIModel         string           `json:"aiModel"`
+	ProcessedAt     time.Time        `json:"processedAt"`
+	Members         []TeamMemberData `json:"members"`
+}
+
+// TeamMemberData represents a single analyzed team member
+type TeamMemberData struct {
+	Name            string   `json:"name"`
+	Role            string   `json:"role"`
+	IsReal          *bool    `json:"isReal,omitempty"`
+	HasStatedSkills *bool    `json:"hasStatedSkills,omitempty"`
+	Capability      string   `json:"capability,omitempty"`
+	GitHub          []string `json:"github,omitempty"`
+	Twitter         []string `json:"twitter,omitempty"`
+	LinkedIn        []string `json:"linkedIn,omitempty"`
+	Other           []string `json:"other,omitempty"`
+	VerifiedURLs    []string `json:"verifiedUrls,omitempty"`
 }
 
 type cachePaths struct {

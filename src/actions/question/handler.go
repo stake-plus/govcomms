@@ -32,7 +32,6 @@ type Module struct {
 	session         *discordgo.Session
 	cacheManager    *cache.Manager
 	contextStore    *cache.ContextStore
-	researchStore   *cache.ResearchStore
 	networkManager  *sharedgov.NetworkManager
 	refManager      *sharedgov.ReferendumManager
 	cancel          context.CancelFunc
@@ -82,7 +81,6 @@ func NewModule(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Module, error) {
 		session:         session,
 		cacheManager:    cacheManager,
 		contextStore:    cache.NewContextStore(db),
-		researchStore:   cache.NewResearchStore(db),
 		networkManager:  networkManager,
 		refManager:      refManager,
 		mcpEnabled:      mcpCfg.Enabled,
@@ -511,7 +509,7 @@ func buildQuestionResponseBody(providerInfo aicore.ProviderInfo, model, question
 		providerCompany, model, providerWebsite, questionText, answer)
 }
 
-// runSilentResearch runs claims and teams analysis silently and saves results to the database.
+// runSilentResearch runs claims and teams analysis silently and saves results to cache metadata.
 func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64, networkID uint8) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -530,10 +528,6 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 	if providerCompany == "" {
 		providerCompany = "unknown"
 	}
-
-	// Delete existing research data for this ref before running new analysis
-	m.researchStore.DeleteClaimsForRef(refDBID)
-	m.researchStore.DeleteTeamMembersForRef(refDBID)
 
 	// Get proposal content
 	proposalContent, err := m.cacheManager.GetProposalContent(network, refID)
@@ -567,6 +561,8 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 	}
 
 	// Run claims and teams analysis in parallel
+	var claimsData *cache.ClaimsData
+	var teamsData *cache.TeamsData
 	var claimsErr, teamsErr error
 	done := make(chan bool, 2)
 
@@ -589,20 +585,28 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 			return
 		}
 
-		totalClaimsUint := uint32(totalClaims)
+		claimResults := make([]cache.ClaimResult, len(results))
 		for i, result := range results {
 			claim := topClaims[i]
-			status := string(result.Status)
-			if err := m.researchStore.SaveClaim(
-				refDBID, networkID, refID,
-				claim.Claim, claim.Category, claim.URLs, claim.Context,
-				status, result.Evidence, result.SourceURLs,
-				providerCompany, modelName, &totalClaimsUint,
-			); err != nil {
-				log.Printf("question: silent research: failed to save claim: %v", err)
+			claimResults[i] = cache.ClaimResult{
+				Claim:      claim.Claim,
+				Category:   claim.Category,
+				URLs:       claim.URLs,
+				Context:    claim.Context,
+				Status:     string(result.Status),
+				Evidence:   result.Evidence,
+				SourceURLs: result.SourceURLs,
 			}
 		}
-		log.Printf("question: silent research: saved %d claims for %s #%d", len(results), network, refID)
+
+		claimsData = &cache.ClaimsData{
+			ProviderCompany: providerCompany,
+			AIModel:         modelName,
+			ProcessedAt:     time.Now().UTC(),
+			TotalClaims:     totalClaims,
+			Results:         claimResults,
+		}
+		log.Printf("question: silent research: processed %d claims for %s #%d", len(results), network, refID)
 	}()
 
 	// Teams analysis
@@ -624,20 +628,30 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 			return
 		}
 
+		memberData := make([]cache.TeamMemberData, len(results))
 		for i, result := range results {
 			member := members[i]
-			isReal := result.IsReal
-			hasStatedSkills := result.HasStatedSkills
-			if err := m.researchStore.SaveTeamMember(
-				refDBID, networkID, refID,
-				result.Name, result.Role, &isReal, &hasStatedSkills, result.Capability,
-				member.GitHub, member.Twitter, member.LinkedIn, member.Other, result.VerifiedURLs,
-				providerCompany, modelName,
-			); err != nil {
-				log.Printf("question: silent research: failed to save team member: %v", err)
+			memberData[i] = cache.TeamMemberData{
+				Name:            result.Name,
+				Role:            result.Role,
+				IsReal:          &result.IsReal,
+				HasStatedSkills: &result.HasStatedSkills,
+				Capability:      result.Capability,
+				GitHub:          member.GitHub,
+				Twitter:         member.Twitter,
+				LinkedIn:        member.LinkedIn,
+				Other:           member.Other,
+				VerifiedURLs:    result.VerifiedURLs,
 			}
 		}
-		log.Printf("question: silent research: saved %d team members for %s #%d", len(results), network, refID)
+
+		teamsData = &cache.TeamsData{
+			ProviderCompany: providerCompany,
+			AIModel:         modelName,
+			ProcessedAt:     time.Now().UTC(),
+			Members:         memberData,
+		}
+		log.Printf("question: silent research: processed %d team members for %s #%d", len(results), network, refID)
 	}()
 
 	// Wait for both to complete
@@ -650,4 +664,14 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 	if teamsErr != nil {
 		log.Printf("question: silent research: teams error: %v", teamsErr)
 	}
+
+	// Save to cache metadata
+	if claimsData != nil || teamsData != nil {
+		if err := m.cacheManager.UpdateResearchData(network, refID, claimsData, teamsData); err != nil {
+			log.Printf("question: silent research: failed to update cache metadata: %v", err)
+		} else {
+			log.Printf("question: silent research: saved research data to cache for %s #%d", network, refID)
+		}
+	}
 }
+
