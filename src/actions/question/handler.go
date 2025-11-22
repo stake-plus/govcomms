@@ -30,7 +30,6 @@ type Module struct {
 	session         *discordgo.Session
 	cacheManager    *cache.Manager
 	contextStore    *cache.ContextStore
-	aiClient        aicore.Client
 	networkManager  *sharedgov.NetworkManager
 	refManager      *sharedgov.ReferendumManager
 	cancel          context.CancelFunc
@@ -67,13 +66,6 @@ func NewModule(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Module, error) {
 		cfg.AIConfig.GrokKey == "" {
 		return nil, fmt.Errorf("question: no AI provider configured")
 	}
-	factoryCfg := cfg.AIConfig.FactoryConfig()
-	factoryCfg.Temperature = 0
-	aiClient, err := aicore.NewClient(factoryCfg)
-	if err != nil {
-		return nil, fmt.Errorf("question: AI client init: %w", err)
-	}
-
 	cacheManager, err := cache.NewManager(cfg.TempDir)
 	if err != nil {
 		return nil, fmt.Errorf("question: cache manager: %w", err)
@@ -87,7 +79,6 @@ func NewModule(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Module, error) {
 		session:         session,
 		cacheManager:    cacheManager,
 		contextStore:    cache.NewContextStore(db),
-		aiClient:        aiClient,
 		networkManager:  networkManager,
 		refManager:      refManager,
 		mcpEnabled:      mcpCfg.Enabled,
@@ -221,15 +212,22 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 	if strings.TrimSpace(qaContext) != "" {
 		fullContent += qaContext
 	}
+	aiClient, aiCfg, err := m.createAIClient()
+	if err != nil {
+		log.Printf("question: ai client: %v", err)
+		sendStyledWebhookEdit(s, i.Interaction, "Question", "AI provider is not configured correctly. Please try again later.")
+		return
+	}
+
 	timeout := m.responseTimeout
 	if timeout <= 0 {
 		timeout = defaultInteractionTimeout
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	basePrompt := strings.TrimSpace(m.cfg.AISystemPrompt)
+	basePrompt := strings.TrimSpace(aiCfg.AISystemPrompt)
 	respondOpts := aicore.Options{
-		Model:        m.cfg.AIModel,
+		Model:        aiCfg.AIModel,
 		SystemPrompt: m.buildRespondSystemPrompt(basePrompt, network.Name, threadInfo.RefID, content, qaContext),
 	}
 
@@ -243,7 +241,7 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 		tools = append(tools, *mcptool)
 	}
 
-	answer, err := m.aiClient.Respond(ctx, input, tools, respondOpts)
+	answer, err := aiClient.Respond(ctx, input, tools, respondOpts)
 	if err != nil {
 		log.Printf("question: web search failed, fallback: %v", err)
 		fallbackOpts := respondOpts
@@ -251,7 +249,7 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 		if m.mcpEnabled {
 			fullContent = content
 		}
-		answer, err = m.aiClient.AnswerQuestion(ctx, fullContent, question, fallbackOpts)
+		answer, err = aiClient.AnswerQuestion(ctx, fullContent, question, fallbackOpts)
 	}
 	if err != nil {
 		log.Printf("question: AI failure: %v", err)
@@ -312,6 +310,17 @@ func (m *Module) buildRespondSystemPrompt(basePrompt, networkName string, refID 
 	}
 
 	return builder.String()
+}
+
+func (m *Module) createAIClient() (aicore.Client, sharedconfig.AIConfig, error) {
+	latest := sharedconfig.LoadQAConfig(m.db)
+	factoryCfg := latest.AIConfig.FactoryConfig()
+	factoryCfg.Temperature = 0
+	client, err := aicore.NewClient(factoryCfg)
+	if err != nil {
+		return nil, sharedconfig.AIConfig{}, err
+	}
+	return client, latest.AIConfig, nil
 }
 
 func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
