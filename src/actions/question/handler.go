@@ -445,33 +445,31 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 	}
 
 	// Format and send summary
-	summaryText := m.formatSummary(summary)
-	log.Printf("question: formatted summary for %s #%d (length: %d)", network.Name, threadInfo.RefID, len(summaryText))
+	summaryMessages := m.formatSummary(summary)
+	log.Printf("question: formatted summary for %s #%d (%d messages)", network.Name, threadInfo.RefID, len(summaryMessages))
 
-	// Use BuildStyledMessages to handle long messages
-	payloads := shareddiscord.BuildStyledMessages("Refresh", summaryText, "")
-	if len(payloads) == 0 {
-		log.Printf("question: no payloads generated for summary")
+	if len(summaryMessages) == 0 {
+		log.Printf("question: no messages generated for summary")
 		sendStyledWebhookEdit(s, i.Interaction, "Refresh", "Summary generated but formatting failed.")
 		return
 	}
 
-	// Edit the interaction with the first message
-	first := payloads[0]
+	// Send first message as webhook edit
+	firstPayload := shareddiscord.BuildStyledMessage("Refresh", summaryMessages[0])
 	edit := &discordgo.WebhookEdit{
-		Content: &first.Content,
+		Content: &firstPayload.Content,
 	}
-	if len(first.Components) > 0 {
-		edit.Components = &first.Components
+	if len(firstPayload.Components) > 0 {
+		edit.Components = &firstPayload.Components
 	}
 	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, edit); err != nil {
 		log.Printf("question: summary send failed: %v", err)
 		return
 	}
 
-	// Send follow-up messages if needed
-	for idx := 1; idx < len(payloads); idx++ {
-		payload := payloads[idx]
+	// Send follow-up messages
+	for idx := 1; idx < len(summaryMessages); idx++ {
+		payload := shareddiscord.BuildStyledMessage("", summaryMessages[idx])
 		msg := &discordgo.MessageSend{
 			Content: payload.Content,
 		}
@@ -980,58 +978,96 @@ func min(a, b int) int {
 	return b
 }
 
-// formatSummary formats the summary data for Discord display.
-func (m *Module) formatSummary(summary *cache.SummaryData) string {
-	var builder strings.Builder
+// formatSummary formats the summary data for Discord display, returning multiple messages if needed.
+// Sections are grouped: Summary & Context together, Claims together, Team Members together.
+// If any section exceeds 1999 characters, it will be split.
+func (m *Module) formatSummary(summary *cache.SummaryData) []string {
+	const maxChars = 1999
+	var messages []string
 
-	builder.WriteString(fmt.Sprintf("**%s Referendum #%d**\n", summary.Network, summary.RefID))
-	builder.WriteString(fmt.Sprintf("**Title:** %s\n\n", summary.Title))
+	// Build header
+	header := fmt.Sprintf("**%s Referendum #%d**\n**Title:** %s\n\n", summary.Network, summary.RefID, summary.Title)
 
-	builder.WriteString("**Background Context:**\n")
-	builder.WriteString(summary.BackgroundContext)
-	builder.WriteString("\n\n")
+	// Section 1: Background Context & Summary (grouped together)
+	var contextSummaryBuilder strings.Builder
+	contextSummaryBuilder.WriteString(header)
+	contextSummaryBuilder.WriteString("📋 **Summary**\n\n")
+	contextSummaryBuilder.WriteString("**Background Context:**\n\n")
+	contextSummaryBuilder.WriteString(summary.BackgroundContext)
+	contextSummaryBuilder.WriteString("\n\n")
+	contextSummaryBuilder.WriteString("**Summary:**\n\n")
+	contextSummaryBuilder.WriteString(summary.Summary)
+	contextSummaryBuilder.WriteString("\n\n")
 
-	builder.WriteString("**Summary:**\n")
-	builder.WriteString(summary.Summary)
-	builder.WriteString("\n\n")
+	contextSummaryText := contextSummaryBuilder.String()
+	if len(contextSummaryText) > maxChars {
+		// Split context and summary if needed
+		contextPart := fmt.Sprintf("%s📋 **Summary**\n\n**Background Context:**\n\n%s", header, summary.BackgroundContext)
+		summaryPart := fmt.Sprintf("**Summary:**\n\n%s", summary.Summary)
 
-	// Valid Claims
-	builder.WriteString(fmt.Sprintf("**Valid Claims (%d):**\n", len(summary.ValidClaims)))
+		if len(contextPart) <= maxChars {
+			messages = append(messages, contextPart)
+		} else {
+			// Split context itself if too long
+			messages = append(messages, splitLongText(header+"📋 **Summary**\n\n**Background Context:**\n\n", summary.BackgroundContext, maxChars)...)
+		}
+
+		if len(summaryPart) <= maxChars {
+			messages = append(messages, summaryPart)
+		} else {
+			messages = append(messages, splitLongText("**Summary:**\n\n", summary.Summary, maxChars)...)
+		}
+	} else {
+		messages = append(messages, contextSummaryText)
+	}
+
+	// Section 2: All Claims (grouped together)
+	var claimsBuilder strings.Builder
+	claimsBuilder.WriteString("🔍 **Claims**\n\n")
+	
+	claimsBuilder.WriteString(fmt.Sprintf("✅ **Valid Claims (%d):**\n\n", len(summary.ValidClaims)))
 	if len(summary.ValidClaims) > 0 {
 		for _, claim := range summary.ValidClaims {
-			builder.WriteString(fmt.Sprintf("• %s\n", claim))
+			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n", claim))
 		}
 	} else {
-		builder.WriteString("_None_\n")
+		claimsBuilder.WriteString("  _None_\n")
 	}
-	builder.WriteString("\n")
+	claimsBuilder.WriteString("\n\n")
 
-	// Unverified/Unknown Claims
-	builder.WriteString(fmt.Sprintf("**Unverified/Unknown Claims (%d):**\n", len(summary.UnverifiedClaims)))
+	claimsBuilder.WriteString(fmt.Sprintf("❓ **Unverified/Unknown Claims (%d):**\n\n", len(summary.UnverifiedClaims)))
 	if len(summary.UnverifiedClaims) > 0 {
 		for _, claim := range summary.UnverifiedClaims {
-			builder.WriteString(fmt.Sprintf("• %s\n", claim))
+			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n", claim))
 		}
 	} else {
-		builder.WriteString("_None_\n")
+		claimsBuilder.WriteString("  _None_\n")
 	}
-	builder.WriteString("\n")
+	claimsBuilder.WriteString("\n\n")
 
-	// Invalid Claims
-	builder.WriteString(fmt.Sprintf("**Invalid Claims (%d):**\n", len(summary.InvalidClaims)))
+	claimsBuilder.WriteString(fmt.Sprintf("❌ **Invalid Claims (%d):**\n\n", len(summary.InvalidClaims)))
 	if len(summary.InvalidClaims) > 0 {
 		for _, claim := range summary.InvalidClaims {
-			builder.WriteString(fmt.Sprintf("• %s\n", claim))
+			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n", claim))
 		}
 	} else {
-		builder.WriteString("_None_\n")
+		claimsBuilder.WriteString("  _None_\n")
 	}
-	builder.WriteString("\n")
 
-	// Team Members
-	builder.WriteString("**Team Members:**\n")
+	claimsText := claimsBuilder.String()
+	if len(claimsText) > maxChars {
+		// Extract the content without the prefix for splitting
+		claimsPrefix := "🔍 **Claims**\n\n"
+		claimsContent := claimsText[len(claimsPrefix):]
+		messages = append(messages, splitLongText(claimsPrefix, claimsContent, maxChars)...)
+	} else {
+		messages = append(messages, claimsText)
+	}
+
+	// Section 3: Team Members (all in one block)
+	var teamContentBuilder strings.Builder
 	if len(summary.TeamMembers) > 0 {
-		for _, member := range summary.TeamMembers {
+		for idx, member := range summary.TeamMembers {
 			isRealStr := "❌"
 			if member.IsReal {
 				isRealStr = "✅"
@@ -1040,14 +1076,103 @@ func (m *Module) formatSummary(summary *cache.SummaryData) string {
 			if member.HasStatedSkills {
 				hasSkillsStr = "✅"
 			}
-			builder.WriteString(fmt.Sprintf("• **%s** (%s) - Is Real: %s, Has Skills: %s\n", member.Name, member.Role, isRealStr, hasSkillsStr))
-			builder.WriteString(fmt.Sprintf("  %s\n", member.History))
+			
+			// Add spacing between team members
+			if idx > 0 {
+				teamContentBuilder.WriteString("\n")
+			}
+			
+			teamContentBuilder.WriteString(fmt.Sprintf("👤 **%s**\n", member.Name))
+			teamContentBuilder.WriteString(fmt.Sprintf("   Role: %s\n", member.Role))
+			teamContentBuilder.WriteString(fmt.Sprintf("   Is Real: %s  |  Has Skills: %s\n", isRealStr, hasSkillsStr))
+			teamContentBuilder.WriteString(fmt.Sprintf("   History: %s\n", member.History))
 		}
 	} else {
-		builder.WriteString("_None_\n")
+		teamContentBuilder.WriteString("_None_\n")
 	}
 
-	return builder.String()
+	teamPrefix := "👥 **Team Members**\n\n"
+	teamContent := teamContentBuilder.String()
+	teamText := teamPrefix + teamContent
+
+	if len(teamText) > maxChars {
+		messages = append(messages, splitLongText(teamPrefix, teamContent, maxChars)...)
+	} else {
+		messages = append(messages, teamText)
+	}
+
+	return messages
+}
+
+// splitLongText splits a long text into chunks that fit within maxChars, preserving line breaks.
+func splitLongText(prefix string, text string, maxChars int) []string {
+	if len(prefix)+len(text) <= maxChars {
+		return []string{prefix + text}
+	}
+
+	var chunks []string
+	lines := strings.Split(text, "\n")
+	var currentChunk strings.Builder
+	currentChunk.WriteString(prefix)
+	currentLen := len(prefix)
+
+	for _, line := range lines {
+		lineWithNewline := line + "\n"
+		lineLen := len(lineWithNewline)
+
+		// If adding this line would exceed the limit and we have content, start a new chunk
+		if currentLen+lineLen > maxChars && currentLen > len(prefix) {
+			chunks = append(chunks, strings.TrimRight(currentChunk.String(), "\n"))
+			currentChunk.Reset()
+			currentChunk.WriteString(prefix)
+			currentLen = len(prefix)
+		}
+
+		// If a single line (with prefix) is too long, split it
+		if len(prefix)+lineLen > maxChars {
+			// Split the line itself
+			remaining := line
+			for len(remaining) > 0 {
+				available := maxChars - currentLen - 1 // -1 for newline
+				if available < 20 {
+					// If we can't fit much, start a new chunk
+					if currentLen > len(prefix) {
+						chunks = append(chunks, strings.TrimRight(currentChunk.String(), "\n"))
+						currentChunk.Reset()
+						currentChunk.WriteString(prefix)
+						currentLen = len(prefix)
+					}
+					available = maxChars - len(prefix) - 1
+					if available < 20 {
+						available = 100 // Fallback minimum
+					}
+				}
+				if available > len(remaining) {
+					available = len(remaining)
+				}
+				if available <= 0 {
+					break
+				}
+				currentChunk.WriteString(remaining[:available])
+				currentChunk.WriteString("\n")
+				currentLen += available + 1
+				remaining = remaining[available:]
+			}
+		} else {
+			currentChunk.WriteString(lineWithNewline)
+			currentLen += lineLen
+		}
+	}
+
+	if currentChunk.Len() > len(prefix) {
+		chunks = append(chunks, strings.TrimRight(currentChunk.String(), "\n"))
+	}
+
+	if len(chunks) == 0 {
+		return []string{prefix + text}
+	}
+
+	return chunks
 }
 
 // handleSummarySlash handles the /summary command.
@@ -1096,31 +1221,29 @@ func (m *Module) handleSummarySlash(s *discordgo.Session, i *discordgo.Interacti
 	}
 
 	// Format and send summary
-	summaryText := m.formatSummary(entry.Summary)
+	summaryMessages := m.formatSummary(entry.Summary)
 
-	// Use BuildStyledMessages to handle long messages
-	payloads := shareddiscord.BuildStyledMessages("Summary", summaryText, "")
-	if len(payloads) == 0 {
+	if len(summaryMessages) == 0 {
 		sendStyledWebhookEdit(s, i.Interaction, "Summary", "Summary formatting failed.")
 		return
 	}
 
-	// Edit the interaction with the first message
-	first := payloads[0]
+	// Send first message as webhook edit
+	firstPayload := shareddiscord.BuildStyledMessage("Summary", summaryMessages[0])
 	edit := &discordgo.WebhookEdit{
-		Content: &first.Content,
+		Content: &firstPayload.Content,
 	}
-	if len(first.Components) > 0 {
-		edit.Components = &first.Components
+	if len(firstPayload.Components) > 0 {
+		edit.Components = &firstPayload.Components
 	}
 	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, edit); err != nil {
 		log.Printf("question: summary send failed: %v", err)
 		return
 	}
 
-	// Send follow-up messages if needed
-	for idx := 1; idx < len(payloads); idx++ {
-		payload := payloads[idx]
+	// Send follow-up messages
+	for idx := 1; idx < len(summaryMessages); idx++ {
+		payload := shareddiscord.BuildStyledMessage("", summaryMessages[idx])
 		msg := &discordgo.MessageSend{
 			Content: payload.Content,
 		}

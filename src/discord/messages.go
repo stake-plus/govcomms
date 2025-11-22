@@ -216,14 +216,6 @@ func BuildStyledMessages(title string, body string, userID string) []StyledMessa
 
 		payload := buildStyledMessageFromCleanChunk(currentTitle, chunk)
 
-		if len(chunks) > 1 {
-			if idx < len(chunks)-1 {
-				payload.Content += "\n*(continued...)*"
-			} else {
-				payload.Content += "\n*(end of response)*"
-			}
-		}
-
 		if idx == 0 && userID != "" {
 			payload.Content = fmt.Sprintf("<@%s>\n%s", userID, payload.Content)
 		}
