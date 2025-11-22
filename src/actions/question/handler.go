@@ -1212,12 +1212,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 	teamPrefix := "Team Members ⚡\n \n \n"
 	teamContent := teamContentBuilder.String()
 	teamText := teamPrefix + teamContent
-
-	if len(teamText) > maxChars {
-		messages = append(messages, splitLongText(teamPrefix, teamContent, maxChars)...)
-	} else {
-		messages = append(messages, teamText)
-	}
+	messages = append(messages, teamText)
 
 	return messages
 }
