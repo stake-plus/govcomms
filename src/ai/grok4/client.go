@@ -276,6 +276,9 @@ func (c *client) invokeMCP(ctx context.Context, desc *core.MCPDescriptor, args m
 	resource := strings.TrimSpace(fmt.Sprint(args["resource"]))
 	resource = strings.ToLower(resource)
 	fileParam := strings.TrimSpace(fmt.Sprint(args["file"]))
+	if resource == "attachments" && fileParam == "" {
+		return "", fmt.Errorf("file argument required for attachments")
+	}
 	base := strings.TrimRight(desc.BaseURL, "/")
 	endpoint := fmt.Sprintf("%s/v1/referenda/%s/%d", base, url.PathEscape(network), refID)
 	if resource != "" && resource != "metadata" {
@@ -373,6 +376,14 @@ func decodeToolArguments(raw string) (map[string]any, error) {
 	return args, nil
 }
 
+func decodeToolArgumentsNormalized(raw string) (map[string]any, error) {
+	args, err := decodeToolArguments(raw)
+	if err != nil {
+		return nil, err
+	}
+	return normalizeToolArguments(args), nil
+}
+
 func mergeArgs(args map[string]any, defaults map[string]any) map[string]any {
 	if args == nil {
 		args = map[string]any{}
@@ -410,6 +421,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 	contentFetched := false
 	attachmentNames := []string{}
 	attachmentsRetrieved := map[string]bool{}
+	missingAttachmentFileCount := 0
 	finalReminderSent := false
 	base64ReminderSent := false
 	toolsDisabled := false
@@ -538,6 +550,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 
 		pendingCallExecuted := false
 		metadataAnnouncedAttachments := false
+		missingAttachmentFile := false
 		for _, call := range convertedCalls {
 			content := callOutputs[call.ID]
 			messages = append(messages, chatMessagePayload{
@@ -568,8 +581,36 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 				fileArg := attachmentFileFromCall(call)
 				if fileArg != "" {
 					attachmentsRetrieved[fileArg] = true
+				} else {
+					missingAttachmentFile = true
 				}
 			}
+		}
+
+		if missingAttachmentFile {
+			missingAttachmentFileCount++
+			example := ""
+			if next := nextPendingAttachment(); next != "" {
+				example = fmt.Sprintf(" Example: {\"resource\":\"attachments\",\"file\":\"%s\"}.", next)
+			}
+			messages = append(messages, chatMessagePayload{
+				Role: "user",
+				Content: "When calling fetch_referendum_data for attachments you must include the \"file\" argument set to one of the attachment paths from metadata." +
+					example + " Retry the attachment request with the proper file.",
+			})
+			if missingAttachmentFileCount >= 3 {
+				if len(attachmentNames) > 0 {
+					for _, name := range attachmentNames {
+						attachmentsRetrieved[name] = true
+					}
+				}
+				attachmentNames = nil
+				messages = append(messages, chatMessagePayload{
+					Role:    "user",
+					Content: "You have attempted to fetch attachments without a file parameter multiple times. Proceed using the metadata and content you already retrieved and provide the final answer.",
+				})
+			}
+			continue
 		}
 
 		if !pendingCallExecuted {
@@ -736,15 +777,11 @@ func toolCacheKey(call openAIToolCall) string {
 }
 
 func resourceFromToolCall(call openAIToolCall) string {
-	args := strings.TrimSpace(call.Function.Arguments)
-	if args == "" {
+	args, err := decodeToolArgumentsNormalized(call.Function.Arguments)
+	if err != nil || len(args) == 0 {
 		return "metadata"
 	}
-	var obj map[string]any
-	if err := json.Unmarshal([]byte(args), &obj); err != nil {
-		return "metadata"
-	}
-	res := strings.TrimSpace(strings.ToLower(fmt.Sprint(obj["resource"])))
+	res := strings.TrimSpace(strings.ToLower(fmt.Sprint(args["resource"])))
 	if res == "" {
 		return "metadata"
 	}
@@ -786,15 +823,11 @@ func metadataAttachmentNames(content string) []string {
 }
 
 func attachmentFileFromCall(call openAIToolCall) string {
-	args := strings.TrimSpace(call.Function.Arguments)
-	if args == "" {
+	args, err := decodeToolArgumentsNormalized(call.Function.Arguments)
+	if err != nil || len(args) == 0 {
 		return ""
 	}
-	var obj map[string]any
-	if err := json.Unmarshal([]byte(args), &obj); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(obj["file"]))
+	return strings.TrimSpace(fmt.Sprint(args["file"]))
 }
 
 var weirdParamPattern = regexp.MustCompile(`parameter name="([^"]+)">([^<]+)`)
