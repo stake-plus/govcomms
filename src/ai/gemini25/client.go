@@ -142,11 +142,14 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 				if !(metadataFetched && contentFetched && !hasPendingAttachments()) {
 					mode = "ANY"
 				}
+				fConfig := map[string]any{
+					"mode": mode,
+				}
+				if strings.EqualFold(mode, "ANY") {
+					fConfig["allowedFunctionNames"] = functionNames
+				}
 				body["toolConfig"] = map[string]any{
-					"functionCallingConfig": map[string]any{
-						"mode":                 mode,
-						"allowedFunctionNames": functionNames,
-					},
+					"functionCallingConfig": fConfig,
 				}
 			} else {
 				delete(body, "toolConfig")
@@ -570,7 +573,7 @@ func geminiToolResponseContent(name, output string) geminiContent {
 		}
 	}
 	return geminiContent{
-		Role: "tool",
+		Role: "function",
 		Parts: []geminiPart{
 			{
 				FunctionResponse: &geminiFunctionResponse{
