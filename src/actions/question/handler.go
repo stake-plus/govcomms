@@ -2,6 +2,7 @@ package question
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -132,6 +133,7 @@ func (m *Module) initHandlers() {
 			shareddiscord.CommandQuestion,
 			shareddiscord.CommandRefresh,
 			shareddiscord.CommandContext,
+			shareddiscord.CommandSummary,
 		); err != nil {
 			log.Printf("question: register commands failed: %v", err)
 		}
@@ -145,6 +147,8 @@ func (m *Module) initHandlers() {
 			m.handleRefreshSlash(s, i)
 		case "context":
 			m.handleContextSlash(s, i)
+		case "summary":
+			m.handleSummarySlash(s, i)
 		}
 	})
 }
@@ -414,11 +418,35 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 		return
 	}
 
-	msg := fmt.Sprintf("✅ Refreshed content for %s referendum #%d", network.Name, threadInfo.RefID)
-	sendStyledWebhookEdit(s, i.Interaction, "Refresh", msg)
+	// Update message to show we're processing research
+	sendStyledWebhookEdit(s, i.Interaction, "Refresh", fmt.Sprintf("✅ Refreshed content for %s referendum #%d\n\n⏳ Processing claims and team analysis...", network.Name, threadInfo.RefID))
 
-	// Trigger claims and teams analysis in background
-	go m.runSilentResearch(network.Name, uint32(threadInfo.RefID), threadInfo.RefDBID, threadInfo.NetworkID)
+	// Run claims and teams analysis (wait for completion)
+	if err := m.runSilentResearch(network.Name, uint32(threadInfo.RefID), threadInfo.RefDBID, threadInfo.NetworkID); err != nil {
+		log.Printf("question: research failed: %v", err)
+		sendStyledWebhookEdit(s, i.Interaction, "Refresh", fmt.Sprintf("✅ Refreshed content for %s referendum #%d\n\n⚠️ Research processing failed.", network.Name, threadInfo.RefID))
+		return
+	}
+
+	// Update message to show we're generating summary
+	sendStyledWebhookEdit(s, i.Interaction, "Refresh", fmt.Sprintf("✅ Refreshed content for %s referendum #%d\n\n✅ Research completed\n\n⏳ Generating summary...", network.Name, threadInfo.RefID))
+
+	// Generate and save summary
+	summary, err := m.generateSummary(network.Name, uint32(threadInfo.RefID), threadInfo.RefDBID, threadInfo.NetworkID)
+	if err != nil {
+		log.Printf("question: summary generation failed: %v", err)
+		sendStyledWebhookEdit(s, i.Interaction, "Refresh", fmt.Sprintf("✅ Refreshed content for %s referendum #%d\n\n✅ Research completed\n\n⚠️ Summary generation failed.", network.Name, threadInfo.RefID))
+		return
+	}
+
+	// Save summary to cache
+	if err := m.cacheManager.UpdateSummary(network.Name, uint32(threadInfo.RefID), summary); err != nil {
+		log.Printf("question: failed to save summary: %v", err)
+	}
+
+	// Format and send summary
+	summaryText := m.formatSummary(summary)
+	sendStyledWebhookEdit(s, i.Interaction, "Refresh", summaryText)
 }
 
 func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.Interaction, question string, message string, providerInfo aicore.ProviderInfo, model string) {
@@ -510,7 +538,8 @@ func buildQuestionResponseBody(providerInfo aicore.ProviderInfo, model, question
 }
 
 // runSilentResearch runs claims and teams analysis silently and saves results to cache metadata.
-func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64, networkID uint8) {
+// Returns an error if research fails completely, nil if successful or partially successful.
+func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64, networkID uint8) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
@@ -532,32 +561,27 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 	// Get proposal content
 	proposalContent, err := m.cacheManager.GetProposalContent(network, refID)
 	if err != nil {
-		log.Printf("question: silent research: failed to get proposal content: %v", err)
-		return
+		return fmt.Errorf("get proposal content: %w", err)
 	}
 
 	// Create AI clients for claims and teams
 	factoryCfg := aiCfg.FactoryConfig()
 	claimsClient, err := aicore.NewClient(factoryCfg)
 	if err != nil {
-		log.Printf("question: silent research: failed to create claims client: %v", err)
-		return
+		return fmt.Errorf("create claims client: %w", err)
 	}
 	claimsAnalyzer, err := claims.NewAnalyzer(claimsClient)
 	if err != nil {
-		log.Printf("question: silent research: failed to create claims analyzer: %v", err)
-		return
+		return fmt.Errorf("create claims analyzer: %w", err)
 	}
 
 	teamsClient, err := aicore.NewClient(factoryCfg)
 	if err != nil {
-		log.Printf("question: silent research: failed to create teams client: %v", err)
-		return
+		return fmt.Errorf("create teams client: %w", err)
 	}
 	teamsAnalyzer, err := teams.NewAnalyzer(teamsClient)
 	if err != nil {
-		log.Printf("question: silent research: failed to create teams analyzer: %v", err)
-		return
+		return fmt.Errorf("create teams analyzer: %w", err)
 	}
 
 	// Run claims and teams analysis in parallel
@@ -668,9 +692,319 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 	// Save to cache metadata
 	if claimsData != nil || teamsData != nil {
 		if err := m.cacheManager.UpdateResearchData(network, refID, claimsData, teamsData); err != nil {
-			log.Printf("question: silent research: failed to update cache metadata: %v", err)
-		} else {
-			log.Printf("question: silent research: saved research data to cache for %s #%d", network, refID)
+			return fmt.Errorf("update cache metadata: %w", err)
+		}
+		log.Printf("question: silent research: saved research data to cache for %s #%d", network, refID)
+	}
+
+	// If both failed, return error
+	if claimsErr != nil && teamsErr != nil {
+		return fmt.Errorf("both research tasks failed: claims=%v, teams=%v", claimsErr, teamsErr)
+	}
+
+	return nil
+}
+
+// generateSummary creates a summary of the referendum using AI and research data.
+func (m *Module) generateSummary(network string, refID uint32, refDBID uint64, networkID uint8) (*cache.SummaryData, error) {
+	// Get cache entry to access research data
+	entry, err := m.cacheManager.EnsureEntry(network, refID)
+	if err != nil {
+		return nil, fmt.Errorf("get cache entry: %w", err)
+	}
+
+	// Get referendum title from database
+	var ref sharedgov.Ref
+	if err := m.db.Where("id = ?", refDBID).First(&ref).Error; err != nil {
+		log.Printf("question: failed to get referendum title: %v", err)
+	}
+	title := "Unknown"
+	if ref.Title != nil && *ref.Title != "" {
+		title = *ref.Title
+	}
+
+	// Get proposal content
+	proposalContent, err := m.cacheManager.GetProposalContent(network, refID)
+	if err != nil {
+		return nil, fmt.Errorf("get proposal content: %w", err)
+	}
+
+	// Build context for summary generation
+	var summaryContext strings.Builder
+	summaryContext.WriteString(fmt.Sprintf("Network: %s\nReferendum #%d\nTitle: %s\n\n", network, refID, title))
+	summaryContext.WriteString("Proposal Content:\n")
+	summaryContext.WriteString(proposalContent)
+	summaryContext.WriteString("\n\n")
+
+	// Add claims data
+	if entry.Claims != nil && len(entry.Claims.Results) > 0 {
+		summaryContext.WriteString("Verified Claims:\n")
+		for _, claim := range entry.Claims.Results {
+			summaryContext.WriteString(fmt.Sprintf("- [%s] %s\n", claim.Status, claim.Claim))
+		}
+		summaryContext.WriteString("\n")
+	}
+
+	// Add team data
+	if entry.TeamMembers != nil && len(entry.TeamMembers.Members) > 0 {
+		summaryContext.WriteString("Team Members:\n")
+		for _, member := range entry.TeamMembers.Members {
+			isReal := "Unknown"
+			hasSkills := "Unknown"
+			if member.IsReal != nil {
+				if *member.IsReal {
+					isReal = "Yes"
+				} else {
+					isReal = "No"
+				}
+			}
+			if member.HasStatedSkills != nil {
+				if *member.HasStatedSkills {
+					hasSkills = "Yes"
+				} else {
+					hasSkills = "No"
+				}
+			}
+			summaryContext.WriteString(fmt.Sprintf("- %s (%s) - Is Real: %s, Has Skills: %s\n", member.Name, member.Role, isReal, hasSkills))
+		}
+		summaryContext.WriteString("\n")
+	}
+
+	// Load AI config
+	aiCfg := sharedconfig.LoadQAConfig(m.db).AIConfig
+	factoryCfg := aiCfg.FactoryConfig()
+	aiClient, err := aicore.NewClient(factoryCfg)
+	if err != nil {
+		return nil, fmt.Errorf("create AI client: %w", err)
+	}
+
+	// Generate summary using AI
+	prompt := fmt.Sprintf(`Generate a comprehensive summary for this blockchain governance proposal.
+
+Requirements:
+1. Background Context: Write 1 paragraph (maximum 4 sentences) explaining the background and context of this proposal.
+2. Summary: Write 1 paragraph (maximum 4 sentences) summarizing what this proposal aims to achieve.
+
+For each team member listed, provide a 2-sentence description of their history and background based on the information available.
+
+Format your response as JSON:
+{
+  "backgroundContext": "1 paragraph, max 4 sentences",
+  "summary": "1 paragraph, max 4 sentences",
+  "teamHistories": {
+    "Member Name": "2 sentences about their history"
+  }
+}
+
+Proposal Data:
+%s`, summaryContext.String())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	response, err := aiClient.Respond(ctx, prompt, nil, aicore.Options{})
+	if err != nil {
+		return nil, fmt.Errorf("AI response: %w", err)
+	}
+
+	// Parse AI response (extract JSON)
+	var aiResponse struct {
+		BackgroundContext string            `json:"backgroundContext"`
+		Summary           string            `json:"summary"`
+		TeamHistories     map[string]string `json:"teamHistories"`
+	}
+
+	// Try to extract JSON from response
+	startIdx := strings.Index(response, "{")
+	endIdx := strings.LastIndex(response, "}")
+	if startIdx >= 0 && endIdx > startIdx {
+		jsonStr := response[startIdx : endIdx+1]
+		if err := json.Unmarshal([]byte(jsonStr), &aiResponse); err != nil {
+			log.Printf("question: failed to parse AI summary response: %v", err)
+			// Fallback: use simple text extraction
+			aiResponse.BackgroundContext = "Background context generation failed."
+			aiResponse.Summary = "Summary generation failed."
+			aiResponse.TeamHistories = make(map[string]string)
+		}
+	} else {
+		aiResponse.BackgroundContext = "Background context generation failed."
+		aiResponse.Summary = "Summary generation failed."
+		aiResponse.TeamHistories = make(map[string]string)
+	}
+
+	// Organize claims by status
+	var validClaims, unverifiedClaims, invalidClaims []string
+	if entry.Claims != nil {
+		for _, claim := range entry.Claims.Results {
+			switch strings.ToLower(claim.Status) {
+			case "valid":
+				validClaims = append(validClaims, claim.Claim)
+			case "rejected":
+				invalidClaims = append(invalidClaims, claim.Claim)
+			default: // Unknown, etc.
+				unverifiedClaims = append(unverifiedClaims, claim.Claim)
+			}
 		}
 	}
+
+	// Build team summaries
+	var teamSummaries []cache.TeamSummary
+	if entry.TeamMembers != nil {
+		for _, member := range entry.TeamMembers.Members {
+			isReal := false
+			hasSkills := false
+			if member.IsReal != nil {
+				isReal = *member.IsReal
+			}
+			if member.HasStatedSkills != nil {
+				hasSkills = *member.HasStatedSkills
+			}
+
+			history := aiResponse.TeamHistories[member.Name]
+			if history == "" {
+				history = "History information not available."
+			}
+
+			teamSummaries = append(teamSummaries, cache.TeamSummary{
+				Name:            member.Name,
+				Role:            member.Role,
+				IsReal:          isReal,
+				HasStatedSkills: hasSkills,
+				History:         history,
+			})
+		}
+	}
+
+	return &cache.SummaryData{
+		Network:           network,
+		RefID:             refID,
+		Title:             title,
+		BackgroundContext: aiResponse.BackgroundContext,
+		Summary:           aiResponse.Summary,
+		ValidClaims:       validClaims,
+		UnverifiedClaims:  unverifiedClaims,
+		InvalidClaims:     invalidClaims,
+		TeamMembers:       teamSummaries,
+		GeneratedAt:       time.Now().UTC(),
+	}, nil
+}
+
+// formatSummary formats the summary data for Discord display.
+func (m *Module) formatSummary(summary *cache.SummaryData) string {
+	var builder strings.Builder
+
+	builder.WriteString(fmt.Sprintf("**%s Referendum #%d**\n", summary.Network, summary.RefID))
+	builder.WriteString(fmt.Sprintf("**Title:** %s\n\n", summary.Title))
+
+	builder.WriteString("**Background Context:**\n")
+	builder.WriteString(summary.BackgroundContext)
+	builder.WriteString("\n\n")
+
+	builder.WriteString("**Summary:**\n")
+	builder.WriteString(summary.Summary)
+	builder.WriteString("\n\n")
+
+	// Valid Claims
+	builder.WriteString(fmt.Sprintf("**Valid Claims (%d):**\n", len(summary.ValidClaims)))
+	if len(summary.ValidClaims) > 0 {
+		for _, claim := range summary.ValidClaims {
+			builder.WriteString(fmt.Sprintf("• %s\n", claim))
+		}
+	} else {
+		builder.WriteString("_None_\n")
+	}
+	builder.WriteString("\n")
+
+	// Unverified/Unknown Claims
+	builder.WriteString(fmt.Sprintf("**Unverified/Unknown Claims (%d):**\n", len(summary.UnverifiedClaims)))
+	if len(summary.UnverifiedClaims) > 0 {
+		for _, claim := range summary.UnverifiedClaims {
+			builder.WriteString(fmt.Sprintf("• %s\n", claim))
+		}
+	} else {
+		builder.WriteString("_None_\n")
+	}
+	builder.WriteString("\n")
+
+	// Invalid Claims
+	builder.WriteString(fmt.Sprintf("**Invalid Claims (%d):**\n", len(summary.InvalidClaims)))
+	if len(summary.InvalidClaims) > 0 {
+		for _, claim := range summary.InvalidClaims {
+			builder.WriteString(fmt.Sprintf("• %s\n", claim))
+		}
+	} else {
+		builder.WriteString("_None_\n")
+	}
+	builder.WriteString("\n")
+
+	// Team Members
+	builder.WriteString("**Team Members:**\n")
+	if len(summary.TeamMembers) > 0 {
+		for _, member := range summary.TeamMembers {
+			isRealStr := "❌"
+			if member.IsReal {
+				isRealStr = "✅"
+			}
+			hasSkillsStr := "❌"
+			if member.HasStatedSkills {
+				hasSkillsStr = "✅"
+			}
+			builder.WriteString(fmt.Sprintf("• **%s** (%s) - Is Real: %s, Has Skills: %s\n", member.Name, member.Role, isRealStr, hasSkillsStr))
+			builder.WriteString(fmt.Sprintf("  %s\n", member.History))
+		}
+	} else {
+		builder.WriteString("_None_\n")
+	}
+
+	return builder.String()
+}
+
+// handleSummarySlash handles the /summary command.
+func (m *Module) handleSummarySlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if m.cfg.QARoleID != "" && !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID) {
+		formatted := shareddiscord.FormatStyledBlock("Summary", "You don't have permission to use this command.")
+		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: formatted,
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		})
+		return
+	}
+
+	if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+	}); err != nil {
+		log.Printf("question: summary ack failed: %v", err)
+		return
+	}
+
+	threadInfo, err := m.refManager.FindThread(i.ChannelID)
+	if err != nil || threadInfo == nil {
+		sendStyledWebhookEdit(s, i.Interaction, "Summary", "This command must be used in a referendum thread.")
+		return
+	}
+
+	network := m.networkManager.GetByID(threadInfo.NetworkID)
+	if network == nil {
+		sendStyledWebhookEdit(s, i.Interaction, "Summary", "Failed to identify network.")
+		return
+	}
+
+	// Get cache entry
+	entry, err := m.cacheManager.EnsureEntry(network.Name, uint32(threadInfo.RefID))
+	if err != nil {
+		sendStyledWebhookEdit(s, i.Interaction, "Summary", "Failed to load cache entry.")
+		return
+	}
+
+	if entry.Summary == nil {
+		sendStyledWebhookEdit(s, i.Interaction, "Summary", "No summary available. Please run /refresh first.")
+		return
+	}
+
+	// Format and send summary
+	summaryText := m.formatSummary(entry.Summary)
+	sendStyledWebhookEdit(s, i.Interaction, "Summary", summaryText)
 }

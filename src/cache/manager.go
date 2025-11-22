@@ -57,6 +57,7 @@ type Entry struct {
 	RefreshedAt  time.Time    `json:"refreshedAt"`
 	Claims       *ClaimsData  `json:"claims,omitempty"`
 	TeamMembers  *TeamsData   `json:"teamMembers,omitempty"`
+	Summary      *SummaryData `json:"summary,omitempty"`
 
 	baseDir string
 }
@@ -244,6 +245,7 @@ func (m *Manager) loadEntry(network string, refID uint32) (*Entry, error) {
 		RefreshedAt:  stored.RefreshedAt,
 		Claims:       stored.Claims,
 		TeamMembers:  stored.TeamMembers,
+		Summary:      stored.Summary,
 		baseDir:      paths.BaseDir,
 	}
 
@@ -266,6 +268,22 @@ func (m *Manager) UpdateResearchData(network string, refID uint32, claims *Claim
 
 	entry.Claims = claims
 	entry.TeamMembers = teamMembers
+
+	paths := m.cachePaths(network, refID)
+	return saveMetadata(paths, entry)
+}
+
+// UpdateSummary updates the cache entry with summary data.
+func (m *Manager) UpdateSummary(network string, refID uint32, summary *SummaryData) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	entry, err := m.loadEntry(network, refID)
+	if err != nil {
+		return fmt.Errorf("load entry: %w", err)
+	}
+
+	entry.Summary = summary
 
 	paths := m.cachePaths(network, refID)
 	return saveMetadata(paths, entry)
@@ -320,6 +338,7 @@ func saveMetadata(paths cachePaths, entry *Entry) error {
 		RefreshedAt:  entry.RefreshedAt,
 		Claims:       entry.Claims,
 		TeamMembers:  entry.TeamMembers,
+		Summary:      entry.Summary,
 	}
 
 	data, err := json.MarshalIndent(record, "", "  ")
@@ -341,8 +360,32 @@ type metadataRecord struct {
 	Attachments  []Attachment `json:"attachments"`
 	RefreshedAt  time.Time    `json:"refreshedAt"`
 	// Research data
-	Claims      *ClaimsData `json:"claims,omitempty"`
-	TeamMembers *TeamsData  `json:"teamMembers,omitempty"`
+	Claims      *ClaimsData  `json:"claims,omitempty"`
+	TeamMembers *TeamsData   `json:"teamMembers,omitempty"`
+	Summary     *SummaryData `json:"summary,omitempty"`
+}
+
+// SummaryData stores the generated referendum summary
+type SummaryData struct {
+	Network           string        `json:"network"`
+	RefID             uint32        `json:"refId"`
+	Title             string        `json:"title"`
+	BackgroundContext string        `json:"backgroundContext"`
+	Summary           string        `json:"summary"`
+	ValidClaims       []string      `json:"validClaims"`
+	UnverifiedClaims  []string      `json:"unverifiedClaims"`
+	InvalidClaims     []string      `json:"invalidClaims"`
+	TeamMembers       []TeamSummary `json:"teamMembers"`
+	GeneratedAt       time.Time     `json:"generatedAt"`
+}
+
+// TeamSummary represents a team member in the summary
+type TeamSummary struct {
+	Name            string `json:"name"`
+	Role            string `json:"role"`
+	IsReal          bool   `json:"isReal"`
+	HasStatedSkills bool   `json:"hasStatedSkills"`
+	History         string `json:"history"` // 2 sentence description
 }
 
 // ClaimsData stores claim verification results

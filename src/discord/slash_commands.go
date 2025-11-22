@@ -13,6 +13,7 @@ const (
 	CommandQuestion = "question"
 	CommandRefresh  = "refresh"
 	CommandContext  = "context"
+	CommandSummary  = "summary"
 	CommandResearch = "research"
 	CommandTeam     = "team"
 	CommandFeedback = "feedback"
@@ -38,6 +39,10 @@ var commandDefinitions = map[string]*discordgo.ApplicationCommand{
 	CommandContext: {
 		Name:        CommandContext,
 		Description: "Show the Q&A context for this referendum",
+	},
+	CommandSummary: {
+		Name:        CommandSummary,
+		Description: "Show the summary for this referendum",
 	},
 	CommandResearch: {
 		Name:        CommandResearch,
@@ -65,6 +70,7 @@ var defaultCommandOrder = []string{
 	CommandQuestion,
 	CommandRefresh,
 	CommandContext,
+	CommandSummary,
 	CommandResearch,
 	CommandTeam,
 	CommandFeedback,
