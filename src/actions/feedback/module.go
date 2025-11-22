@@ -201,13 +201,6 @@ func (b *Module) Stop(ctx context.Context) {
 	if b.session != nil {
 		b.session.Close()
 	}
-
-	if b.db != nil {
-		sqlDB, err := b.db.DB()
-		if err == nil {
-			sqlDB.Close()
-		}
-	}
 }
 
 func (b *Module) postFeedbackMessage(s *discordgo.Session, threadID string, network *sharedgov.Network, ref *sharedgov.Ref, authorTag, message string) {

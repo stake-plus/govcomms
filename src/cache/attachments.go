@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -164,6 +167,34 @@ func extractLinks(content string) []string {
 	return links
 }
 
+var (
+	privateIPBlocks  []*net.IPNet
+	blockedHostnames = map[string]struct{}{
+		"localhost":                 {},
+		"metadata.google.internal":  {},
+		"metadata.google.internal.": {},
+	}
+)
+
+func init() {
+	for _, cidr := range []string{
+		"127.0.0.0/8",
+		"10.0.0.0/8",
+		"172.16.0.0/12",
+		"192.168.0.0/16",
+		"169.254.0.0/16",
+		"::1/128",
+		"fc00::/7",
+		"fe80::/10",
+		"::/128",
+	} {
+		_, block, err := net.ParseCIDR(cidr)
+		if err == nil {
+			privateIPBlocks = append(privateIPBlocks, block)
+		}
+	}
+}
+
 func shouldSkipLink(link string) bool {
 	lower := strings.ToLower(link)
 	skipDomains := []string{
@@ -178,7 +209,57 @@ func shouldSkipLink(link string) bool {
 		}
 	}
 
+	if !isSafeAttachmentURL(link) {
+		log.Printf("cache: refusing to fetch unsafe link %s", link)
+		return true
+	}
+
 	return false
+}
+
+func isSafeAttachmentURL(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" {
+		return false
+	}
+	if _, blocked := blockedHostnames[host]; blocked {
+		return false
+	}
+
+	if ip := net.ParseIP(host); ip != nil {
+		return isPublicIP(ip)
+	}
+
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return false
+	}
+	for _, resolved := range ips {
+		if !isPublicIP(resolved) {
+			return false
+		}
+	}
+	return true
+}
+
+func isPublicIP(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsUnspecified() {
+		return false
+	}
+	for _, block := range privateIPBlocks {
+		if block.Contains(ip) {
+			return false
+		}
+	}
+	return true
 }
 
 func classifyLink(link string) FileCategory {

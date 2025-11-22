@@ -63,6 +63,10 @@ func main() {
 		defer shutdownCancel()
 		_ = mcpServer.Stop(shutdownCtx)
 	}
+
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.Close()
+	}
 }
 
 func startMCPServer(ctx context.Context, db *gorm.DB) *mcp.Server {
