@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -227,9 +229,11 @@ func (c *client) executeToolCalls(ctx context.Context, calls []openAIToolCall, t
 			})
 			continue
 		}
-		rawArgs := copyArgs(args)
+		origArgs := copyArgs(args)
+		args = normalizeToolArguments(args)
+		normArgs := copyArgs(args)
 		args = mergeArgs(args, toolDef.Defaults)
-		log.Printf("grok4: tool call %s raw=%v merged=%v", call.Function.Name, rawArgs, args)
+		log.Printf("grok4: tool call %s raw=%v normalized=%v merged=%v", call.Function.Name, origArgs, normArgs, args)
 		result, execErr := c.dispatchTool(ctx, toolDef, args)
 		if execErr != nil {
 			log.Printf("grok4: tool %s error: %v", call.Function.Name, execErr)
@@ -791,4 +795,62 @@ func attachmentFileFromCall(call openAIToolCall) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(obj["file"]))
+}
+
+var weirdParamPattern = regexp.MustCompile(`parameter name="([^"]+)">([^<]+)`)
+
+func normalizeToolArguments(args map[string]any) map[string]any {
+	if len(args) == 0 {
+		return args
+	}
+	for key, val := range args {
+		strVal, ok := val.(string)
+		if !ok {
+			continue
+		}
+		if !strings.Contains(strVal, "parameter name=") {
+			continue
+		}
+		base := strings.TrimSpace(strBefore(strVal, "<"))
+		if base != "" {
+			args[key] = base
+		} else {
+			delete(args, key)
+		}
+		extracted := extractWeirdParameters(strVal)
+		for name, value := range extracted {
+			if strings.TrimSpace(name) == "" {
+				continue
+			}
+			args[name] = value
+		}
+	}
+	return args
+}
+
+func extractWeirdParameters(input string) map[string]string {
+	matches := weirdParamPattern.FindAllStringSubmatch(input, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(matches))
+	for _, match := range matches {
+		if len(match) < 3 {
+			continue
+		}
+		name := strings.TrimSpace(match[1])
+		value := strings.TrimSpace(html.UnescapeString(match[2]))
+		if name == "" {
+			continue
+		}
+		out[name] = value
+	}
+	return out
+}
+
+func strBefore(input, sep string) string {
+	if idx := strings.Index(input, sep); idx >= 0 {
+		return input[:idx]
+	}
+	return input
 }
