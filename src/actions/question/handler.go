@@ -1119,7 +1119,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Section 3: Team Members (all in one block)
 	// First, calculate team breakdown statistics
-	var realWithSkills, realNoSkills, notRealWithSkills, notRealNoSkills, notRealNoSkillsCount int
+	var realWithSkills, realNoSkills, notRealWithSkills, notRealNoSkills int
 	
 	if len(summary.TeamMembers) > 0 {
 		for _, member := range summary.TeamMembers {
@@ -1136,7 +1136,6 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 				notRealNoSkills++
 			}
 		}
-		notRealNoSkillsCount = notRealNoSkills
 	}
 	
 	var teamContentBuilder strings.Builder
@@ -1153,8 +1152,8 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 		if notRealWithSkills > 0 {
 			teamContentBuilder.WriteString(fmt.Sprintf("  ⚠️ Not real people with skills: **%d**\n", notRealWithSkills))
 		}
-		if notRealNoSkillsCount > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("  ❌ Not real people without skills: **%d**\n", notRealNoSkillsCount))
+		if notRealNoSkills > 0 {
+			teamContentBuilder.WriteString(fmt.Sprintf("  ❌ Not real people without skills: **%d**\n", notRealNoSkills))
 		}
 		teamContentBuilder.WriteString("\n")
 	}
