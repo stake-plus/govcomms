@@ -18,8 +18,6 @@ import (
 )
 
 const (
-	providerCompany       = "Anthropic"
-	providerWebsite       = "https://anthropic.com"
 	providerKey           = "sonnet45"
 	model                 = "claude-sonnet-4-5"
 	anthropicEndpoint     = "https://api.anthropic.com/v1/messages"
