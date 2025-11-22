@@ -179,7 +179,11 @@ func (s *Server) handleContent(w http.ResponseWriter, network string, refID uint
 		http.Error(w, fmt.Sprintf("read content failed: %v", err), http.StatusInternalServerError)
 		return
 	}
-	entry, _ := s.cache.EnsureEntry(network, refID)
+	entry, err := s.cache.EnsureEntry(network, refID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("cache load failed: %v", err), http.StatusInternalServerError)
+		return
+	}
 	payload := ReferendumPayload{
 		Network:     strings.TrimSpace(network),
 		RefID:       refID,

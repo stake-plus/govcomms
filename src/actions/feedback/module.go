@@ -122,7 +122,8 @@ func (b *Module) initHandlers() {
 }
 
 func (b *Module) onReady(s *discordgo.Session, r *discordgo.Ready) {
-	log.Printf("Feedback bot logged in as: %v#%v", s.State.User.Username, s.State.User.Discriminator)
+	username := formatDiscordUsername(s.State.User.Username, s.State.User.Discriminator)
+	log.Printf("Feedback bot logged in as: %v", username)
 
 	if err := shareddiscord.RegisterSlashCommands(s, b.config.Base.GuildID, shareddiscord.CommandFeedback); err != nil {
 		log.Printf("feedback: failed to register slash commands: %v", err)

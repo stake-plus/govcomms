@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 	"time"
 
 	aicore "github.com/stake-plus/govcomms/src/ai/core"
@@ -170,8 +169,6 @@ SOURCES: [Comma-separated list of primary URLs where you found evidence, or "No 
 
 func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]VerificationResult, error) {
 	results := make([]VerificationResult, len(claims))
-	var resultsMu sync.Mutex // Protect concurrent writes to results slice
-	semaphore := make(chan struct{}, 1) // 1 concurrent operation
 
 	// Initial delay to let rate limits reset
 	log.Printf("Waiting 5 seconds before starting verification...")
@@ -181,75 +178,47 @@ func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]Verifica
 	case <-time.After(5 * time.Second):
 	}
 
-	// Process claims one at a time
+	// Process claims sequentially (one at a time)
 	for i := 0; i < len(claims); i++ {
-		// Create a new context with timeout for this claim
-		claimCtx, claimCancel := context.WithTimeout(ctx, 3*time.Minute)
-
-		var wg sync.WaitGroup
-
+		// Check parent context before processing each claim
 		select {
-		case <-ctx.Done(): // Check parent context
-			claimCancel()
+		case <-ctx.Done():
+			// Mark remaining results as cancelled
+			for j := i; j < len(claims); j++ {
+				results[j] = VerificationResult{
+					Claim:      claims[j].Claim,
+					Status:     StatusUnknown,
+					Evidence:   "Verification cancelled",
+					SourceURLs: []string{},
+				}
+			}
 			return results, ctx.Err()
 		default:
 		}
 
-		wg.Add(1)
-		go func(index int, c Claim) {
-			defer wg.Done()
+		// Create a new context with timeout for this claim
+		claimCtx, claimCancel := context.WithTimeout(ctx, 3*time.Minute)
+		defer claimCancel()
 
-			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-claimCtx.Done():
-				resultsMu.Lock()
-				results[index] = VerificationResult{
-					Claim:      c.Claim,
-					Status:     StatusUnknown,
-					Evidence:   "Verification timeout",
-					SourceURLs: []string{},
-				}
-				resultsMu.Unlock()
-				return
-			}
-
-			log.Printf("Verifying claim %d of %d: %s", index+1, len(claims), c.Claim)
-			result := a.VerifySingleClaim(claimCtx, c)
-			resultsMu.Lock()
-			results[index] = result
-			resultsMu.Unlock()
-			log.Printf("Claim %d verification result: %s", index+1, result.Status)
-		}(i, claims[i])
-
-		// Wait for this claim to complete
-		done := make(chan struct{})
-		go func() {
-			wg.Wait()
-			close(done)
-		}()
-
-		select {
-		case <-done:
-			// Claim completed successfully
-		case <-claimCtx.Done():
-			// Claim timeout
-			log.Printf("Claim %d timed out", i+1)
-		case <-ctx.Done():
-			// Parent context cancelled - ensure goroutine completes
-			claimCancel()
-			// Wait for goroutine to finish before returning
-			<-done
-			return results, ctx.Err()
-		}
-
-		claimCancel()
+		log.Printf("Verifying claim %d of %d: %s", i+1, len(claims), claims[i].Claim)
+		result := a.VerifySingleClaim(claimCtx, claims[i])
+		results[i] = result
+		log.Printf("Claim %d verification result: %s", i+1, result.Status)
 
 		// Wait 5 seconds between each claim to avoid rate limiting
 		if i < len(claims)-1 {
 			log.Printf("Waiting 5 seconds before next claim...")
 			select {
 			case <-ctx.Done():
+				// Mark remaining results as cancelled
+				for j := i + 1; j < len(claims); j++ {
+					results[j] = VerificationResult{
+						Claim:      claims[j].Claim,
+						Status:     StatusUnknown,
+						Evidence:   "Verification cancelled",
+						SourceURLs: []string{},
+					}
+				}
 				return results, ctx.Err()
 			case <-time.After(5 * time.Second):
 			}

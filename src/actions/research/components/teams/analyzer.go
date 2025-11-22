@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 	"time"
 
 	aicore "github.com/stake-plus/govcomms/src/ai/core"
@@ -86,8 +85,6 @@ Proposal:
 
 func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember) ([]TeamAnalysisResult, error) {
 	results := make([]TeamAnalysisResult, len(members))
-	var resultsMu sync.Mutex // Protect concurrent writes to results slice
-	semaphore := make(chan struct{}, 1) // 1 concurrent operation
 
 	// Initial delay to let rate limits reset
 	log.Printf("Waiting 5 seconds before starting team analysis...")
@@ -97,76 +94,50 @@ func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember)
 	case <-time.After(5 * time.Second):
 	}
 
-	// Process members one at a time
+	// Process members sequentially (one at a time)
 	for i := 0; i < len(members); i++ {
-		// Create a new context with timeout for this member
-		memberCtx, memberCancel := context.WithTimeout(ctx, 3*time.Minute)
-
-		var wg sync.WaitGroup
-
+		// Check parent context before processing each member
 		select {
-		case <-ctx.Done(): // Check parent context
-			memberCancel()
+		case <-ctx.Done():
+			// Mark remaining results as cancelled
+			for j := i; j < len(members); j++ {
+				results[j] = TeamAnalysisResult{
+					Name:            members[j].Name,
+					Role:            members[j].Role,
+					IsReal:          false,
+					HasStatedSkills: false,
+					Capability:      "Analysis cancelled",
+					VerifiedURLs:    []string{},
+				}
+			}
 			return results, ctx.Err()
 		default:
 		}
 
-		wg.Add(1)
-		go func(index int, m TeamMember) {
-			defer wg.Done()
+		// Create a new context with timeout for this member
+		memberCtx, memberCancel := context.WithTimeout(ctx, 3*time.Minute)
+		defer memberCancel()
 
-			select {
-			case semaphore <- struct{}{}:
-				defer func() { <-semaphore }()
-			case <-memberCtx.Done():
-				resultsMu.Lock()
-				results[index] = TeamAnalysisResult{
-					Name:            m.Name,
-					Role:            m.Role,
-					IsReal:          false,
-					HasStatedSkills: false,
-					Capability:      "Analysis timeout",
-					VerifiedURLs:    []string{},
-				}
-				resultsMu.Unlock()
-				return
-			}
-
-			log.Printf("Analyzing team member %d of %d: %s", index+1, len(members), m.Name)
-			result := a.analyzeSingleMember(memberCtx, m)
-			resultsMu.Lock()
-			results[index] = result
-			resultsMu.Unlock()
-		}(i, members[i])
-
-		// Wait for this member to complete
-		done := make(chan struct{})
-		go func() {
-			wg.Wait()
-			close(done)
-		}()
-
-		select {
-		case <-done:
-			// Member completed successfully
-		case <-memberCtx.Done():
-			// Member timeout
-			log.Printf("Team member %d analysis timed out", i+1)
-		case <-ctx.Done():
-			// Parent context cancelled - ensure goroutine completes
-			memberCancel()
-			// Wait for goroutine to finish before returning
-			<-done
-			return results, ctx.Err()
-		}
-
-		memberCancel()
+		log.Printf("Analyzing team member %d of %d: %s", i+1, len(members), members[i].Name)
+		result := a.analyzeSingleMember(memberCtx, members[i])
+		results[i] = result
 
 		// Wait 5 seconds between each member to avoid rate limiting
 		if i < len(members)-1 {
 			log.Printf("Waiting 5 seconds before next team member...")
 			select {
 			case <-ctx.Done():
+				// Mark remaining results as cancelled
+				for j := i + 1; j < len(members); j++ {
+					results[j] = TeamAnalysisResult{
+						Name:            members[j].Name,
+						Role:            members[j].Role,
+						IsReal:          false,
+						HasStatedSkills: false,
+						Capability:      "Analysis cancelled",
+						VerifiedURLs:    []string{},
+					}
+				}
 				return results, ctx.Err()
 			case <-time.After(5 * time.Second):
 			}

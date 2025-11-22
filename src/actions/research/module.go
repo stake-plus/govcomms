@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
-	aicore "github.com/stake-plus/govcomms/src/ai/core"
 	"github.com/stake-plus/govcomms/src/actions/core"
 	"github.com/stake-plus/govcomms/src/actions/research/components/claims"
 	"github.com/stake-plus/govcomms/src/actions/research/components/teams"
 	"github.com/stake-plus/govcomms/src/actions/team"
+	aicore "github.com/stake-plus/govcomms/src/ai/core"
 	cache "github.com/stake-plus/govcomms/src/cache"
 	sharedconfig "github.com/stake-plus/govcomms/src/config"
 	shareddiscord "github.com/stake-plus/govcomms/src/discord"
@@ -154,7 +154,8 @@ func (m *Module) Stop(ctx context.Context) {
 
 func (m *Module) initHandlers() {
 	m.session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
-		log.Printf("research: logged in as %s#%s", s.State.User.Username, s.State.User.Discriminator)
+		username := formatDiscordUsername(s.State.User.Username, s.State.User.Discriminator)
+		log.Printf("research: logged in as %s", username)
 		if err := shareddiscord.RegisterSlashCommands(s, m.cfg.Base.GuildID,
 			shareddiscord.CommandResearch,
 			shareddiscord.CommandTeam,
@@ -184,4 +185,12 @@ func (m *Module) initHandlers() {
 			m.teamHandler.HandleMessage(s, mCreate)
 		}
 	})
+}
+
+// formatDiscordUsername formats a Discord username, handling the deprecated discriminator field
+func formatDiscordUsername(username, discriminator string) string {
+	if discriminator == "" || discriminator == "0" {
+		return username
+	}
+	return fmt.Sprintf("%s#%s", username, discriminator)
 }

@@ -128,7 +128,8 @@ func (m *Module) Stop(ctx context.Context) {
 
 func (m *Module) initHandlers() {
 	m.session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
-		log.Printf("question: logged in as %s#%s", s.State.User.Username, s.State.User.Discriminator)
+		username := formatDiscordUsername(s.State.User.Username, s.State.User.Discriminator)
+		log.Printf("question: logged in as %s", username)
 		if err := shareddiscord.RegisterSlashCommands(s, m.cfg.Base.GuildID,
 			shareddiscord.CommandQuestion,
 			shareddiscord.CommandRefresh,
@@ -185,8 +186,16 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 			break
 		}
 	}
-	if len(question) < 5 {
+	const minQuestionLength = 5
+	const maxQuestionLength = 2000
+	if len(question) < minQuestionLength {
 		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "Please provide a valid question (at least 5 characters)."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
+		return
+	}
+	if len(question) > maxQuestionLength {
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, fmt.Sprintf("Question is too long (maximum %d characters).", maxQuestionLength)); err != nil {
 			log.Printf("question: failed to send error: %v", err)
 		}
 		return
@@ -251,7 +260,10 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 		Model:        aiCfg.AIModel,
 		SystemPrompt: m.buildRespondSystemPrompt(basePrompt, network.Name, threadInfo.RefID, content, qaContext),
 	}
-	providerInfo, _ := aicore.GetProviderInfo(aiCfg.AIProvider)
+	providerInfo, ok := aicore.GetProviderInfo(aiCfg.AIProvider)
+	if !ok {
+		log.Printf("question: provider info not found for %s", aiCfg.AIProvider)
+	}
 	modelDisplay := formatModelName(aiCfg.AIProvider, respondOpts.Model)
 
 	input := strings.TrimSpace(question)
@@ -726,13 +738,14 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 
 		claimResults := make([]cache.ClaimResult, 0, len(results))
 		for i, result := range results {
-			// Skip zero-value results (from cancelled/partial processing)
-			if result.Claim == "" && result.Status == "" && result.Evidence == "" {
-				continue
-			}
+			// Check bounds before accessing array
 			if i >= len(topClaims) {
 				log.Printf("question: silent research: result index %d out of bounds for claims (results=%d, topClaims=%d)", i, len(results), len(topClaims))
 				break
+			}
+			// Skip zero-value results (from cancelled/partial processing)
+			if result.Claim == "" && result.Status == "" && result.Evidence == "" {
+				continue
 			}
 			claim := topClaims[i]
 			claimResults = append(claimResults, cache.ClaimResult{
@@ -791,13 +804,14 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 
 		memberData := make([]cache.TeamMemberData, 0, len(results))
 		for i, result := range results {
-			// Skip zero-value results (from cancelled/partial processing)
-			if result.Name == "" && result.Role == "" && result.Capability == "" {
-				continue
-			}
+			// Check bounds before accessing array
 			if i >= len(members) {
 				log.Printf("question: silent research: result index %d out of bounds for members (results=%d, members=%d)", i, len(results), len(members))
 				break
+			}
+			// Skip zero-value results (from cancelled/partial processing)
+			if result.Name == "" && result.Role == "" && result.Capability == "" {
+				continue
 			}
 			member := members[i]
 			memberData = append(memberData, cache.TeamMemberData{
@@ -1098,6 +1112,14 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// formatDiscordUsername formats a Discord username, handling the deprecated discriminator field
+func formatDiscordUsername(username, discriminator string) string {
+	if discriminator == "" || discriminator == "0" {
+		return username
+	}
+	return fmt.Sprintf("%s#%s", username, discriminator)
 }
 
 // truncateToSentences truncates text to at most n sentences.

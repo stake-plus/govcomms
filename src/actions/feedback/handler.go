@@ -106,7 +106,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 		return
 	}
 
-	authorTag := fmt.Sprintf("%s#%s", user.User.Username, user.User.Discriminator)
+	authorTag := formatDiscordUsername(user.User.Username, user.User.Discriminator)
 
 	if _, err := data.SaveFeedbackMessage(h.DB, &ref, authorTag, message); err != nil {
 		log.Printf("feedback: failed to persist message: %v", err)
@@ -137,4 +137,12 @@ func respondFeedbackWithStyledEdit(s *discordgo.Session, interaction *discordgo.
 		edit.Components = &components
 	}
 	shareddiscord.InteractionResponseEditNoEmbed(s, interaction, edit)
+}
+
+// formatDiscordUsername formats a Discord username, handling the deprecated discriminator field
+func formatDiscordUsername(username, discriminator string) string {
+	if discriminator == "" || discriminator == "0" {
+		return username
+	}
+	return fmt.Sprintf("%s#%s", username, discriminator)
 }
