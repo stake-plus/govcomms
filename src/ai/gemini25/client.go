@@ -102,7 +102,10 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 	finalReminderSent := false
 	base64ReminderSent := false
 	toolsDisabled := false
+	forceFunctions := true
 	callSeq := 0
+	metadataHintSent := false
+	contentHintSent := false
 
 	hasPendingAttachments := func() bool {
 		for _, name := range attachmentNames {
@@ -139,7 +142,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			body["tools"] = toolDefs
 			if len(functionNames) > 0 {
 				mode := "AUTO"
-				if !(metadataFetched && contentFetched && !hasPendingAttachments()) {
+				if forceFunctions {
 					mode = "ANY"
 				}
 				fConfig := map[string]any{
@@ -256,6 +259,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 					},
 				})
 				stallCount = 0
+				forceFunctions = false
 			}
 		} else {
 			stallCount = 0
@@ -294,6 +298,25 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			})
 			finalReminderSent = true
 			toolsDisabled = true
+			forceFunctions = false
+		}
+
+		if contentFetched && !metadataFetched && !metadataHintSent {
+			contents = append(contents, geminiContent{
+				Role: "user",
+				Parts: []geminiPart{
+					{Text: "Retrieve the referendum metadata (resource:\"metadata\") so you know the title, proposer, and attachments before answering."},
+				},
+			})
+			metadataHintSent = true
+		} else if metadataFetched && !contentFetched && !contentHintSent {
+			contents = append(contents, geminiContent{
+				Role: "user",
+				Parts: []geminiPart{
+					{Text: "Retrieve the full referendum content (resource:\"content\") before answering."},
+				},
+			})
+			contentHintSent = true
 		}
 	}
 
