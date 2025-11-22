@@ -5,12 +5,78 @@ import (
 	"log"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/jung-kurt/gofpdf/v2"
 	"github.com/stake-plus/govcomms/src/actions/research/components/claims"
 	"github.com/stake-plus/govcomms/src/cache"
 	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 )
+
+// sanitizeTextForPDF converts UTF-8 special characters to ASCII equivalents
+// to avoid encoding issues in gofpdf
+func sanitizeTextForPDF(text string) string {
+	if text == "" {
+		return text
+	}
+	
+	var result strings.Builder
+	result.Grow(len(text))
+	
+	for _, r := range text {
+		switch r {
+		// Common UTF-8 characters that cause issues
+		case '\u2013': // en dash
+			result.WriteString("-")
+		case '\u2014': // em dash
+			result.WriteString("--")
+		case '\u2018': // left single quotation mark
+			result.WriteString("'")
+		case '\u2019': // right single quotation mark
+			result.WriteString("'")
+		case '\u201C': // left double quotation mark
+			result.WriteString("\"")
+		case '\u201D': // right double quotation mark
+			result.WriteString("\"")
+		case '\u2026': // horizontal ellipsis
+			result.WriteString("...")
+		case '\u00A0': // non-breaking space
+			result.WriteString(" ")
+		case '\u00AD': // soft hyphen
+			result.WriteString("-")
+		case '\u200B': // zero-width space
+			// Skip zero-width characters
+			continue
+		case '\u200C': // zero-width non-joiner
+			continue
+		case '\u200D': // zero-width joiner
+			continue
+		case '\uFEFF': // zero-width no-break space
+			continue
+		default:
+			// Keep printable ASCII and basic Latin characters
+			if r < 128 || unicode.IsPrint(r) {
+				result.WriteRune(r)
+			} else if unicode.IsSpace(r) {
+				result.WriteString(" ")
+			} else {
+				// Replace other non-ASCII characters with a safe fallback
+				result.WriteString("?")
+			}
+		}
+	}
+	
+	return result.String()
+}
+
+// Helper functions to sanitize text before adding to PDF
+func (g *Generator) cellFormat(pdf *gofpdf.Fpdf, w, h float64, txt, borderStr string, ln int, alignStr string, fill bool, link int, linkStr string) {
+	pdf.CellFormat(w, h, sanitizeTextForPDF(txt), borderStr, ln, alignStr, fill, link, linkStr)
+}
+
+func (g *Generator) multiCell(pdf *gofpdf.Fpdf, w, h float64, txt, borderStr, alignStr string, fill bool) {
+	pdf.MultiCell(w, h, sanitizeTextForPDF(txt), borderStr, alignStr, fill)
+}
 
 // Generator creates PDF reports for referendums
 type Generator struct {
@@ -206,7 +272,7 @@ func (g *Generator) addOverviewPage(pdf *gofpdf.Fpdf, data *ReportData) {
 
 	// Network and ID
 	pdf.SetFont("Arial", "B", 14)
-	pdf.CellFormat(0, 10, fmt.Sprintf("Network: %s", data.Network), "", 0, "L", false, 0, "")
+	g.cellFormat(pdf, 0, 10, fmt.Sprintf("Network: %s", data.Network), "", 0, "L", false, 0, "")
 	pdf.Ln(8)
 	pdf.CellFormat(0, 10, fmt.Sprintf("Referendum #%d", data.RefID), "", 0, "L", false, 0, "")
 	pdf.Ln(8)
@@ -216,7 +282,7 @@ func (g *Generator) addOverviewPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.CellFormat(0, 10, "Title:", "", 0, "L", false, 0, "")
 	pdf.Ln(6)
 	pdf.SetFont("Arial", "", 11)
-	pdf.MultiCell(0, 7, data.Title, "", "", false)
+	g.multiCell(pdf, 0, 7, data.Title, "", "", false)
 	pdf.Ln(10)
 
 	// Refreshed date
@@ -275,7 +341,7 @@ func (g *Generator) addSummaryPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.CellFormat(0, 10, "Background Context", "", 0, "L", false, 0, "")
 	pdf.Ln(8)
 	pdf.SetFont("Arial", "", 10)
-	pdf.MultiCell(0, 6, data.Summary.BackgroundContext, "", "", false)
+	g.multiCell(pdf, 0, 6, data.Summary.BackgroundContext, "", "", false)
 	pdf.Ln(10)
 
 	// Summary
@@ -283,7 +349,7 @@ func (g *Generator) addSummaryPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.CellFormat(0, 10, "Summary", "", 0, "L", false, 0, "")
 	pdf.Ln(8)
 	pdf.SetFont("Arial", "", 10)
-	pdf.MultiCell(0, 6, data.Summary.Summary, "", "", false)
+	g.multiCell(pdf, 0, 6, data.Summary.Summary, "", "", false)
 }
 
 func (g *Generator) addFinancialsPage(pdf *gofpdf.Fpdf, data *ReportData) {
@@ -302,7 +368,7 @@ func (g *Generator) addFinancialsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 
 	// Total Amount
 	pdf.SetFont("Arial", "B", 12)
-	pdf.CellFormat(0, 10, fmt.Sprintf("Total Requested: %s", data.Financials.TotalAmount), "", 0, "L", false, 0, "")
+		g.cellFormat(pdf, 0, 10, fmt.Sprintf("Total Requested: %s", data.Financials.TotalAmount), "", 0, "L", false, 0, "")
 	pdf.Ln(12)
 
 	// Budget Breakdown
@@ -312,12 +378,12 @@ func (g *Generator) addFinancialsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.Ln(8)
 		pdf.SetFont("Arial", "", 9)
 		for _, item := range data.Financials.Breakdown {
-			pdf.CellFormat(60, 7, item.Category, "", 0, "L", false, 0, "")
-			pdf.CellFormat(40, 7, item.Amount, "", 0, "R", false, 0, "")
+			g.cellFormat(pdf, 60, 7, item.Category, "", 0, "L", false, 0, "")
+			g.cellFormat(pdf, 40, 7, item.Amount, "", 0, "R", false, 0, "")
 			pdf.Ln(6)
 			if item.Purpose != "" {
 				pdf.SetFont("Arial", "I", 8)
-				pdf.MultiCell(0, 5, item.Purpose, "", "", false)
+				g.multiCell(pdf, 0, 5, item.Purpose, "", "", false)
 				pdf.SetFont("Arial", "", 9)
 				pdf.Ln(3)
 			}
@@ -333,14 +399,14 @@ func (g *Generator) addFinancialsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.SetFont("Arial", "", 9)
 		for _, milestone := range data.Financials.Milestones {
 			pdf.SetFont("Arial", "B", 9)
-			pdf.CellFormat(0, 7, milestone.Name, "", 0, "L", false, 0, "")
+			g.cellFormat(pdf, 0, 7, milestone.Name, "", 0, "L", false, 0, "")
 			pdf.Ln(5)
 			pdf.SetFont("Arial", "", 9)
-			pdf.CellFormat(60, 6, fmt.Sprintf("Amount: %s", milestone.Amount), "", 0, "L", false, 0, "")
-			pdf.CellFormat(0, 6, fmt.Sprintf("Timeline: %s", milestone.Timeline), "", 0, "L", false, 0, "")
+			g.cellFormat(pdf, 60, 6, fmt.Sprintf("Amount: %s", milestone.Amount), "", 0, "L", false, 0, "")
+			g.cellFormat(pdf, 0, 6, fmt.Sprintf("Timeline: %s", milestone.Timeline), "", 0, "L", false, 0, "")
 			pdf.Ln(5)
 			if milestone.Deliverable != "" {
-				pdf.MultiCell(0, 5, fmt.Sprintf("Deliverable: %s", milestone.Deliverable), "", "", false)
+				g.multiCell(pdf, 0, 5, fmt.Sprintf("Deliverable: %s", milestone.Deliverable), "", "", false)
 				pdf.Ln(3)
 			}
 		}
@@ -353,7 +419,7 @@ func (g *Generator) addFinancialsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.CellFormat(0, 8, "Expected ROI/Value", "", 0, "L", false, 0, "")
 		pdf.Ln(8)
 		pdf.SetFont("Arial", "", 9)
-		pdf.MultiCell(0, 6, data.Financials.ROI, "", "", false)
+		g.multiCell(pdf, 0, 6, data.Financials.ROI, "", "", false)
 	}
 
 	// Concerns
@@ -367,7 +433,7 @@ func (g *Generator) addFinancialsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.SetFont("Arial", "", 9)
 		for _, concern := range data.Financials.Concerns {
 			pdf.CellFormat(5, 6, "-", "", 0, "L", false, 0, "")
-			pdf.MultiCell(0, 6, concern, "", "", false)
+			g.multiCell(pdf, 0, 6, concern, "", "", false)
 			pdf.Ln(2)
 		}
 	}
@@ -387,11 +453,11 @@ func (g *Generator) addTeamPages(pdf *gofpdf.Fpdf, data *ReportData) {
 
 		// Name and Role
 		pdf.SetFont("Arial", "B", 14)
-		pdf.CellFormat(0, 10, member.Name, "", 0, "L", false, 0, "")
+		g.cellFormat(pdf, 0, 10, member.Name, "", 0, "L", false, 0, "")
 		pdf.Ln(8)
 		if member.Role != "" {
 			pdf.SetFont("Arial", "", 11)
-			pdf.CellFormat(0, 8, fmt.Sprintf("Role: %s", member.Role), "", 0, "L", false, 0, "")
+			g.cellFormat(pdf, 0, 8, fmt.Sprintf("Role: %s", member.Role), "", 0, "L", false, 0, "")
 			pdf.Ln(10)
 		}
 
@@ -435,7 +501,7 @@ func (g *Generator) addTeamPages(pdf *gofpdf.Fpdf, data *ReportData) {
 			pdf.CellFormat(0, 8, "Capability Assessment", "", 0, "L", false, 0, "")
 			pdf.Ln(8)
 			pdf.SetFont("Arial", "", 9)
-			pdf.MultiCell(0, 6, member.Capability, "", "", false)
+			g.multiCell(pdf, 0, 6, member.Capability, "", "", false)
 			pdf.Ln(8)
 		}
 
@@ -506,10 +572,10 @@ func (g *Generator) addClaimsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.SetFont("Arial", "", 9)
 		for _, claim := range valid {
 			pdf.CellFormat(5, 6, "-", "", 0, "L", false, 0, "")
-			pdf.MultiCell(0, 6, claim.Claim, "", "", false)
+			g.multiCell(pdf, 0, 6, claim.Claim, "", "", false)
 			if claim.Evidence != "" {
 				pdf.SetFont("Arial", "I", 8)
-				pdf.MultiCell(0, 5, fmt.Sprintf("Evidence: %s", claim.Evidence), "", "", false)
+				g.multiCell(pdf, 0, 5, fmt.Sprintf("Evidence: %s", claim.Evidence), "", "", false)
 				pdf.SetFont("Arial", "", 9)
 			}
 			pdf.Ln(3)
@@ -527,10 +593,10 @@ func (g *Generator) addClaimsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.SetFont("Arial", "", 9)
 		for _, claim := range invalid {
 			pdf.CellFormat(5, 6, "-", "", 0, "L", false, 0, "")
-			pdf.MultiCell(0, 6, claim.Claim, "", "", false)
+			g.multiCell(pdf, 0, 6, claim.Claim, "", "", false)
 			if claim.Evidence != "" {
 				pdf.SetFont("Arial", "I", 8)
-				pdf.MultiCell(0, 5, fmt.Sprintf("Reason: %s", claim.Evidence), "", "", false)
+				g.multiCell(pdf, 0, 5, fmt.Sprintf("Reason: %s", claim.Evidence), "", "", false)
 				pdf.SetFont("Arial", "", 9)
 			}
 			pdf.Ln(3)
@@ -548,7 +614,7 @@ func (g *Generator) addClaimsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.SetFont("Arial", "", 9)
 		for _, claim := range unknown {
 			pdf.CellFormat(5, 6, "-", "", 0, "L", false, 0, "")
-			pdf.MultiCell(0, 6, claim.Claim, "", "", false)
+			g.multiCell(pdf, 0, 6, claim.Claim, "", "", false)
 			pdf.Ln(3)
 		}
 	}
@@ -578,7 +644,7 @@ func (g *Generator) addPositiveAnalysisPage(pdf *gofpdf.Fpdf, data *ReportData) 
 		pdf.SetFont("Arial", "", 9)
 		for _, strength := range data.Positive.Strengths {
 			pdf.CellFormat(5, 6, "-", "", 0, "L", false, 0, "")
-			pdf.MultiCell(0, 6, strength, "", "", false)
+			g.multiCell(pdf, 0, 6, strength, "", "", false)
 			pdf.Ln(3)
 		}
 		pdf.Ln(8)
@@ -592,7 +658,7 @@ func (g *Generator) addPositiveAnalysisPage(pdf *gofpdf.Fpdf, data *ReportData) 
 		pdf.SetFont("Arial", "", 9)
 		for _, opp := range data.Positive.Opportunities {
 			pdf.CellFormat(5, 6, "-", "", 0, "L", false, 0, "")
-			pdf.MultiCell(0, 6, opp, "", "", false)
+			g.multiCell(pdf, 0, 6, opp, "", "", false)
 			pdf.Ln(3)
 		}
 		pdf.Ln(8)
@@ -604,7 +670,7 @@ func (g *Generator) addPositiveAnalysisPage(pdf *gofpdf.Fpdf, data *ReportData) 
 		pdf.CellFormat(0, 10, "Value Proposition", "", 0, "L", false, 0, "")
 		pdf.Ln(10)
 		pdf.SetFont("Arial", "", 9)
-		pdf.MultiCell(0, 6, data.Positive.ValueProposition, "", "", false)
+		g.multiCell(pdf, 0, 6, data.Positive.ValueProposition, "", "", false)
 		pdf.Ln(8)
 	}
 
@@ -616,7 +682,7 @@ func (g *Generator) addPositiveAnalysisPage(pdf *gofpdf.Fpdf, data *ReportData) 
 		pdf.SetFont("Arial", "", 9)
 		for _, innovation := range data.Positive.Innovation {
 			pdf.CellFormat(5, 6, "-", "", 0, "L", false, 0, "")
-			pdf.MultiCell(0, 6, innovation, "", "", false)
+			g.multiCell(pdf, 0, 6, innovation, "", "", false)
 			pdf.Ln(3)
 		}
 	}
@@ -646,7 +712,7 @@ func (g *Generator) addSteelManningPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.SetFont("Arial", "", 9)
 		for _, concern := range data.SteelManning.Concerns {
 			pdf.CellFormat(5, 6, "-", "", 0, "L", false, 0, "")
-			pdf.MultiCell(0, 6, concern, "", "", false)
+			g.multiCell(pdf, 0, 6, concern, "", "", false)
 			pdf.Ln(3)
 		}
 		pdf.Ln(8)
@@ -660,7 +726,7 @@ func (g *Generator) addSteelManningPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.SetFont("Arial", "", 9)
 		for _, weakness := range data.SteelManning.Weaknesses {
 			pdf.CellFormat(5, 6, "-", "", 0, "L", false, 0, "")
-			pdf.MultiCell(0, 6, weakness, "", "", false)
+			g.multiCell(pdf, 0, 6, weakness, "", "", false)
 			pdf.Ln(3)
 		}
 		pdf.Ln(8)
@@ -676,7 +742,7 @@ func (g *Generator) addSteelManningPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.SetFont("Arial", "", 9)
 		for _, flag := range data.SteelManning.RedFlags {
 			pdf.CellFormat(5, 6, "⚠", "", 0, "L", false, 0, "")
-			pdf.MultiCell(0, 6, flag, "", "", false)
+			g.multiCell(pdf, 0, 6, flag, "", "", false)
 			pdf.Ln(3)
 		}
 		pdf.Ln(8)
@@ -690,7 +756,7 @@ func (g *Generator) addSteelManningPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.SetFont("Arial", "", 9)
 		for _, alt := range data.SteelManning.Alternatives {
 			pdf.CellFormat(5, 6, "-", "", 0, "L", false, 0, "")
-			pdf.MultiCell(0, 6, alt, "", "", false)
+			g.multiCell(pdf, 0, 6, alt, "", "", false)
 			pdf.Ln(3)
 		}
 	}
@@ -724,13 +790,13 @@ func (g *Generator) addRecommendationsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		verdictColor = 0x000000 // Black
 	}
 	pdf.SetTextColor(verdictColor>>16, (verdictColor>>8)&0xFF, verdictColor&0xFF)
-	pdf.CellFormat(0, 12, fmt.Sprintf("Verdict: %s", strings.ToUpper(data.Recommendations.Verdict)), "", 0, "L", false, 0, "")
+		g.cellFormat(pdf, 0, 12, fmt.Sprintf("Verdict: %s", strings.ToUpper(data.Recommendations.Verdict)), "", 0, "L", false, 0, "")
 	pdf.Ln(12)
 	pdf.SetTextColor(0, 0, 0)
 
 	// Confidence
 	pdf.SetFont("Arial", "B", 11)
-	pdf.CellFormat(0, 10, fmt.Sprintf("Confidence: %s", data.Recommendations.Confidence), "", 0, "L", false, 0, "")
+	g.cellFormat(pdf, 0, 10, fmt.Sprintf("Confidence: %s", data.Recommendations.Confidence), "", 0, "L", false, 0, "")
 	pdf.Ln(12)
 
 	// Reasoning
@@ -738,7 +804,7 @@ func (g *Generator) addRecommendationsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.CellFormat(0, 10, "Reasoning", "", 0, "L", false, 0, "")
 	pdf.Ln(8)
 	pdf.SetFont("Arial", "", 9)
-	pdf.MultiCell(0, 6, data.Recommendations.Reasoning, "", "", false)
+		g.multiCell(pdf, 0, 6, data.Recommendations.Reasoning, "", "", false)
 	pdf.Ln(10)
 
 	// Key Points
@@ -749,7 +815,7 @@ func (g *Generator) addRecommendationsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.SetFont("Arial", "", 9)
 		for _, point := range data.Recommendations.KeyPoints {
 			pdf.CellFormat(5, 6, "-", "", 0, "L", false, 0, "")
-			pdf.MultiCell(0, 6, point, "", "", false)
+			g.multiCell(pdf, 0, 6, point, "", "", false)
 			pdf.Ln(3)
 		}
 		pdf.Ln(8)
@@ -763,7 +829,7 @@ func (g *Generator) addRecommendationsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		pdf.SetFont("Arial", "", 9)
 		for _, condition := range data.Recommendations.Conditions {
 			pdf.CellFormat(5, 6, "-", "", 0, "L", false, 0, "")
-			pdf.MultiCell(0, 6, condition, "", "", false)
+			g.multiCell(pdf, 0, 6, condition, "", "", false)
 			pdf.Ln(3)
 		}
 	}
