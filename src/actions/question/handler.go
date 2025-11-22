@@ -424,10 +424,7 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 		userID = interaction.User.ID
 	}
 
-	title := "Question"
-	if questionTitle := strings.TrimSpace(question); questionTitle != "" {
-		title = fmt.Sprintf("Question: %s", questionTitle)
-	}
+	title := "Answer"
 
 	answerCleaned, refs := shareddiscord.ReplaceURLsAndCollect(message)
 	if strings.TrimSpace(answerCleaned) == "" {
@@ -505,6 +502,6 @@ func buildQuestionResponseBody(provider, model, question, answer string) string 
 	if strings.TrimSpace(answer) == "" {
 		answer = "_No content_"
 	}
-	return fmt.Sprintf("Provider: %s\nAI Model: %s\n\nUser Question: %s\n\nAnswer:\n\n%s",
+	return fmt.Sprintf("Provider: %s\nAI Model: %s\n\nQuestion: %s\n\nAnswer:\n\n%s",
 		provider, model, questionText, answer)
 }
