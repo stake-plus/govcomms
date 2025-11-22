@@ -1284,11 +1284,11 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 			// Convert history to bullet points (max 3, each indented 4 spaces)
 			historyBullets := historyToBulletPoints(member.History, 3)
 
-			teamContentBuilder.WriteString(fmt.Sprintf("Name: %s Role: %s\n", member.Name, member.Role))
-			teamContentBuilder.WriteString(fmt.Sprintf("Real: %s\nSkilled: %s\n", isRealMark, hasSkillsMark))
-			teamContentBuilder.WriteString("History:\n")
+			teamContentBuilder.WriteString(fmt.Sprintf("Name: %s\n  Role: %s\n", member.Name, member.Role))
+			teamContentBuilder.WriteString(fmt.Sprintf("  Real: %s\n  Skilled: %s\n", isRealMark, hasSkillsMark))
+			teamContentBuilder.WriteString("  History:\n")
 			if historyBullets != "" {
-				teamContentBuilder.WriteString(historyBullets)
+				teamContentBuilder.WriteString(fmt.Sprintf("  %s\n", historyBullets))
 			} else {
 				teamContentBuilder.WriteString("    • No history available\n")
 			}
