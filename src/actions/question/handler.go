@@ -1249,16 +1249,16 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 	if len(summary.TeamMembers) > 0 {
 		teamContentBuilder.WriteString("Team Breakdown 📊\n\n")
 		if realWithSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("✅ Verified + Skilled: %d\n", realWithSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("✅ **Verified + Skilled:** %d of %d\n", realWithSkills, realWithSkills+realNoSkills+notRealWithSkills+notRealNoSkills))
 		}
 		if realNoSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("⚠️ Verified + UnSkilled: %d\n", realNoSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("⚠️ **Verified + UnSkilled:** %d of %d\n", realNoSkills, realWithSkills+realNoSkills+notRealWithSkills+notRealNoSkills))
 		}
 		if notRealWithSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("⚠️ Unverified + Skilled: %d\n", notRealWithSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("⚠️ **Unverified + Skilled:** %d of %d\n", notRealWithSkills, realWithSkills+realNoSkills+notRealWithSkills+notRealNoSkills))
 		}
 		if notRealNoSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("❌ Unverified + Unskilled: %d\n", notRealNoSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("❌ **Unverified + Unskilled:** %d of %d\n", notRealNoSkills, realWithSkills+realNoSkills+notRealWithSkills+notRealNoSkills))
 		}
 		teamContentBuilder.WriteString("\n\n")
 	}
@@ -1284,13 +1284,13 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 			// Convert history to bullet points (max 3, each indented 4 spaces)
 			historyBullets := historyToBulletPoints(member.History, 3)
 
-			teamContentBuilder.WriteString(fmt.Sprintf("Name: %s\n  Role: %s\n", member.Name, member.Role))
-			teamContentBuilder.WriteString(fmt.Sprintf("  Real: %s\n  Skilled: %s\n", isRealMark, hasSkillsMark))
-			teamContentBuilder.WriteString("  History:\n")
+			teamContentBuilder.WriteString(fmt.Sprintf("  **Name:** %s\n  **Role:** %s\n", member.Name, member.Role))
+			teamContentBuilder.WriteString(fmt.Sprintf("  **Real:** %s\n  **Skilled:** %s\n", isRealMark, hasSkillsMark))
+			teamContentBuilder.WriteString("  **History:**\n")
 			if historyBullets != "" {
 				teamContentBuilder.WriteString(fmt.Sprintf("  %s\n", historyBullets))
 			} else {
-				teamContentBuilder.WriteString("    • No history available\n")
+				teamContentBuilder.WriteString("  • No history available\n")
 			}
 		}
 	} else {
