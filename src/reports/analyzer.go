@@ -697,6 +697,79 @@ func (a *Analyzer) extractJSON(response string, target interface{}) error {
 	}
 	
 	jsonStr := response[startIdx : endIdx+1]
-	return json.Unmarshal([]byte(jsonStr), target)
+	
+	// Clean the JSON string to fix common issues
+	jsonStr = a.cleanJSONString(jsonStr)
+	
+	// Try to parse
+	err := json.Unmarshal([]byte(jsonStr), target)
+	if err != nil {
+		// Log a snippet of the problematic JSON for debugging (first 500 chars)
+		snippet := jsonStr
+		if len(snippet) > 500 {
+			snippet = snippet[:500] + "..."
+		}
+		log.Printf("reports: JSON parse error, snippet: %s", snippet)
+		return fmt.Errorf("JSON parse error: %w", err)
+	}
+	
+	return nil
+}
+
+// cleanJSONString attempts to fix common JSON issues like unescaped newlines in strings
+func (a *Analyzer) cleanJSONString(jsonStr string) string {
+	// This is a simple approach - try to escape newlines within string values
+	// We'll look for patterns like: "key": "value\nwith newline"
+	var result strings.Builder
+	inString := false
+	escapeNext := false
+	
+	for i, r := range jsonStr {
+		if escapeNext {
+			result.WriteRune(r)
+			escapeNext = false
+			continue
+		}
+		
+		if r == '\\' {
+			result.WriteRune(r)
+			escapeNext = true
+			continue
+		}
+		
+		if r == '"' {
+			// Check if this is an escaped quote
+			if i > 0 && jsonStr[i-1] == '\\' {
+				result.WriteRune(r)
+				continue
+			}
+			inString = !inString
+			result.WriteRune(r)
+			continue
+		}
+		
+		if inString {
+			// Inside a string, escape newlines and other problematic characters
+			switch r {
+			case '\n':
+				result.WriteString("\\n")
+			case '\r':
+				result.WriteString("\\r")
+			case '\t':
+				result.WriteString("\\t")
+			case '\u0000': // Null byte
+				result.WriteString("\\u0000")
+			default:
+				// Only write printable characters or valid escape sequences
+				if r >= 32 || r == '\t' || r == '\n' || r == '\r' {
+					result.WriteRune(r)
+				}
+			}
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	
+	return result.String()
 }
 
