@@ -29,11 +29,11 @@ const (
 	defaultRetryAttempts  = 3
 	defaultRetryBackoff   = 2 * time.Second
 	maxToolIterations     = 20
+	maxAttachmentFetches  = 6
 	minTopP               = 0.01
 	maxTopP               = 1.0
 	minTopK               = 1
 	maxTopK               = 500
-	metadataApplication   = "govcomms"
 )
 
 const (
@@ -51,6 +51,7 @@ type client struct {
 	defaults   core.Options
 	topP       float64
 	topK       int
+	useTopP    bool
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
@@ -58,7 +59,12 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 		return nil, fmt.Errorf("opus-4.1: Claude API key not configured")
 	}
 
-	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
+	topP := defaultTopP
+	useTopP := false
+	if _, ok := cfg.Extra[extraTopPKey]; ok {
+		topP = core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
+		useTopP = true
+	}
 	topK := core.ExtraInt(cfg.Extra, extraTopKKey, defaultTopK)
 	if topK < minTopK {
 		topK = minTopK
@@ -76,8 +82,9 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 			SystemPrompt:        cfg.SystemPrompt,
 			EnableWebSearch:     core.ExtraBool(cfg.Extra, "enable_web_search", false),
 		},
-		topP: topP,
-		topK: topK,
+		topP:   topP,
+		topK:   topK,
+		useTopP: useTopP,
 	}, nil
 }
 
@@ -118,6 +125,9 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 	historyFetched := false
 	attachmentNames := []string{}
 	attachmentsRetrieved := map[string]bool{}
+	attachmentFetches := 0
+	attachmentLimitHit := false
+	attachmentLimitNotified := false
 	finalReminderSent := false
 	base64ReminderSent := false
 	historyReminderSent := false
@@ -143,14 +153,11 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 
 	for iteration := 0; iteration < maxToolIterations; iteration++ {
 		reqBody := map[string]any{
-			"model":       opts.Model,
-			"messages":    messages,
-			"max_tokens":  maxTokens,
-			"temperature": opts.Temperature,
-			"top_p":       c.topP,
-			"top_k":       c.topK,
-			"metadata":    requestMetadata(),
+			"model":      opts.Model,
+			"messages":   messages,
+			"max_tokens": maxTokens,
 		}
+		c.applySampling(reqBody, opts.Temperature)
 		if strings.TrimSpace(opts.SystemPrompt) != "" {
 			reqBody["system"] = opts.SystemPrompt
 		}
@@ -221,11 +228,19 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 		callOutputs := make(map[string]string, len(convertedCalls))
 		pendingCalls := make([]openAIToolCall, 0, len(convertedCalls))
 		pendingKeys := make(map[string]string, len(convertedCalls))
+		skippedCalls := make(map[string]bool, len(convertedCalls))
 
 		for _, call := range convertedCalls {
 			key := toolCacheKey(call)
 			if val, ok := toolCache[key]; ok {
 				callOutputs[call.ID] = val
+				continue
+			}
+			resType := normalizeResource(resourceFromToolCall(call))
+			if resType == "attachments" && attachmentFetches >= maxAttachmentFetches {
+				callOutputs[call.ID] = attachmentLimitToolResult(attachmentFileFromCall(call))
+				skippedCalls[call.ID] = true
+				attachmentLimitHit = true
 				continue
 			}
 			pendingCalls = append(pendingCalls, call)
@@ -276,6 +291,18 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 				}
 			case "attachments":
 				fileArg := attachmentFileFromCall(call)
+				if skippedCalls[call.ID] {
+					if len(attachmentNames) > 0 {
+						markAllAttachmentsRetrieved(attachmentNames, attachmentsRetrieved)
+					} else if fileArg != "" {
+						attachmentsRetrieved[fileArg] = true
+					}
+					continue
+				}
+				attachmentFetches++
+				if attachmentFetches >= maxAttachmentFetches {
+					attachmentLimitHit = true
+				}
 				if fileArg != "" {
 					attachmentsRetrieved[fileArg] = true
 				}
@@ -288,6 +315,19 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 			Role:    "user",
 			Content: toolResultBlocks,
 		})
+		if attachmentLimitHit && !attachmentLimitNotified {
+			messages = append(messages, anthropicMessage{
+				Role: "user",
+				Content: []anthropicContentBlock{
+					textBlock("Token budget is limited, so additional attachments will not be retrieved. Use the metadata and attachments already downloaded to finish your analysis."),
+				},
+			})
+			attachmentLimitHit = false
+			attachmentLimitNotified = true
+			if len(attachmentNames) > 0 {
+				markAllAttachmentsRetrieved(attachmentNames, attachmentsRetrieved)
+			}
+		}
 
 		if !pendingCallExecuted {
 			stallCount++
@@ -361,13 +401,9 @@ func (c *client) invoke(ctx context.Context, opts core.Options, input string, to
 	}
 
 	body := map[string]interface{}{
-		"model":       opts.Model,
-		"system":      opts.SystemPrompt,
-		"max_tokens":  maxTokens,
-		"temperature": opts.Temperature,
-		"top_p":       c.topP,
-		"top_k":       c.topK,
-		"metadata":    requestMetadata(),
+		"model":      opts.Model,
+		"system":     opts.SystemPrompt,
+		"max_tokens": maxTokens,
 		"messages": []map[string]interface{}{
 			{
 				"role": "user",
@@ -377,6 +413,7 @@ func (c *client) invoke(ctx context.Context, opts core.Options, input string, to
 			},
 		},
 	}
+	c.applySampling(body, opts.Temperature)
 
 	bodyBytes, _ := json.Marshal(body)
 	_, payload, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
@@ -457,10 +494,30 @@ func shouldEnableWebSearch(opts core.Options, tools []core.Tool) bool {
 	return false
 }
 
-func requestMetadata() map[string]string {
-	return map[string]string{
-		"application": metadataApplication,
-		"provider":    providerKey,
+func markAllAttachmentsRetrieved(names []string, retrieved map[string]bool) {
+	for _, name := range names {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		retrieved[name] = true
+	}
+}
+
+func attachmentLimitToolResult(file string) string {
+	if strings.TrimSpace(file) == "" {
+		return "Attachment skipped: token budget is limited. Continue with the metadata and attachments already downloaded."
+	}
+	return fmt.Sprintf("Attachment %s skipped: token budget is limited. Continue with the metadata and attachments already downloaded.", file)
+}
+
+func (c *client) applySampling(target map[string]any, temperature float64) {
+	target["top_k"] = c.topK
+	if c.useTopP {
+		target["top_p"] = c.topP
+		return
+	}
+	if temperature > 0 {
+		target["temperature"] = temperature
 	}
 }
 
