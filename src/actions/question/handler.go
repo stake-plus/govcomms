@@ -1096,7 +1096,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Section 1: Background Context & Summary (grouped together)
 	var contextSummaryBuilder strings.Builder
-	contextSummaryBuilder.WriteString(fmt.Sprintf("\n\n%s Referendum #%d\n%s\n\n", summary.Network, summary.RefID, channelTitle))
+	contextSummaryBuilder.WriteString(fmt.Sprintf("%s\n\n", channelTitle))
 	contextSummaryBuilder.WriteString("📖 Background Context\n\n")
 	contextSummaryBuilder.WriteString(summary.BackgroundContext)
 	contextSummaryBuilder.WriteString("\n\n")
@@ -1296,7 +1296,9 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 		teamContentBuilder.WriteString("No team members found\n")
 	}
 
-	teamText := teamContentBuilder.String()
+	teamPrefix := ""
+	teamContent := teamContentBuilder.String()
+	teamText := teamPrefix + teamContent
 
 	if len(teamText) > maxChars {
 		chunks := splitLongText(teamPrefix, teamContent, maxChars)
