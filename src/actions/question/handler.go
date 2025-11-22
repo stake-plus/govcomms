@@ -496,10 +496,7 @@ func buildQuestionResponseBody(providerInfo aicore.ProviderInfo, model, question
 	if providerCompany == "" {
 		providerCompany = "unknown"
 	}
-	providerWebsite := providerInfo.Website
-	if providerWebsite == "" {
-		providerWebsite = "unknown"
-	}
-	return fmt.Sprintf("Provider: %s    Model: %s    Website: %s\n\nQuestion: %s\n\nAnswer:\n\n%s",
-		providerCompany, model, providerWebsite, questionText, answer)
+
+	return fmt.Sprintf("Provider: %s    Model: %s\n\nQuestion: %s\n\nAnswer:\n\n%s",
+		providerCompany, model, questionText, answer)
 }
