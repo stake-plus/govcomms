@@ -19,12 +19,15 @@ func StartAll(ctx context.Context, db *gorm.DB) (*Manager, error) {
 	// Initialize reports module first (if enabled) so we can pass it to question module
 	var reportsMod *reportsmodule.Module
 	reportsCfg := sharedconfig.LoadReportsConfig(db)
+	log.Printf("actions: reports module config - Enabled: %v, TempDir: %s", reportsCfg.Enabled, reportsCfg.TempDir)
 	if reportsCfg.Enabled {
 		mod, err := reportsmodule.NewModule(&reportsCfg, db)
 		if err != nil {
+			log.Printf("actions: reports module initialization failed: %v", err)
 			return nil, fmt.Errorf("actions: init reports module: %w", err)
 		}
 		reportsMod = mod
+		log.Printf("actions: reports module initialized successfully")
 		if err := mgr.Add(mod); err != nil {
 			return nil, fmt.Errorf("actions: add reports module: %w", err)
 		}
@@ -38,8 +41,10 @@ func StartAll(ctx context.Context, db *gorm.DB) (*Manager, error) {
 		var mod *questionmodule.Module
 		var err error
 		if reportsMod != nil {
+			log.Printf("actions: passing reports module to question module")
 			mod, err = questionmodule.NewModuleWithReports(&qaCfg, db, reportsMod)
 		} else {
+			log.Printf("actions: reports module not available, creating question module without reports")
 			mod, err = questionmodule.NewModule(&qaCfg, db)
 		}
 		if err != nil {

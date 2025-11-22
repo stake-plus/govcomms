@@ -59,6 +59,12 @@ func NewModuleWithReports(cfg *sharedconfig.QAConfig, db *gorm.DB, reportsGen Re
 		return nil, fmt.Errorf("qa config is nil")
 	}
 
+	if reportsGen == nil {
+		log.Printf("question: NewModuleWithReports called with nil reportsGen")
+	} else {
+		log.Printf("question: NewModuleWithReports called with reports generator")
+	}
+
 	session, err := discordgo.New("Bot " + cfg.Base.Token)
 	if err != nil {
 		return nil, fmt.Errorf("question: discord session: %w", err)
@@ -87,7 +93,7 @@ func NewModuleWithReports(cfg *sharedconfig.QAConfig, db *gorm.DB, reportsGen Re
 
 	mcpCfg := sharedconfig.LoadMCPConfig(db)
 
-	return &Module{
+	module := &Module{
 		cfg:             cfg,
 		db:              db,
 		session:         session,
@@ -99,7 +105,16 @@ func NewModuleWithReports(cfg *sharedconfig.QAConfig, db *gorm.DB, reportsGen Re
 		mcpBaseURL:      mcpCfg.Listen,
 		mcpAuthToken:    mcpCfg.AuthToken,
 		responseTimeout: defaultInteractionTimeout,
-	}, nil
+		reportsGen:      reportsGen,
+	}
+
+	if module.reportsGen == nil {
+		log.Printf("question: module created with nil reportsGen")
+	} else {
+		log.Printf("question: module created with reports generator")
+	}
+
+	return module, nil
 }
 
 // Name implements actions.Module.
