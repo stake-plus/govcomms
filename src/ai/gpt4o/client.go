@@ -1,4 +1,4 @@
-package gpt51
+package gpt4o
 
 import (
 	"bytes"
@@ -18,7 +18,7 @@ import (
 )
 
 func init() {
-	core.RegisterProvider("gpt51", newClient)
+	core.RegisterProvider("gpt4o", newClient)
 }
 
 type client struct {
@@ -29,14 +29,14 @@ type client struct {
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
 	if cfg.OpenAIKey == "" {
-		return nil, fmt.Errorf("gpt51: OpenAI API key not configured")
+		return nil, fmt.Errorf("gpt4o: OpenAI API key not configured")
 	}
 
 	return &client{
 		apiKey:     cfg.OpenAIKey,
 		httpClient: webclient.NewDefault(240 * time.Second),
 		defaults: core.Options{
-			Model:               valueOrDefault(cfg.Model, "gpt-5.1"),
+			Model:               valueOrDefault(cfg.Model, "gpt-4o"),
 			Temperature:         orFloat(cfg.Temperature, 1),
 			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, 16000),
 			SystemPrompt:        cfg.SystemPrompt,
@@ -79,7 +79,7 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 		return resp.StatusCode, b, nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("gpt51 API error: %w", err)
+		return "", fmt.Errorf("gpt4o API error: %w", err)
 	}
 	var result struct {
 		Choices []struct {
@@ -143,11 +143,11 @@ func (c *client) executeToolCalls(ctx context.Context, calls []openAIToolCall, t
 	for _, call := range calls {
 		toolDef, ok := toolMap[call.Function.Name]
 		if !ok {
-			return nil, fmt.Errorf("gpt51: unknown tool %s", call.Function.Name)
+			return nil, fmt.Errorf("gpt4o: unknown tool %s", call.Function.Name)
 		}
 		args, err := decodeToolArguments(call.Function.Arguments)
 		if err != nil {
-			log.Printf("gpt51: tool %s arg parse error: %v", call.Function.Name, err)
+			log.Printf("gpt4o: tool %s arg parse error: %v", call.Function.Name, err)
 			outputs = append(outputs, toolOutput{
 				ToolCallID: call.ID,
 				Output:     fmt.Sprintf(`{"error":"invalid arguments: %s"}`, sanitizeToolError(err)),
@@ -156,13 +156,13 @@ func (c *client) executeToolCalls(ctx context.Context, calls []openAIToolCall, t
 		}
 		rawArgs := copyArgs(args)
 		args = mergeArgs(args, toolDef.Defaults)
-		log.Printf("gpt51: tool call %s raw=%v merged=%v", call.Function.Name, rawArgs, args)
+		log.Printf("gpt4o: tool call %s raw=%v merged=%v", call.Function.Name, rawArgs, args)
 		result, execErr := c.dispatchTool(ctx, toolDef, args)
 		if execErr != nil {
-			log.Printf("gpt51: tool %s error: %v", call.Function.Name, execErr)
+			log.Printf("gpt4o: tool %s error: %v", call.Function.Name, execErr)
 			result = fmt.Sprintf(`{"error":"%s"}`, sanitizeToolError(execErr))
 		}
-		log.Printf("gpt51: tool %s output=%s", call.Function.Name, truncatePayload([]byte(result), 256))
+		log.Printf("gpt4o: tool %s output=%s", call.Function.Name, truncatePayload([]byte(result), 256))
 		outputs = append(outputs, toolOutput{
 			ToolCallID: call.ID,
 			Output:     result,
@@ -397,7 +397,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			return resp.StatusCode, b, nil
 		})
 		if err != nil {
-			return "", fmt.Errorf("gpt51 chat fallback error: %w", err)
+			return "", fmt.Errorf("gpt4o chat fallback error: %w", err)
 		}
 
 		var resp chatCompletionResponse
@@ -405,7 +405,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			return "", err
 		}
 		if len(resp.Choices) == 0 {
-			return "", fmt.Errorf("gpt51: chat completion returned no choices")
+			return "", fmt.Errorf("gpt4o: chat completion returned no choices")
 		}
 		msg := resp.Choices[0].Message
 
@@ -535,7 +535,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 		}
 	}
 
-	return "", fmt.Errorf("gpt51: chat tool loop exceeded")
+	return "", fmt.Errorf("gpt4o: chat tool loop exceeded")
 }
 
 func buildChatToolsPayload(tools []core.Tool) ([]map[string]any, map[string]core.Tool, string) {
