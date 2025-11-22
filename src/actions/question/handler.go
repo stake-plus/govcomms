@@ -1161,16 +1161,16 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 	if len(summary.TeamMembers) > 0 {
 		teamContentBuilder.WriteString("Team Breakdown 📊\n\n")
 		if realWithSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("Real & Skilled: ✅ %d\n", realWithSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("✅ Verified + Skilled: %d\n", realWithSkills))
 		}
 		if realNoSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("Real & Unskilled: ⚠️ %d\n", realNoSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("⚠️ Verified + UnSkilled: %d\n", realNoSkills))
 		}
 		if notRealWithSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("Fake & Skilled: ⚠️ %d\n", notRealWithSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("⚠️ Unverified + Skilled: %d\n", notRealWithSkills))
 		}
 		if notRealNoSkills > 0 {
-			teamContentBuilder.WriteString(fmt.Sprintf("Fake & Unskilled: ❌ %d\n", notRealNoSkills))
+			teamContentBuilder.WriteString(fmt.Sprintf("❌ Unverified + Unskilled: %d\n", notRealNoSkills))
 		}
 		teamContentBuilder.WriteString("\n\n")
 	}
@@ -1209,7 +1209,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 		teamContentBuilder.WriteString("No team members found\n")
 	}
 
-	teamPrefix := "Team Members ⚡\n \n \n"
+	teamPrefix := "Team Background and Skill Analysis ⚡\n \n \n"
 	teamContent := teamContentBuilder.String()
 	teamText := teamPrefix + teamContent
 	messages = append(messages, teamText)
