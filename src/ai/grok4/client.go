@@ -624,7 +624,7 @@ func buildChatToolsPayload(tools []core.Tool, enableWeb bool) ([]map[string]any,
 		if webAdded {
 			return
 		}
-		out = append(out, map[string]any{"type": "internet"})
+		out = append(out, map[string]any{"type": "live_search"})
 		webAdded = true
 	}
 
