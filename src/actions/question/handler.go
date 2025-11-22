@@ -186,26 +186,34 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 		}
 	}
 	if len(question) < 5 {
-		sendStyledWebhookEdit(s, i.Interaction, "Question", "Please provide a valid question (at least 5 characters).")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "Please provide a valid question (at least 5 characters)."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
 	threadInfo, err := m.refManager.FindThread(i.ChannelID)
 	if err != nil || threadInfo == nil {
-		sendStyledWebhookEdit(s, i.Interaction, "Question", "This command must be used in a referendum thread.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "This command must be used in a referendum thread."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
 	network := m.networkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
-		sendStyledWebhookEdit(s, i.Interaction, "Question", "Failed to identify network.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "Failed to identify network."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
 	content, err := m.cacheManager.GetProposalContent(network.Name, uint32(threadInfo.RefID))
 	if err != nil {
 		log.Printf("question: proposal content: %v", err)
-		sendStyledWebhookEdit(s, i.Interaction, "Question", "Failed to retrieve proposal content. Please try /refresh first.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "Failed to retrieve proposal content. Please try /refresh first."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
@@ -221,7 +229,9 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 	aiClient, aiCfg, err := m.createAIClient()
 	if err != nil {
 		log.Printf("question: ai client: %v", err)
-		sendStyledWebhookEdit(s, i.Interaction, "Question", "AI provider is not configured correctly. Please try again later.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "AI provider is not configured correctly. Please try again later."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
@@ -339,6 +349,20 @@ func (m *Module) createAIClient() (aicore.Client, sharedconfig.AIConfig, error) 
 }
 
 func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	// Check permissions first
+	if m.cfg.QARoleID != "" && !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID) {
+		if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
+			Type: discordgo.InteractionResponseChannelMessageWithSource,
+			Data: &discordgo.InteractionResponseData{
+				Content: "You don't have permission to use this command.",
+				Flags:   discordgo.MessageFlagsEphemeral,
+			},
+		}); err != nil {
+			log.Printf("question: permission check response failed: %v", err)
+		}
+		return
+	}
+
 	// Respond immediately to avoid "thinking" indicator
 	if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -350,24 +374,25 @@ func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.Interacti
 		return
 	}
 
-	if m.cfg.QARoleID != "" && !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID) {
-		sendStyledWebhookEdit(s, i.Interaction, "Context", "You don't have permission to use this command.")
-		return
-	}
-
 	threadInfo, err := m.refManager.FindThread(i.ChannelID)
 	if err != nil || threadInfo == nil {
-		sendStyledWebhookEdit(s, i.Interaction, "Context", "This command must be used in a referendum thread.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "This command must be used in a referendum thread."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
 	qas, err := m.contextStore.GetRecentQAs(threadInfo.NetworkID, uint32(threadInfo.RefID), 10)
 	if err != nil {
-		sendStyledWebhookEdit(s, i.Interaction, "Context", "Failed to retrieve context.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "Failed to retrieve context."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 	if len(qas) == 0 {
-		sendStyledWebhookEdit(s, i.Interaction, "Context", "No previous Q&A found for this referendum.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "No previous Q&A found for this referendum."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
