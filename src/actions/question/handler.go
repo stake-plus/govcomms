@@ -430,7 +430,7 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 	}
 	answerBody := buildQuestionResponseBody(provider, model, question, strings.TrimSpace(answerCleaned))
 
-	payloads := shareddiscord.BuildStyledMessages("Answer", answerBody, userID)
+	payloads := shareddiscord.BuildStyledMessages("", answerBody, userID)
 	if len(payloads) == 0 {
 		return
 	}
