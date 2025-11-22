@@ -1246,7 +1246,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Add breakdown statistics
 	if len(summary.TeamMembers) > 0 {
-		teamContentBuilder.WriteString("## Team Breakdown 📊\n\n")
+		teamContentBuilder.WriteString("### Team Breakdown 📊\n\n")
 		if realWithSkills > 0 {
 			teamContentBuilder.WriteString(fmt.Sprintf("✅ **Verified + Skilled:** %d of %d\n", realWithSkills, realWithSkills+realNoSkills+notRealWithSkills+notRealNoSkills))
 		}
@@ -1283,11 +1283,11 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 			// Convert history to bullet points (max 3, each indented 4 spaces)
 			historyBullets := historyToBulletPoints(member.History, 3)
 
-			teamContentBuilder.WriteString(fmt.Sprintf("  ### **Name:** __*%s*__\n  ### **Role:** __*%s*__\n", member.Name, member.Role))
-			teamContentBuilder.WriteString(fmt.Sprintf("  ### **Real:** %s\n  ### **Skilled:** %s\n", isRealMark, hasSkillsMark))
-			teamContentBuilder.WriteString("  ### **History:**\n")
+			teamContentBuilder.WriteString(fmt.Sprintf("  **Name:** __*%s*__\n  **Role:** __*%s*__\n", member.Name, member.Role))
+			teamContentBuilder.WriteString(fmt.Sprintf("  **Real:** %s\n  **Skilled:** %s\n", isRealMark, hasSkillsMark))
+			teamContentBuilder.WriteString("  **History:**\n")
 			if historyBullets != "" {
-				teamContentBuilder.WriteString(fmt.Sprintf("  __*%s*__\n", historyBullets))
+				teamContentBuilder.WriteString(fmt.Sprintf("  %s\n", historyBullets))
 			} else {
 				teamContentBuilder.WriteString("  • No history available\n")
 			}
