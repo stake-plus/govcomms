@@ -208,15 +208,16 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 		}
 	}
 
-	fullContent := content
-	if strings.TrimSpace(qaContext) != "" {
-		fullContent += qaContext
-	}
 	aiClient, aiCfg, err := m.createAIClient()
 	if err != nil {
 		log.Printf("question: ai client: %v", err)
 		sendStyledWebhookEdit(s, i.Interaction, "Question", "AI provider is not configured correctly. Please try again later.")
 		return
+	}
+
+	fullContent := content
+	if strings.TrimSpace(qaContext) != "" {
+		fullContent += qaContext
 	}
 
 	timeout := m.responseTimeout
@@ -230,6 +231,8 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 		Model:        aiCfg.AIModel,
 		SystemPrompt: m.buildRespondSystemPrompt(basePrompt, network.Name, threadInfo.RefID, content, qaContext),
 	}
+	providerDisplay := formatProviderName(aiCfg.AIProvider)
+	modelDisplay := formatModelName(aiCfg.AIProvider, respondOpts.Model)
 
 	input := strings.TrimSpace(question)
 	if input == "" {
@@ -261,7 +264,7 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 		log.Printf("question: save QA history: %v", err)
 	}
 
-	m.sendLongMessageSlash(s, i.Interaction, question, answer)
+	m.sendLongMessageSlash(s, i.Interaction, question, answer, providerDisplay, modelDisplay)
 }
 
 func (m *Module) buildMCPTool(network string, refID uint32) *aicore.Tool {
@@ -413,7 +416,7 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 	sendStyledWebhookEdit(s, i.Interaction, "Refresh", msg)
 }
 
-func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.Interaction, question string, message string) {
+func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.Interaction, question string, message string, provider string, model string) {
 	userID := ""
 	if interaction.Member != nil && interaction.Member.User != nil {
 		userID = interaction.Member.User.ID
@@ -430,7 +433,7 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 	if strings.TrimSpace(answerCleaned) == "" {
 		answerCleaned = "_No content_"
 	}
-	answerBody := fmt.Sprintf("Answer:\n\n%s", strings.TrimSpace(answerCleaned))
+	answerBody := buildQuestionResponseBody(provider, model, question, strings.TrimSpace(answerCleaned))
 
 	payloads := shareddiscord.BuildStyledMessages(title, answerBody, userID)
 	if len(payloads) == 0 {
@@ -476,4 +479,32 @@ func sendStyledWebhookEdit(s *discordgo.Session, interaction *discordgo.Interact
 		edit.Components = &components
 	}
 	shareddiscord.InteractionResponseEditNoEmbed(s, interaction, edit)
+}
+
+func formatProviderName(provider string) string {
+	trimmed := strings.TrimSpace(provider)
+	if trimmed == "" {
+		return "unknown"
+	}
+	return strings.ToLower(trimmed)
+}
+
+func formatModelName(provider, configuredModel string) string {
+	resolved := strings.TrimSpace(aicore.ResolveModelName(provider, configuredModel))
+	if resolved == "" {
+		return "unknown"
+	}
+	return resolved
+}
+
+func buildQuestionResponseBody(provider, model, question, answer string) string {
+	questionText := strings.TrimSpace(question)
+	if questionText == "" {
+		questionText = "N/A"
+	}
+	if strings.TrimSpace(answer) == "" {
+		answer = "_No content_"
+	}
+	return fmt.Sprintf("Provider: %s\nAI Model: %s\n\nUser Question: %s\n\nAnswer:\n\n%s",
+		provider, model, questionText, answer)
 }

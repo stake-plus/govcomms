@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
+	aicore "github.com/stake-plus/govcomms/src/ai/core"
 	"github.com/stake-plus/govcomms/src/actions/research/components/claims"
 	cache "github.com/stake-plus/govcomms/src/cache"
 	sharedconfig "github.com/stake-plus/govcomms/src/config"
@@ -119,7 +120,8 @@ func (h *Handler) runResearchWorkflow(s *discordgo.Session, channelID string, ne
 	}
 
 	headerTitle := fmt.Sprintf("Claim Verification • %s #%d", network, refID)
-	headerBody := fmt.Sprintf("Found %d total historical claims, verifying top %d most important.", totalClaims, len(topClaims))
+	intro := fmt.Sprintf("Found %d total historical claims, verifying top %d most important.", totalClaims, len(topClaims))
+	headerBody := fmt.Sprintf("%s\n\n%s", h.providerInfo(), intro)
 	headerHandle, err := shareddiscord.SendStyledHeaderMessage(s, channelID, headerTitle, headerBody)
 	if err != nil {
 		log.Printf("research: header send failed: %v", err)
@@ -208,7 +210,8 @@ func (h *Handler) runResearchWorkflowSlash(s *discordgo.Session, i *discordgo.In
 	}
 
 	headerTitle := fmt.Sprintf("Claim Verification • %s #%d", network, refID)
-	headerBody := fmt.Sprintf("Found %d total historical claims, verifying top %d most important.", totalClaims, len(topClaims))
+	intro := fmt.Sprintf("Found %d total historical claims, verifying top %d most important.", totalClaims, len(topClaims))
+	headerBody := fmt.Sprintf("%s\n\n%s", h.providerInfo(), intro)
 	headerHandle, err := shareddiscord.RespondStyledHeaderMessage(s, i.Interaction, headerTitle, headerBody)
 	if err != nil {
 		log.Printf("research: slash header send failed: %v", err)
@@ -335,4 +338,25 @@ func indentMultilineText(text string, indent string) string {
 		lines[i] = indent + line
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (h *Handler) providerInfo() string {
+	if h == nil || h.Config == nil {
+		return formatProviderInfo("", "")
+	}
+	return formatProviderInfo(h.Config.AIConfig.AIProvider, h.Config.AIConfig.AIModel)
+}
+
+func formatProviderInfo(provider, model string) string {
+	prov := strings.TrimSpace(provider)
+	if prov == "" {
+		prov = "unknown"
+	} else {
+		prov = strings.ToLower(prov)
+	}
+	resolved := strings.TrimSpace(aicore.ResolveModelName(provider, model))
+	if resolved == "" {
+		resolved = "unknown"
+	}
+	return fmt.Sprintf("Provider: %s\nAI Model: %s", prov, resolved)
 }
