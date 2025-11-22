@@ -674,4 +674,3 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 		}
 	}
 }
-

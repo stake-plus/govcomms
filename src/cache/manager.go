@@ -341,17 +341,17 @@ type metadataRecord struct {
 	Attachments  []Attachment `json:"attachments"`
 	RefreshedAt  time.Time    `json:"refreshedAt"`
 	// Research data
-	Claims       *ClaimsData  `json:"claims,omitempty"`
-	TeamMembers  *TeamsData   `json:"teamMembers,omitempty"`
+	Claims      *ClaimsData `json:"claims,omitempty"`
+	TeamMembers *TeamsData  `json:"teamMembers,omitempty"`
 }
 
 // ClaimsData stores claim verification results
 type ClaimsData struct {
-	ProviderCompany string          `json:"providerCompany"`
-	AIModel         string          `json:"aiModel"`
-	ProcessedAt     time.Time       `json:"processedAt"`
-	TotalClaims     int             `json:"totalClaims"`
-	Results         []ClaimResult   `json:"results"`
+	ProviderCompany string        `json:"providerCompany"`
+	AIModel         string        `json:"aiModel"`
+	ProcessedAt     time.Time     `json:"processedAt"`
+	TotalClaims     int           `json:"totalClaims"`
+	Results         []ClaimResult `json:"results"`
 }
 
 // ClaimResult represents a single verified claim
