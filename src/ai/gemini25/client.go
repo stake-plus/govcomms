@@ -327,7 +327,7 @@ func (c *client) buildRequestBody(opts core.Options, userText string, enableSear
 	if enableSearch {
 		body["tools"] = []map[string]any{
 			{
-				"googleSearchRetrieval": map[string]any{},
+				"google_search": map[string]any{},
 			},
 		}
 	}
@@ -517,7 +517,7 @@ func buildGeminiToolsPayload(tools []core.Tool, enableSearch bool) ([]map[string
 	}
 	if enableSearch {
 		toolsPayload = append(toolsPayload, map[string]any{
-			"googleSearchRetrieval": map[string]any{},
+			"google_search": map[string]any{},
 		})
 	}
 	return toolsPayload, toolMap, functionNames

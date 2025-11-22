@@ -38,7 +38,7 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 		defaults: core.Options{
 			Model:               valueOrDefault(cfg.Model, "gpt-4o"),
 			Temperature:         orFloat(cfg.Temperature, 1),
-			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, 16000),
+			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, 8192),
 			SystemPrompt:        cfg.SystemPrompt,
 		},
 	}, nil

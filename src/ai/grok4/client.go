@@ -22,7 +22,7 @@ import (
 const (
 	apiURL           = "https://api.x.ai/v1/chat/completions"
 	defaultModel     = "grok-4-fast-reasoning"
-	defaultMaxTokens = 16000
+	defaultMaxTokens = 8192
 )
 
 func init() {

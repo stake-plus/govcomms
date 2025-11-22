@@ -20,7 +20,7 @@ import (
 const (
 	defaultModel       = "claude-sonnet-4-5"
 	anthropicEndpoint  = "https://api.anthropic.com/v1/messages"
-	defaultMaxTokens   = 16000
+	defaultMaxTokens   = 8192
 	defaultTemperature = 0.1
 	requestTimeout     = 240 * time.Second
 )

@@ -20,7 +20,7 @@ import (
 const (
 	defaultModel        = "claude-haiku-4-5"
 	anthropicEndpoint   = "https://api.anthropic.com/v1/messages"
-	defaultMaxTokens    = 16000
+	defaultMaxTokens    = 8192
 	defaultTemperature  = 0.2
 	defaultRequestDelay = 240 * time.Second
 )
