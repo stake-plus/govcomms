@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
-	aicore "github.com/stake-plus/govcomms/src/ai/core"
 	"github.com/stake-plus/govcomms/src/actions/research/components/claims"
+	aicore "github.com/stake-plus/govcomms/src/ai/core"
 	cache "github.com/stake-plus/govcomms/src/cache"
 	sharedconfig "github.com/stake-plus/govcomms/src/config"
 	shareddiscord "github.com/stake-plus/govcomms/src/discord"
@@ -348,15 +348,20 @@ func (h *Handler) providerInfo() string {
 }
 
 func formatProviderInfo(provider, model string) string {
-	prov := strings.TrimSpace(provider)
-	if prov == "" {
-		prov = "unknown"
-	} else {
-		prov = strings.ToLower(prov)
+	providerInfo, ok := aicore.GetProviderInfo(provider)
+	if !ok {
+		providerInfo = aicore.ProviderInfo{
+			Company: "unknown",
+			Website: "unknown",
+			Model:   "unknown",
+		}
 	}
 	resolved := strings.TrimSpace(aicore.ResolveModelName(provider, model))
 	if resolved == "" {
+		resolved = providerInfo.Model
+	}
+	if resolved == "" {
 		resolved = "unknown"
 	}
-	return fmt.Sprintf("Provider: %s\nAI Model: %s", prov, resolved)
+	return fmt.Sprintf("Provider: %s    Model: %s    Website: %s", providerInfo.Company, resolved, providerInfo.Website)
 }

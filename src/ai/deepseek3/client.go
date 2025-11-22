@@ -18,24 +18,24 @@ import (
 )
 
 const (
-	providerCompany         = "HangZhou DeepSeek"
-	providerWebsite         = "https://deepseek.com"
-	providerKey             = "deepseek3"
-	apiURL                  = "https://api.deepseek.com/chat/completions"
-	defaultModel            = "deepseek-chat"
-	defaultMaxTokens        = 8192
-	defaultTemperature      = 0.7
-	defaultTopP             = 0.9
-	defaultPresencePenalty  = 0.0
-	defaultFrequencyPenalty = 0.0
-	defaultRequestTimeout   = 240 * time.Second
-	defaultRetryAttempts    = 3
-	defaultRetryBackoff     = 2 * time.Second
-	maxToolIterations       = 20
-	minTopP                 = 0.01
-	maxTopP                 = 1.0
-	penaltyMin              = -2.0
-	penaltyMax              = 2.0
+	providerCompany   = "HangZhou DeepSeek"
+	providerWebsite   = "https://deepseek.com"
+	providerKey       = "deepseek3"
+	apiURL            = "https://api.deepseek.com/chat/completions"
+	model             = "deepseek-chat"
+	maxTokensLimit    = 8192
+	temperature       = 0.7
+	topP              = 0.9
+	presencePenalty   = 0.0
+	frequencyPenalty  = 0.0
+	requestTimeout    = 240 * time.Second
+	retryAttempts     = 3
+	retryBackoff      = 2 * time.Second
+	maxToolIterations = 20
+	minTopP           = 0.01
+	maxTopP           = 1.0
+	penaltyMin        = -2.0
+	penaltyMax        = 2.0
 )
 
 const (
@@ -63,17 +63,17 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 	}
 
 	model := selectDeepSeekModel(cfg.Model)
-	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
-	frequencyPenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraFrequencyPenaltyKey, defaultFrequencyPenalty), penaltyMin, penaltyMax)
-	presencePenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraPresencePenaltyKey, defaultPresencePenalty), penaltyMin, penaltyMax)
+	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, topP), minTopP, maxTopP)
+	frequencyPenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraFrequencyPenaltyKey, frequencyPenalty), penaltyMin, penaltyMax)
+	presencePenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraPresencePenaltyKey, presencePenalty), penaltyMin, penaltyMax)
 
 	return &client{
 		apiKey:     cfg.DeepSeekKey,
-		httpClient: webclient.NewDefault(defaultRequestTimeout),
+		httpClient: webclient.NewDefault(requestTimeout),
 		defaults: core.Options{
 			Model:               model,
-			Temperature:         orFloat(cfg.Temperature, defaultTemperature),
-			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, defaultMaxTokens),
+			Temperature:         orFloat(cfg.Temperature, temperature),
+			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, maxTokensLimit),
 			SystemPrompt:        cfg.SystemPrompt,
 		},
 		topP:             topP,
@@ -145,7 +145,7 @@ func (c *client) send(ctx context.Context, payload map[string]any) (string, erro
 
 func (c *client) callAPI(ctx context.Context, payload map[string]any) ([]byte, error) {
 	bodyBytes, _ := json.Marshal(payload)
-	_, body, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
+	_, body, err := webclient.DoWithRetry(ctx, retryAttempts, retryBackoff, func() (int, []byte, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err
@@ -564,10 +564,10 @@ func hasWebSearch(opts core.Options, tools []core.Tool) bool {
 
 func maxTokens(requested int) int {
 	if requested <= 0 {
-		return defaultMaxTokens
+		return maxTokensLimit
 	}
-	if requested > defaultMaxTokens {
-		return defaultMaxTokens
+	if requested > maxTokensLimit {
+		return maxTokensLimit
 	}
 	return requested
 }
@@ -792,13 +792,13 @@ func valueOrDefault(val, def string) string {
 func selectDeepSeekModel(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return defaultModel
+		return model
 	}
 	lower := strings.ToLower(trimmed)
 	if strings.Contains(lower, "deepseek") {
 		return trimmed
 	}
-	return defaultModel
+	return model
 }
 
 func orInt(v, def int) int {

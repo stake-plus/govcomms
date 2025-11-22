@@ -18,27 +18,27 @@ import (
 )
 
 const (
-	providerCompany         = "Google"
-	providerWebsite         = "https://ai.google.com"
-	providerKey             = "gemini25"
-	baseURL                 = "https://generativelanguage.googleapis.com/v1beta"
-	defaultModelName        = "gemini-2.5-flash"
-	defaultMaxTokens        = 16000
-	defaultTemperature      = 0.2
-	defaultTopP             = 0.9
-	defaultTopK             = 64
-	defaultFrequencyPenalty = 0.0
-	defaultPresencePenalty  = 0.0
-	defaultRequestTimeout   = 240 * time.Second
-	defaultRetryAttempts    = 3
-	defaultRetryBackoff     = 2 * time.Second
-	maxToolIterations       = 20
-	minTopP                 = 0.01
-	maxTopP                 = 1.0
-	minTopK                 = 1
-	maxTopK                 = 256
-	penaltyMin              = -2.0
-	penaltyMax              = 2.0
+	providerCompany   = "Google"
+	providerWebsite   = "https://ai.google.com"
+	providerKey       = "gemini25"
+	baseURL           = "https://generativelanguage.googleapis.com/v1beta"
+	modelName         = "gemini-2.5-flash"
+	maxTokensLimit    = 8192
+	temperature       = 0.2
+	topP              = 0.9
+	topK              = 64
+	frequencyPenalty  = 0.0
+	presencePenalty   = 0.0
+	requestTimeout    = 240 * time.Second
+	retryAttempts     = 3
+	retryBackoff      = 2 * time.Second
+	maxToolIterations = 20
+	minTopP           = 0.01
+	maxTopP           = 1.0
+	minTopK           = 1
+	maxTopK           = 256
+	penaltyMin        = -2.0
+	penaltyMax        = 2.0
 )
 
 const (
@@ -69,25 +69,25 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 
 	model := cfg.Model
 	if strings.TrimSpace(model) == "" {
-		model = defaultModelName
+		model = modelName
 	}
-	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
-	topK := core.ExtraInt(cfg.Extra, extraTopKKey, defaultTopK)
+	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, topP), minTopP, maxTopP)
+	topK := core.ExtraInt(cfg.Extra, extraTopKKey, topK)
 	if topK < minTopK {
 		topK = minTopK
 	} else if topK > maxTopK {
 		topK = maxTopK
 	}
-	frequencyPenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraFrequencyPenaltyKey, defaultFrequencyPenalty), penaltyMin, penaltyMax)
-	presencePenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraPresencePenaltyKey, defaultPresencePenalty), penaltyMin, penaltyMax)
+	frequencyPenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraFrequencyPenaltyKey, frequencyPenalty), penaltyMin, penaltyMax)
+	presencePenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraPresencePenaltyKey, presencePenalty), penaltyMin, penaltyMax)
 
 	return &client{
 		apiKey:     cfg.GeminiKey,
-		httpClient: webclient.NewDefault(defaultRequestTimeout),
+		httpClient: webclient.NewDefault(requestTimeout),
 		defaults: core.Options{
 			Model:               model,
-			Temperature:         orFloat(cfg.Temperature, defaultTemperature),
-			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, defaultMaxTokens),
+			Temperature:         orFloat(cfg.Temperature, temperature),
+			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, maxTokensLimit),
 			SystemPrompt:        cfg.SystemPrompt,
 		},
 		topP:             topP,
@@ -445,7 +445,7 @@ func (c *client) callGenerateContent(ctx context.Context, model string, payload 
 	url := fmt.Sprintf("%s/%s:generateContent?key=%s", baseURL, modelPath, c.apiKey)
 	bodyBytes, _ := json.Marshal(payload)
 
-	_, body, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
+	_, body, err := webclient.DoWithRetry(ctx, retryAttempts, retryBackoff, func() (int, []byte, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err
@@ -505,7 +505,7 @@ func hasWebSearch(opts core.Options, tools []core.Tool) bool {
 
 func maxTokens(requested int) int {
 	if requested <= 0 {
-		return defaultMaxTokens
+		return maxTokensLimit
 	}
 	return requested
 }
@@ -513,7 +513,7 @@ func maxTokens(requested int) int {
 func normalizeModel(model string) string {
 	model = strings.TrimSpace(model)
 	if model == "" {
-		return defaultModelName
+		return modelName
 	}
 	if strings.HasPrefix(model, "models/") {
 		return model

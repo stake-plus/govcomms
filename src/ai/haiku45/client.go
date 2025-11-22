@@ -18,24 +18,24 @@ import (
 )
 
 const (
-	providerCompany       = "Anthropic"
-	providerWebsite       = "https://anthropic.com"
-	providerKey           = "haiku45"
-	defaultModel          = "claude-haiku-4-5"
-	anthropicEndpoint     = "https://api.anthropic.com/v1/messages"
-	defaultMaxTokens      = 8192
-	defaultTemperature    = 0.2
-	defaultTopP           = 0.8
-	defaultTopK           = 40
-	defaultRequestTimeout = 240 * time.Second
-	defaultRetryAttempts  = 3
-	defaultRetryBackoff   = 2 * time.Second
-	maxToolIterations     = 20
-	maxAttachmentFetches  = 6
-	minTopP               = 0.01
-	maxTopP               = 1.0
-	minTopK               = 1
-	maxTopK               = 500
+	providerCompany      = "Anthropic"
+	providerWebsite      = "https://anthropic.com"
+	providerKey          = "haiku45"
+	model                = "claude-haiku-4-5"
+	anthropicEndpoint    = "https://api.anthropic.com/v1/messages"
+	maxTokensLimit       = 8192
+	temperature          = 0.2
+	topP                 = 0.8
+	topK                 = 40
+	requestTimeout       = 240 * time.Second
+	retryAttempts        = 3
+	retryBackoff         = 2 * time.Second
+	maxToolIterations    = 20
+	maxAttachmentFetches = 6
+	minTopP              = 0.01
+	maxTopP              = 1.0
+	minTopK              = 1
+	maxTopK              = 500
 )
 
 const (
@@ -61,13 +61,13 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 		return nil, fmt.Errorf("haiku-4.5: Claude API key not configured")
 	}
 
-	topP := defaultTopP
+	topPVal := topP
 	useTopP := false
 	if _, ok := cfg.Extra[extraTopPKey]; ok {
-		topP = core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
+		topPVal = core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, topP), minTopP, maxTopP)
 		useTopP = true
 	}
-	topK := core.ExtraInt(cfg.Extra, extraTopKKey, defaultTopK)
+	topK := core.ExtraInt(cfg.Extra, extraTopKKey, topK)
 	if topK < minTopK {
 		topK = minTopK
 	} else if topK > maxTopK {
@@ -76,15 +76,15 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 
 	return &client{
 		apiKey:     cfg.ClaudeKey,
-		httpClient: webclient.NewDefault(defaultRequestTimeout),
+		httpClient: webclient.NewDefault(requestTimeout),
 		defaults: core.Options{
-			Model:               valueOrDefault(cfg.Model, defaultModel),
-			Temperature:         orFloat(cfg.Temperature, defaultTemperature),
-			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, defaultMaxTokens),
+			Model:               valueOrDefault(cfg.Model, model),
+			Temperature:         orFloat(cfg.Temperature, temperature),
+			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, maxTokensLimit),
 			SystemPrompt:        cfg.SystemPrompt,
 			EnableWebSearch:     core.ExtraBool(cfg.Extra, "enable_web_search", false),
 		},
-		topP:    topP,
+		topP:    topPVal,
 		topK:    topK,
 		useTopP: useTopP,
 	}, nil
@@ -107,7 +107,7 @@ func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, o
 func (c *client) invoke(ctx context.Context, opts core.Options, input string, tools []core.Tool) (string, error) {
 	maxTokens := opts.MaxCompletionTokens
 	if maxTokens <= 0 {
-		maxTokens = defaultMaxTokens
+		maxTokens = maxTokensLimit
 	}
 
 	body := map[string]interface{}{
@@ -126,7 +126,7 @@ func (c *client) invoke(ctx context.Context, opts core.Options, input string, to
 	c.applySampling(body, opts.Temperature)
 
 	bodyBytes, _ := json.Marshal(body)
-	_, responseBody, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
+	_, responseBody, err := webclient.DoWithRetry(ctx, retryAttempts, retryBackoff, func() (int, []byte, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicEndpoint, bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err
@@ -173,7 +173,7 @@ func (c *client) invoke(ctx context.Context, opts core.Options, input string, to
 func (c *client) respondWithTools(ctx context.Context, input string, tools []core.Tool, opts core.Options) (string, error) {
 	maxTokens := opts.MaxCompletionTokens
 	if maxTokens <= 0 {
-		maxTokens = defaultMaxTokens
+		maxTokens = maxTokensLimit
 	}
 
 	messages := []anthropicMessage{
@@ -239,7 +239,7 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 		}
 
 		bodyBytes, _ := json.Marshal(reqBody)
-		_, payload, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
+		_, payload, err := webclient.DoWithRetry(ctx, retryAttempts, retryBackoff, func() (int, []byte, error) {
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicEndpoint, bytes.NewBuffer(bodyBytes))
 			if err != nil {
 				return 0, nil, err

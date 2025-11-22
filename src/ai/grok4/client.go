@@ -20,20 +20,20 @@ import (
 )
 
 const (
-	providerCompany       = "X.ai"
-	providerWebsite       = "https://x.ai"
-	providerKey           = "grok4"
-	apiURL                = "https://api.x.ai/v1/chat/completions"
-	defaultModel          = "grok-4-fast-reasoning"
-	defaultMaxTokens      = 8192
-	defaultTemperature    = 1.0
-	defaultTopP           = 0.9
-	defaultRequestTimeout = 240 * time.Second
-	defaultRetryAttempts  = 3
-	defaultRetryBackoff   = 2 * time.Second
-	maxToolIterations     = 20
-	minTopP               = 0.01
-	maxTopP               = 1.0
+	providerCompany   = "X.ai"
+	providerWebsite   = "https://x.ai"
+	providerKey       = "grok4"
+	apiURL            = "https://api.x.ai/v1/chat/completions"
+	model             = "grok-4-fast-reasoning"
+	maxTokensLimit    = 8192
+	temperature       = 1.0
+	topP              = 0.9
+	requestTimeout    = 240 * time.Second
+	retryAttempts     = 3
+	retryBackoff      = 2 * time.Second
+	maxToolIterations = 20
+	minTopP           = 0.01
+	maxTopP           = 1.0
 )
 
 const (
@@ -56,15 +56,15 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 		return nil, fmt.Errorf("grok: API key not configured")
 	}
 
-	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
+	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, topP), minTopP, maxTopP)
 
 	return &client{
 		apiKey:     cfg.GrokKey,
-		httpClient: webclient.NewDefault(defaultRequestTimeout),
+		httpClient: webclient.NewDefault(requestTimeout),
 		defaults: core.Options{
-			Model:               valueOrDefault(cfg.Model, defaultModel),
-			Temperature:         orFloat(cfg.Temperature, defaultTemperature),
-			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, defaultMaxTokens),
+			Model:               valueOrDefault(cfg.Model, model),
+			Temperature:         orFloat(cfg.Temperature, temperature),
+			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, maxTokensLimit),
 			SystemPrompt:        cfg.SystemPrompt,
 		},
 		topP: topP,
@@ -118,7 +118,7 @@ func (c *client) buildRequest(opts core.Options, userPrompt string, enableWeb bo
 
 func (c *client) send(ctx context.Context, payload map[string]interface{}) (string, error) {
 	bodyBytes, _ := json.Marshal(payload)
-	_, body, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
+	_, body, err := webclient.DoWithRetry(ctx, retryAttempts, retryBackoff, func() (int, []byte, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err
@@ -176,7 +176,7 @@ func (c *client) merge(opts core.Options) core.Options {
 
 func maxTokens(requested int) int {
 	if requested <= 0 {
-		return defaultMaxTokens
+		return maxTokensLimit
 	}
 	return requested
 }
@@ -487,7 +487,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 		}
 
 		bodyBytes, _ := json.Marshal(reqBody)
-		_, body, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
+		_, body, err := webclient.DoWithRetry(ctx, retryAttempts, retryBackoff, func() (int, []byte, error) {
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewBuffer(bodyBytes))
 			if err != nil {
 				return 0, nil, err

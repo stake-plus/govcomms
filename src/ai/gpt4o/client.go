@@ -18,24 +18,24 @@ import (
 )
 
 const (
-	providerCompany         = "OpenAI"
-	providerWebsite         = "https://openai.com"
-	providerKey             = "gpt4o"
-	chatCompletionsURL      = "https://api.openai.com/v1/chat/completions"
-	defaultModel            = "gpt-4o"
-	defaultMaxTokens        = 8192
-	defaultTemperature      = 1.0
-	defaultTopP             = 0.9
-	defaultFrequencyPenalty = 0.0
-	defaultPresencePenalty  = 0.0
-	defaultRequestTimeout   = 240 * time.Second
-	defaultRetryAttempts    = 3
-	defaultRetryBackoff     = 2 * time.Second
-	maxToolIterations       = 20
-	minTopP                 = 0.01
-	maxTopP                 = 1.0
-	penaltyMin              = -2.0
-	penaltyMax              = 2.0
+	providerCompany    = "OpenAI"
+	providerWebsite    = "https://openai.com"
+	providerKey        = "gpt4o"
+	chatCompletionsURL = "https://api.openai.com/v1/chat/completions"
+	model              = "gpt-4o"
+	maxTokensLimit     = 8192
+	temperature        = 1.0
+	topP               = 0.9
+	frequencyPenalty   = 0.0
+	presencePenalty    = 0.0
+	requestTimeout     = 240 * time.Second
+	retryAttempts      = 3
+	retryBackoff       = 2 * time.Second
+	maxToolIterations  = 20
+	minTopP            = 0.01
+	maxTopP            = 1.0
+	penaltyMin         = -2.0
+	penaltyMax         = 2.0
 )
 
 const (
@@ -62,17 +62,17 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 		return nil, fmt.Errorf("gpt4o: OpenAI API key not configured")
 	}
 
-	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
-	frequencyPenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraFrequencyPenaltyKey, defaultFrequencyPenalty), penaltyMin, penaltyMax)
-	presencePenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraPresencePenaltyKey, defaultPresencePenalty), penaltyMin, penaltyMax)
+	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, topP), minTopP, maxTopP)
+	frequencyPenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraFrequencyPenaltyKey, frequencyPenalty), penaltyMin, penaltyMax)
+	presencePenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraPresencePenaltyKey, presencePenalty), penaltyMin, penaltyMax)
 
 	return &client{
 		apiKey:     cfg.OpenAIKey,
-		httpClient: webclient.NewDefault(defaultRequestTimeout),
+		httpClient: webclient.NewDefault(requestTimeout),
 		defaults: core.Options{
-			Model:               valueOrDefault(cfg.Model, defaultModel),
-			Temperature:         orFloat(cfg.Temperature, defaultTemperature),
-			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, defaultMaxTokens),
+			Model:               valueOrDefault(cfg.Model, model),
+			Temperature:         orFloat(cfg.Temperature, temperature),
+			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, maxTokensLimit),
 			SystemPrompt:        cfg.SystemPrompt,
 		},
 		topP:             topP,
@@ -100,7 +100,7 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 		reqBody["max_completion_tokens"] = merged.MaxCompletionTokens
 	}
 	bodyBytes, _ := json.Marshal(reqBody)
-	_, body, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
+	_, body, err := webclient.DoWithRetry(ctx, retryAttempts, retryBackoff, func() (int, []byte, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatCompletionsURL, bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err
@@ -423,7 +423,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 		}
 
 		bodyBytes, _ := json.Marshal(reqBody)
-		_, body, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
+		_, body, err := webclient.DoWithRetry(ctx, retryAttempts, retryBackoff, func() (int, []byte, error) {
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatCompletionsURL, bytes.NewBuffer(bodyBytes))
 			if err != nil {
 				return 0, nil, err
