@@ -78,6 +78,64 @@ func (g *Generator) multiCell(pdf *gofpdf.Fpdf, w, h float64, txt, borderStr, al
 	pdf.MultiCell(w, h, sanitizeTextForPDF(txt), borderStr, alignStr, fill)
 }
 
+// drawColoredBox draws a colored box with text
+func (g *Generator) drawColoredBox(pdf *gofpdf.Fpdf, x, y, w, h float64, red, green, blue int, title, content string) {
+	// Save current position
+	currentY := pdf.GetY()
+
+	// Draw box background
+	pdf.SetFillColor(red, green, blue)
+	pdf.Rect(x, y, w, h, "F")
+
+	// Draw border
+	pdf.SetDrawColor(0, 0, 0)
+	pdf.SetLineWidth(0.5)
+	pdf.Rect(x, y, w, h, "D")
+
+	// Add title
+	if title != "" {
+		pdf.SetXY(x+3, y+3)
+		pdf.SetFont("Arial", "B", 10)
+		pdf.SetTextColor(0, 0, 0)
+		g.cellFormat(pdf, w-6, 5, title, "", 0, "L", false, 0, "")
+	}
+
+	// Add content
+	if content != "" {
+		pdf.SetXY(x+3, y+8)
+		pdf.SetFont("Arial", "", 9)
+		pdf.SetTextColor(0, 0, 0)
+		g.multiCell(pdf, w-6, 4, content, "", "", false)
+	}
+
+	// Restore position
+	pdf.SetXY(x, currentY)
+}
+
+// drawGreenBox draws a green box for positive notes
+func (g *Generator) drawGreenBox(pdf *gofpdf.Fpdf, x, y, w, h float64, title string, items []string) {
+	if len(items) == 0 {
+		return
+	}
+	content := strings.Join(items, "\n• ")
+	if content != "" {
+		content = "• " + content
+	}
+	g.drawColoredBox(pdf, x, y, w, h, 220, 255, 220, title, content)
+}
+
+// drawRedBox draws a red box for concerns
+func (g *Generator) drawRedBox(pdf *gofpdf.Fpdf, x, y, w, h float64, title string, items []string) {
+	if len(items) == 0 {
+		return
+	}
+	content := strings.Join(items, "\n• ")
+	if content != "" {
+		content = "• " + content
+	}
+	g.drawColoredBox(pdf, x, y, w, h, 255, 220, 220, title, content)
+}
+
 // Generator creates PDF reports for referendums
 type Generator struct {
 	tempDir string
@@ -108,6 +166,12 @@ type ReportData struct {
 	Positive        *PositiveAnalysis
 	SteelManning    *SteelManAnalysis
 	Recommendations *Recommendations
+	// Enhanced content
+	EnhancedContent      *EnhancedContent
+	BackgroundNotes      *SectionNotes
+	SummaryNotes         *SectionNotes
+	FinancialsNotes      *SectionNotes
+	TeamMemberDetailsMap map[string]*TeamMemberDetails // Keyed by team member name
 }
 
 // FinancialAnalysis contains financial breakdown
@@ -195,6 +259,33 @@ type Recommendations struct {
 	Conditions  []string // If modifying
 	KeyPoints   []string
 	GeneratedAt time.Time
+	// Enhanced verdict fields
+	IdeaQuality    string // Good/Bad/Uncertain
+	TeamCapability string // Can deliver/Cannot deliver/Uncertain
+	AIVote         string // Aye/Nay/Abstain
+}
+
+// EnhancedContent contains expanded analysis sections
+type EnhancedContent struct {
+	BackgroundContext string // 2 paragraphs: people, idea, other context
+	ReferendaSummary  string // 2 paragraphs: everything needed to vote
+	FinancialsDetail  string // 2 paragraphs: current ask, future asks, side projects
+	GeneratedAt       time.Time
+}
+
+// SectionNotes contains green/red box content for sections
+type SectionNotes struct {
+	Positive []string // Green box content
+	Concerns []string // Red box content
+}
+
+// TeamMemberDetails contains enhanced team member information
+type TeamMemberDetails struct {
+	SocialHandles map[string][]string // All social handles
+	Skills        []string
+	WorkHistory   string
+	Verified      []string // Verified/confirmed items
+	Concerns      []string // Concerns/worries
 }
 
 // GeneratePDF creates a comprehensive PDF report
@@ -328,28 +419,103 @@ func (g *Generator) addSummaryPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.CellFormat(0, 12, "Context & Summary", "", 0, "L", false, 0, "")
 	pdf.Ln(15)
 
-	if data.Summary == nil {
-		pdf.SetFont("Arial", "I", 11)
-		pdf.SetTextColor(128, 128, 128)
-		pdf.MultiCell(0, 7, "Summary data not available.", "", "", false)
-		return
-	}
-
 	// Background Context
 	pdf.SetFont("Arial", "B", 12)
 	pdf.SetTextColor(0, 0, 0)
 	pdf.CellFormat(0, 10, "Background Context", "", 0, "L", false, 0, "")
 	pdf.Ln(8)
 	pdf.SetFont("Arial", "", 10)
-	g.multiCell(pdf, 0, 6, data.Summary.BackgroundContext, "", "", false)
+
+	backgroundText := ""
+	if data.EnhancedContent != nil && data.EnhancedContent.BackgroundContext != "" {
+		backgroundText = data.EnhancedContent.BackgroundContext
+	} else if data.Summary != nil {
+		backgroundText = data.Summary.BackgroundContext
+	}
+
+	if backgroundText == "" {
+		pdf.SetFont("Arial", "I", 11)
+		pdf.SetTextColor(128, 128, 128)
+		g.multiCell(pdf, 0, 7, "Background context not available.", "", "", false)
+	} else {
+		g.multiCell(pdf, 0, 6, backgroundText, "", "", false)
+	}
+
+	// Green/Red boxes for Background Context
+	pdf.Ln(5)
+	if data.BackgroundNotes != nil {
+		boxY := pdf.GetY()
+		boxWidth := 180.0
+		boxX := 15.0
+
+		greenHeight := 0.0
+		redHeight := 0.0
+		if len(data.BackgroundNotes.Positive) > 0 {
+			greenHeight = float64(len(data.BackgroundNotes.Positive))*5 + 10
+		}
+		if len(data.BackgroundNotes.Concerns) > 0 {
+			redHeight = float64(len(data.BackgroundNotes.Concerns))*5 + 10
+		}
+
+		if greenHeight > 0 {
+			g.drawGreenBox(pdf, boxX, boxY, boxWidth, greenHeight, "Noteworthy Positive Aspects", data.BackgroundNotes.Positive)
+			pdf.SetY(boxY + greenHeight + 5)
+		}
+
+		if redHeight > 0 {
+			g.drawRedBox(pdf, boxX, pdf.GetY(), boxWidth, redHeight, "Noteworthy Concerns", data.BackgroundNotes.Concerns)
+			pdf.SetY(pdf.GetY() + redHeight + 5)
+		}
+	}
 	pdf.Ln(10)
 
-	// Summary
+	// Referenda Summary
 	pdf.SetFont("Arial", "B", 12)
-	pdf.CellFormat(0, 10, "Summary", "", 0, "L", false, 0, "")
+	pdf.CellFormat(0, 10, "Referenda Summary", "", 0, "L", false, 0, "")
 	pdf.Ln(8)
 	pdf.SetFont("Arial", "", 10)
-	g.multiCell(pdf, 0, 6, data.Summary.Summary, "", "", false)
+
+	summaryText := ""
+	if data.EnhancedContent != nil && data.EnhancedContent.ReferendaSummary != "" {
+		summaryText = data.EnhancedContent.ReferendaSummary
+	} else if data.Summary != nil {
+		summaryText = data.Summary.Summary
+	}
+
+	if summaryText == "" {
+		pdf.SetFont("Arial", "I", 11)
+		pdf.SetTextColor(128, 128, 128)
+		g.multiCell(pdf, 0, 7, "Summary not available.", "", "", false)
+	} else {
+		g.multiCell(pdf, 0, 6, summaryText, "", "", false)
+	}
+
+	// Green/Red boxes for Summary
+	pdf.Ln(5)
+	if data.SummaryNotes != nil {
+		boxY := pdf.GetY()
+		boxWidth := 180.0
+		boxX := 15.0
+
+		greenHeight := 0.0
+		redHeight := 0.0
+		if len(data.SummaryNotes.Positive) > 0 {
+			greenHeight = float64(len(data.SummaryNotes.Positive))*5 + 10
+		}
+		if len(data.SummaryNotes.Concerns) > 0 {
+			redHeight = float64(len(data.SummaryNotes.Concerns))*5 + 10
+		}
+
+		if greenHeight > 0 {
+			g.drawGreenBox(pdf, boxX, boxY, boxWidth, greenHeight, "Noteworthy Positive Aspects", data.SummaryNotes.Positive)
+			pdf.SetY(boxY + greenHeight + 5)
+		}
+
+		if redHeight > 0 {
+			g.drawRedBox(pdf, boxX, pdf.GetY(), boxWidth, redHeight, "Noteworthy Concerns", data.SummaryNotes.Concerns)
+			pdf.SetY(pdf.GetY() + redHeight + 5)
+		}
+	}
 }
 
 func (g *Generator) addFinancialsPage(pdf *gofpdf.Fpdf, data *ReportData) {
@@ -359,10 +525,54 @@ func (g *Generator) addFinancialsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.CellFormat(0, 12, "Project Financials", "", 0, "L", false, 0, "")
 	pdf.Ln(15)
 
-	if data.Financials == nil {
+	// Enhanced Financials Detail
+	pdf.SetFont("Arial", "B", 12)
+	pdf.CellFormat(0, 10, "Financial Overview", "", 0, "L", false, 0, "")
+	pdf.Ln(8)
+	pdf.SetFont("Arial", "", 10)
+
+	financialsText := ""
+	if data.EnhancedContent != nil && data.EnhancedContent.FinancialsDetail != "" {
+		financialsText = data.EnhancedContent.FinancialsDetail
+	}
+
+	if financialsText == "" {
 		pdf.SetFont("Arial", "I", 11)
 		pdf.SetTextColor(128, 128, 128)
-		pdf.MultiCell(0, 7, "Financial analysis not available.", "", "", false)
+		g.multiCell(pdf, 0, 7, "Financial details not available.", "", "", false)
+	} else {
+		g.multiCell(pdf, 0, 6, financialsText, "", "", false)
+	}
+
+	// Green/Red boxes for Financials
+	pdf.Ln(5)
+	if data.FinancialsNotes != nil {
+		boxY := pdf.GetY()
+		boxWidth := 180.0
+		boxX := 15.0
+
+		greenHeight := 0.0
+		redHeight := 0.0
+		if len(data.FinancialsNotes.Positive) > 0 {
+			greenHeight = float64(len(data.FinancialsNotes.Positive))*5 + 10
+		}
+		if len(data.FinancialsNotes.Concerns) > 0 {
+			redHeight = float64(len(data.FinancialsNotes.Concerns))*5 + 10
+		}
+
+		if greenHeight > 0 {
+			g.drawGreenBox(pdf, boxX, boxY, boxWidth, greenHeight, "Noteworthy Positive Aspects", data.FinancialsNotes.Positive)
+			pdf.SetY(boxY + greenHeight + 5)
+		}
+
+		if redHeight > 0 {
+			g.drawRedBox(pdf, boxX, pdf.GetY(), boxWidth, redHeight, "Noteworthy Concerns", data.FinancialsNotes.Concerns)
+			pdf.SetY(pdf.GetY() + redHeight + 5)
+		}
+	}
+	pdf.Ln(10)
+
+	if data.Financials == nil {
 		return
 	}
 

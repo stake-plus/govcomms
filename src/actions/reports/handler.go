@@ -196,25 +196,79 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 	if finalResult.positive != nil && finalResult.steelMan != nil {
 		finalResult.recommendations, _ = analyzer.GenerateRecommendations(ctx, proposalContent, entry.Summary,
 			finalResult.financials, finalResult.risks, finalResult.positive, finalResult.steelMan)
+		// Enhance recommendations with idea quality, team capability, AI vote
+		if finalResult.recommendations != nil {
+			analyzer.EnhanceRecommendations(ctx, finalResult.recommendations, proposalContent, entry.TeamMembers, finalResult.positive, finalResult.steelMan)
+		}
+	}
+
+	// Generate enhanced content
+	enhancedContent, _ := analyzer.GenerateEnhancedContent(ctx, proposalContent, entry.Summary, entry.TeamMembers, finalResult.financials)
+	
+	// Generate section notes (green/red boxes)
+	backgroundNotes, _ := analyzer.GenerateSectionNotes(ctx, "Background Context", 
+		func() string {
+			if enhancedContent != nil {
+				return enhancedContent.BackgroundContext
+			}
+			if entry.Summary != nil {
+				return entry.Summary.BackgroundContext
+			}
+			return ""
+		}(), finalResult.positive, finalResult.steelMan)
+	
+	summaryNotes, _ := analyzer.GenerateSectionNotes(ctx, "Referenda Summary",
+		func() string {
+			if enhancedContent != nil {
+				return enhancedContent.ReferendaSummary
+			}
+			if entry.Summary != nil {
+				return entry.Summary.Summary
+			}
+			return ""
+		}(), finalResult.positive, finalResult.steelMan)
+	
+	financialsNotes, _ := analyzer.GenerateSectionNotes(ctx, "Project Financials",
+		func() string {
+			if enhancedContent != nil {
+				return enhancedContent.FinancialsDetail
+			}
+			return ""
+		}(), finalResult.positive, finalResult.steelMan)
+
+	// Generate enhanced team member details
+	teamDetailsMap := make(map[string]*reports.TeamMemberDetails)
+	if entry.TeamMembers != nil {
+		for _, member := range entry.TeamMembers.Members {
+			details, err := analyzer.GenerateTeamMemberDetails(ctx, member, proposalContent)
+			if err == nil && details != nil {
+				teamDetailsMap[member.Name] = details
+			}
+		}
 	}
 
 	// Create report data
 	reportData := &reports.ReportData{
-		Network:         network,
-		RefID:           refID,
-		Title:           entry.Summary.Title,
-		Summary:         entry.Summary,
-		Claims:          entry.Claims,
-		TeamMembers:     entry.TeamMembers,
-		ProposalText:    proposalContent,
-		Ref:             &ref,
-		Financials:      finalResult.financials,
-		RiskAssessment:  finalResult.risks,
-		Timeline:        finalResult.timeline,
-		Governance:      finalResult.governance,
-		Positive:        finalResult.positive,
-		SteelManning:    finalResult.steelMan,
-		Recommendations: finalResult.recommendations,
+		Network:              network,
+		RefID:                refID,
+		Title:                entry.Summary.Title,
+		Summary:              entry.Summary,
+		Claims:               entry.Claims,
+		TeamMembers:          entry.TeamMembers,
+		ProposalText:         proposalContent,
+		Ref:                  &ref,
+		Financials:           finalResult.financials,
+		RiskAssessment:       finalResult.risks,
+		Timeline:             finalResult.timeline,
+		Governance:           finalResult.governance,
+		Positive:             finalResult.positive,
+		SteelManning:         finalResult.steelMan,
+		Recommendations:      finalResult.recommendations,
+		EnhancedContent:      enhancedContent,
+		BackgroundNotes:      backgroundNotes,
+		SummaryNotes:         summaryNotes,
+		FinancialsNotes:      financialsNotes,
+		TeamMemberDetailsMap: teamDetailsMap,
 	}
 
 	// Generate PDF

@@ -455,6 +455,237 @@ Analysis Context:
 	return &recommendations, nil
 }
 
+// GenerateEnhancedContent creates enhanced background context, summary, and financials
+func (a *Analyzer) GenerateEnhancedContent(ctx context.Context, proposalContent string, summary *cache.SummaryData, teams *cache.TeamsData, financials *FinancialAnalysis) (*EnhancedContent, error) {
+	prompt := fmt.Sprintf(`Generate enhanced content for a comprehensive referendum report. Provide:
+
+1. Background Context (exactly 2 paragraphs, no more):
+   - First paragraph: Background of the people/team behind this proposal
+   - Second paragraph: Background of the idea/project and any other relevant context needed to understand this proposal
+   
+2. Referenda Summary (exactly 2 paragraphs, no more):
+   - Everything needed to know about what they want us to vote on
+   - Everything needed to make a good voting decision
+   
+3. Project Financials Detail (exactly 2 paragraphs, no more):
+   - How much they're asking for now
+   - How much they want in the future (if any)
+   - If there will be any other associated or side projects
+
+Respond with JSON:
+{
+  "backgroundContext": "Two paragraphs about people and idea background",
+  "referendaSummary": "Two paragraphs about what we're voting on",
+  "financialsDetail": "Two paragraphs about current ask, future asks, side projects"
+}
+
+Proposal Content:
+%s`, proposalContent)
+
+	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	if err != nil {
+		return nil, fmt.Errorf("AI response: %w", err)
+	}
+
+	var content EnhancedContent
+	if err := a.extractJSON(response, &content); err != nil {
+		log.Printf("reports: failed to parse enhanced content JSON: %v", err)
+		// Fallback
+		if summary != nil {
+			content.BackgroundContext = summary.BackgroundContext
+			content.ReferendaSummary = summary.Summary
+		}
+		if financials != nil {
+			content.FinancialsDetail = fmt.Sprintf("Total requested: %s", financials.TotalAmount)
+		}
+	}
+	content.GeneratedAt = time.Now()
+
+	return &content, nil
+}
+
+// GenerateSectionNotes creates green/red box content for a section
+func (a *Analyzer) GenerateSectionNotes(ctx context.Context, sectionName string, sectionContent string, positiveAnalysis *PositiveAnalysis, steelManAnalysis *SteelManAnalysis) (*SectionNotes, error) {
+	prompt := fmt.Sprintf(`Analyze this section of a referendum report and identify noteworthy positive aspects and concerns.
+
+Section: %s
+Content: %s
+
+Provide ONLY noteworthy items. If there's nothing noteworthy (positive or negative), return empty arrays.
+
+Respond with JSON:
+{
+  "positive": ["Noteworthy positive aspects - only if truly noteworthy"],
+  "concerns": ["Noteworthy concerns or problems - only if truly noteworthy"]
+}
+
+Do not include empty boxes. Only include items that are truly noteworthy.`, sectionName, sectionContent)
+
+	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	if err != nil {
+		return nil, fmt.Errorf("AI response: %w", err)
+	}
+
+	var notes SectionNotes
+	if err := a.extractJSON(response, &notes); err != nil {
+		log.Printf("reports: failed to parse section notes JSON: %v", err)
+		notes = SectionNotes{
+			Positive: []string{},
+			Concerns: []string{},
+		}
+	}
+
+	return &notes, nil
+}
+
+// GenerateTeamMemberDetails creates enhanced team member information
+func (a *Analyzer) GenerateTeamMemberDetails(ctx context.Context, member cache.TeamMemberData, proposalContent string) (*TeamMemberDetails, error) {
+	var socialHandles strings.Builder
+	socialHandles.WriteString("GitHub: ")
+	if len(member.GitHub) > 0 {
+		socialHandles.WriteString(strings.Join(member.GitHub, ", "))
+	} else {
+		socialHandles.WriteString("None")
+	}
+	socialHandles.WriteString("\nTwitter: ")
+	if len(member.Twitter) > 0 {
+		socialHandles.WriteString(strings.Join(member.Twitter, ", "))
+	} else {
+		socialHandles.WriteString("None")
+	}
+	socialHandles.WriteString("\nLinkedIn: ")
+	if len(member.LinkedIn) > 0 {
+		socialHandles.WriteString(strings.Join(member.LinkedIn, ", "))
+	} else {
+		socialHandles.WriteString("None")
+	}
+	socialHandles.WriteString("\nOther URLs: ")
+	if len(member.Other) > 0 {
+		socialHandles.WriteString(strings.Join(member.Other, ", "))
+	} else {
+		socialHandles.WriteString("None")
+	}
+
+	prompt := fmt.Sprintf(`Analyze this team member from a blockchain governance proposal and extract:
+
+1. All social handles (Twitter, GitHub, Discord, Element, Email, LinkedIn, Facebook, Forum, YouTube, etc.)
+2. Known skills and capabilities
+3. Work history and background
+4. Verified/confirmed positive aspects
+5. Concerns or worries
+
+Team Member: %s
+Role: %s
+Capability: %s
+Social URLs: %s
+Is Real Person: %v
+Has Stated Skills: %v
+
+Respond with JSON:
+{
+  "socialHandles": {
+    "twitter": ["handles"],
+    "github": ["handles"],
+    "discord": ["handles"],
+    "element": ["handles"],
+    "email": ["emails"],
+    "linkedin": ["urls"],
+    "facebook": ["urls"],
+    "forum": ["urls"],
+    "youtube": ["urls"],
+    "other": ["other urls"]
+  },
+  "skills": ["List of known skills"],
+  "workHistory": "Detailed work history and background",
+  "verified": ["Verified/confirmed positive aspects"],
+  "concerns": ["Concerns or worries about this team member"]
+}
+
+Proposal Context:
+%s`, member.Name, member.Role, member.Capability, socialHandles.String(),
+		member.IsReal != nil && *member.IsReal,
+		member.HasStatedSkills != nil && *member.HasStatedSkills,
+		proposalContent)
+
+	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	if err != nil {
+		return nil, fmt.Errorf("AI response: %w", err)
+	}
+
+	var details TeamMemberDetails
+	if err := a.extractJSON(response, &details); err != nil {
+		log.Printf("reports: failed to parse team member details JSON: %v", err)
+		// Fallback: use existing data
+		details.SocialHandles = make(map[string][]string)
+		details.SocialHandles["github"] = member.GitHub
+		details.SocialHandles["twitter"] = member.Twitter
+		details.SocialHandles["linkedin"] = member.LinkedIn
+		details.SocialHandles["other"] = member.Other
+		details.Skills = []string{}
+		details.WorkHistory = member.Capability
+		if member.IsReal != nil && *member.IsReal {
+			details.Verified = []string{"Verified as real person"}
+		}
+		if member.HasStatedSkills != nil && !*member.HasStatedSkills {
+			details.Concerns = []string{"Skills not verified"}
+		}
+	}
+
+	return &details, nil
+}
+
+// EnhanceRecommendations adds idea quality, team capability, and AI vote
+func (a *Analyzer) EnhanceRecommendations(ctx context.Context, recommendations *Recommendations, proposalContent string, teams *cache.TeamsData, positive *PositiveAnalysis, steelMan *SteelManAnalysis) error {
+	prompt := fmt.Sprintf(`Based on the analysis, determine:
+
+1. Idea Quality: Is the idea itself good? (Good/Bad/Uncertain)
+2. Team Capability: Can the team pull it off? (Can deliver/Cannot deliver/Uncertain)
+3. AI Vote: Should we vote Aye, Nay, or Abstain? (Aye/Nay/Abstain)
+
+Current Verdict: %s
+Reasoning: %s
+
+Consider:
+- The proposal's merits
+- Team capabilities and verification
+- Financial feasibility
+- Technical feasibility
+- Risks and concerns
+
+Respond with JSON:
+{
+  "ideaQuality": "Good/Bad/Uncertain",
+  "teamCapability": "Can deliver/Cannot deliver/Uncertain",
+  "aiVote": "Aye/Nay/Abstain"
+}
+
+Proposal: %s`, recommendations.Verdict, recommendations.Reasoning, proposalContent)
+
+	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	if err != nil {
+		return fmt.Errorf("AI response: %w", err)
+	}
+
+	var enhanced struct {
+		IdeaQuality    string `json:"ideaQuality"`
+		TeamCapability string `json:"teamCapability"`
+		AIVote         string `json:"aiVote"`
+	}
+
+	if err := a.extractJSON(response, &enhanced); err != nil {
+		log.Printf("reports: failed to parse enhanced recommendations JSON: %v", err)
+		enhanced.IdeaQuality = "Uncertain"
+		enhanced.TeamCapability = "Uncertain"
+		enhanced.AIVote = "Abstain"
+	}
+
+	recommendations.IdeaQuality = enhanced.IdeaQuality
+	recommendations.TeamCapability = enhanced.TeamCapability
+	recommendations.AIVote = enhanced.AIVote
+
+	return nil
+}
+
 // extractJSON extracts JSON from AI response
 func (a *Analyzer) extractJSON(response string, target interface{}) error {
 	// Try to find JSON block
