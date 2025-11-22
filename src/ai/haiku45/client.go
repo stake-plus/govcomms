@@ -50,6 +50,7 @@ type client struct {
 	defaults   core.Options
 	topP       float64
 	topK       int
+	useTopP    bool
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
@@ -57,7 +58,12 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 		return nil, fmt.Errorf("haiku-4.5: Claude API key not configured")
 	}
 
-	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
+	topP := defaultTopP
+	useTopP := false
+	if _, ok := cfg.Extra[extraTopPKey]; ok {
+		topP = core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
+		useTopP = true
+	}
 	topK := core.ExtraInt(cfg.Extra, extraTopKKey, defaultTopK)
 	if topK < minTopK {
 		topK = minTopK
@@ -75,8 +81,9 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 			SystemPrompt:        cfg.SystemPrompt,
 			EnableWebSearch:     core.ExtraBool(cfg.Extra, "enable_web_search", false),
 		},
-		topP: topP,
-		topK: topK,
+		topP:    topP,
+		topK:    topK,
+		useTopP: useTopP,
 	}, nil
 }
 
@@ -101,12 +108,9 @@ func (c *client) invoke(ctx context.Context, opts core.Options, input string, to
 	}
 
 	body := map[string]interface{}{
-		"model":       opts.Model,
-		"system":      opts.SystemPrompt,
-		"max_tokens":  maxTokens,
-		"temperature": opts.Temperature,
-		"top_p":       c.topP,
-		"top_k":       c.topK,
+		"model":      opts.Model,
+		"system":     opts.SystemPrompt,
+		"max_tokens": maxTokens,
 		"messages": []map[string]interface{}{
 			{
 				"role": "user",
@@ -116,6 +120,7 @@ func (c *client) invoke(ctx context.Context, opts core.Options, input string, to
 			},
 		},
 	}
+	c.applySampling(body, opts.Temperature)
 
 	bodyBytes, _ := json.Marshal(body)
 	_, responseBody, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
@@ -210,13 +215,11 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 
 	for iteration := 0; iteration < maxToolIterations; iteration++ {
 		reqBody := map[string]any{
-			"model":       opts.Model,
-			"messages":    messages,
-			"max_tokens":  maxTokens,
-			"temperature": opts.Temperature,
-			"top_p":       c.topP,
-			"top_k":       c.topK,
+			"model":      opts.Model,
+			"messages":   messages,
+			"max_tokens": maxTokens,
 		}
+		c.applySampling(reqBody, opts.Temperature)
 		if strings.TrimSpace(opts.SystemPrompt) != "" {
 			reqBody["system"] = opts.SystemPrompt
 		}
@@ -453,6 +456,17 @@ func shouldEnableWebSearch(opts core.Options, tools []core.Tool) bool {
 		}
 	}
 	return false
+}
+
+func (c *client) applySampling(target map[string]any, temperature float64) {
+	target["top_k"] = c.topK
+	if c.useTopP {
+		target["top_p"] = c.topP
+		return
+	}
+	if temperature > 0 {
+		target["temperature"] = temperature
+	}
 }
 
 func extractText(chunks []struct {
