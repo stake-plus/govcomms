@@ -82,8 +82,8 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 			SystemPrompt:        cfg.SystemPrompt,
 			EnableWebSearch:     core.ExtraBool(cfg.Extra, "enable_web_search", false),
 		},
-		topP:   topP,
-		topK:   topK,
+		topP:    topP,
+		topK:    topK,
 		useTopP: useTopP,
 	}, nil
 }
