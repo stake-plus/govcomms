@@ -1212,14 +1212,14 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 			embeds = append(embeds, SummaryEmbed{
 				Title:       title,
 				Description: chunk,
-				Color:       0x10B981, // Green
+				Color:       0x3B82F6, // Green
 			})
 		}
 	} else {
 		embeds = append(embeds, SummaryEmbed{
 			Title:       "Referendum Claims and Warranties Analysis 🔍",
 			Description: claimsText,
-			Color:       0x10B981,
+			Color:       0x3B82F6,
 		})
 	}
 
@@ -1311,14 +1311,14 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 			embeds = append(embeds, SummaryEmbed{
 				Title:       title,
 				Description: chunk,
-				Color:       0xF59E0B, // Amber/Orange
+				Color:       0x3B82F6, // Amber/Orange
 			})
 		}
 	} else {
 		embeds = append(embeds, SummaryEmbed{
 			Title:       "Team Background and Skill Summary ⚡",
 			Description: teamText,
-			Color:       0xF59E0B,
+			Color:       0x3B82F6,
 		})
 	}
 
