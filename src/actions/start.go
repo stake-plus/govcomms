@@ -7,7 +7,6 @@ import (
 
 	feedbackmodule "github.com/stake-plus/govcomms/src/actions/feedback"
 	questionmodule "github.com/stake-plus/govcomms/src/actions/question"
-	researchmodule "github.com/stake-plus/govcomms/src/actions/research"
 	sharedconfig "github.com/stake-plus/govcomms/src/config"
 	"gorm.io/gorm"
 )
@@ -27,19 +26,6 @@ func StartAll(ctx context.Context, db *gorm.DB) (*Manager, error) {
 		}
 	} else {
 		log.Printf("actions: QA module disabled via configuration")
-	}
-
-	researchCfg := sharedconfig.LoadResearchConfig(db)
-	if researchCfg.Enabled {
-		mod, err := researchmodule.NewModule(&researchCfg, db)
-		if err != nil {
-			return nil, fmt.Errorf("actions: init research module: %w", err)
-		}
-		if err := mgr.Add(mod); err != nil {
-			return nil, fmt.Errorf("actions: add research module: %w", err)
-		}
-	} else {
-		log.Printf("actions: research module disabled via configuration")
 	}
 
 	feedbackCfg := sharedconfig.LoadFeedbackConfig(db)
