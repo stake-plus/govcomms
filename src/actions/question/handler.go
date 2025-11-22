@@ -166,10 +166,14 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 		return
 	}
 
+	// Respond immediately to avoid "thinking" indicator
 	if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "Processing your question...",
+		},
 	}); err != nil {
-		log.Printf("question: slash ack failed: %v", err)
+		log.Printf("question: immediate response failed: %v", err)
 		return
 	}
 
@@ -262,7 +266,9 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 	}
 	if err != nil {
 		log.Printf("question: AI failure: %v", err)
-		sendStyledWebhookEdit(s, i.Interaction, "Question", "Failed to generate answer. Please try again.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "Failed to generate answer. Please try again."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
@@ -333,10 +339,14 @@ func (m *Module) createAIClient() (aicore.Client, sharedconfig.AIConfig, error) 
 }
 
 func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	// Respond immediately to avoid "thinking" indicator
 	if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "Retrieving context...",
+		},
 	}); err != nil {
-		log.Printf("question: context ack failed: %v", err)
+		log.Printf("question: immediate response failed: %v", err)
 		return
 	}
 
@@ -377,7 +387,10 @@ func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.Interacti
 		}
 	}
 	content := response.String()
-	sendStyledWebhookEdit(s, i.Interaction, "Context", content)
+	// Send context as follow-up message
+	if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, content); err != nil {
+		log.Printf("question: failed to send context: %v", err)
+	}
 }
 
 func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -393,28 +406,38 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 		return
 	}
 
+	// Respond immediately to avoid "thinking" indicator - we'll send status updates as regular messages
 	if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "Starting refresh...",
+		},
 	}); err != nil {
-		log.Printf("question: refresh ack failed: %v", err)
+		log.Printf("question: immediate response failed: %v", err)
 		return
 	}
 
 	threadInfo, err := m.refManager.FindThread(i.ChannelID)
 	if err != nil || threadInfo == nil {
-		sendStyledWebhookEdit(s, i.Interaction, "Refresh", "This command must be used in a referendum thread.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "This command must be used in a referendum thread."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
 	network := m.networkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
-		sendStyledWebhookEdit(s, i.Interaction, "Refresh", "Failed to identify network.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "Failed to identify network."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
 	if _, err := m.cacheManager.Refresh(network.Name, uint32(threadInfo.RefID)); err != nil {
 		log.Printf("question: refresh failed: %v", err)
-		sendStyledWebhookEdit(s, i.Interaction, "Refresh", "Failed to refresh proposal content.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "Failed to refresh proposal content."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
@@ -527,29 +550,17 @@ func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discord
 		return
 	}
 
-	first := payloads[0]
-	edit := &discordgo.WebhookEdit{
-		Content: &first.Content,
-	}
-	if len(refs) > 0 {
-		components := shareddiscord.BuildLinkButtons(refs)
-		edit.Components = &components
-	}
-	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, interaction, edit); err != nil {
-		log.Printf("question: response send failed: %v", err)
-		return
-	}
-
-	for idx := 1; idx < len(payloads); idx++ {
-		payload := payloads[idx]
+	// Send all messages as follow-ups since we already responded immediately
+	for idx, payload := range payloads {
 		msg := &discordgo.MessageSend{
 			Content: payload.Content,
 		}
-		if len(refs) > 0 {
+		if len(refs) > 0 && idx == 0 {
+			// Add buttons to first message
 			msg.Components = shareddiscord.BuildLinkButtons(refs)
 		}
 		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, interaction.ChannelID, msg); err != nil {
-			log.Printf("question: follow-up send failed: %v", err)
+			log.Printf("question: response send failed: %v", err)
 			return
 		}
 	}
@@ -1326,7 +1337,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Add provider info at the end
 	providerInfoText := fmt.Sprintf("\n\n---\n\n**Provider:** %s\n**AI Model:** %s", summary.ProviderCompany, summary.AIModel)
-	
+
 	// Check if we can add provider info to the last team embed without exceeding limit
 	if len(teamText) > maxChars {
 		chunks := splitLongText(teamPrefix, teamContent, maxChars)
@@ -1475,34 +1486,46 @@ func (m *Module) handleSummarySlash(s *discordgo.Session, i *discordgo.Interacti
 		return
 	}
 
+	// Respond immediately to avoid "thinking" indicator
 	if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
-		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
+		Type: discordgo.InteractionResponseChannelMessageWithSource,
+		Data: &discordgo.InteractionResponseData{
+			Content: "Loading summary...",
+		},
 	}); err != nil {
-		log.Printf("question: summary ack failed: %v", err)
+		log.Printf("question: immediate response failed: %v", err)
 		return
 	}
 
 	threadInfo, err := m.refManager.FindThread(i.ChannelID)
 	if err != nil || threadInfo == nil {
-		sendStyledWebhookEdit(s, i.Interaction, "Summary", "This command must be used in a referendum thread.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "This command must be used in a referendum thread."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
 	network := m.networkManager.GetByID(threadInfo.NetworkID)
 	if network == nil {
-		sendStyledWebhookEdit(s, i.Interaction, "Summary", "Failed to identify network.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "Failed to identify network."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
 	// Get cache entry
 	entry, err := m.cacheManager.EnsureEntry(network.Name, uint32(threadInfo.RefID))
 	if err != nil {
-		sendStyledWebhookEdit(s, i.Interaction, "Summary", "Failed to load cache entry.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "Failed to load cache entry."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
 	if entry.Summary == nil {
-		sendStyledWebhookEdit(s, i.Interaction, "Summary", "No summary available. Please run /refresh first.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "No summary available. Please run /refresh first."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
@@ -1520,7 +1543,9 @@ func (m *Module) handleSummarySlash(s *discordgo.Session, i *discordgo.Interacti
 	summaryEmbeds := m.formatSummary(entry.Summary, channelName)
 
 	if len(summaryEmbeds) == 0 {
-		sendStyledWebhookEdit(s, i.Interaction, "Summary", "Summary formatting failed.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "Summary formatting failed."); err != nil {
+			log.Printf("question: failed to send error: %v", err)
+		}
 		return
 	}
 
@@ -1534,23 +1559,13 @@ func (m *Module) handleSummarySlash(s *discordgo.Session, i *discordgo.Interacti
 		}
 	}
 
-	// Send first embed as webhook edit
-	firstEmbed := []*discordgo.MessageEmbed{discordEmbeds[0]}
-	edit := &discordgo.WebhookEdit{
-		Embeds: &firstEmbed,
-	}
-	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, edit); err != nil {
-		log.Printf("question: summary send failed: %v", err)
-		return
-	}
-
-	// Send follow-up embeds
-	for idx := 1; idx < len(discordEmbeds); idx++ {
+	// Send all embeds as follow-up messages
+	for _, embed := range discordEmbeds {
 		msg := &discordgo.MessageSend{
-			Embeds: []*discordgo.MessageEmbed{discordEmbeds[idx]},
+			Embeds: []*discordgo.MessageEmbed{embed},
 		}
 		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, i.ChannelID, msg); err != nil {
-			log.Printf("question: summary follow-up send failed: %v", err)
+			log.Printf("question: summary send failed: %v", err)
 			return
 		}
 	}
