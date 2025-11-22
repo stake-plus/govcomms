@@ -46,15 +46,21 @@ type Module struct {
 	mcpAuthToken    string
 	responseTimeout time.Duration
 	reportsGen      ReportsGenerator // Optional reports generator
+	reportsModule   ReportsModule    // Optional reports module for slash command handling
+}
+
+// ReportsModule is an interface for handling report slash commands
+type ReportsModule interface {
+	HandleReportSlash(s *discordgo.Session, i *discordgo.InteractionCreate)
 }
 
 // NewModule wires dependencies for the question/refresh/context actions.
 func NewModule(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Module, error) {
-	return NewModuleWithReports(cfg, db, nil)
+	return NewModuleWithReports(cfg, db, nil, nil)
 }
 
 // NewModuleWithReports creates a question module with an optional reports generator
-func NewModuleWithReports(cfg *sharedconfig.QAConfig, db *gorm.DB, reportsGen ReportsGenerator) (*Module, error) {
+func NewModuleWithReports(cfg *sharedconfig.QAConfig, db *gorm.DB, reportsGen ReportsGenerator, reportsMod ReportsModule) (*Module, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("qa config is nil")
 	}
@@ -106,12 +112,19 @@ func NewModuleWithReports(cfg *sharedconfig.QAConfig, db *gorm.DB, reportsGen Re
 		mcpAuthToken:    mcpCfg.AuthToken,
 		responseTimeout: defaultInteractionTimeout,
 		reportsGen:      reportsGen,
+		reportsModule:   reportsMod,
 	}
 
 	if module.reportsGen == nil {
 		log.Printf("question: module created with nil reportsGen")
 	} else {
 		log.Printf("question: module created with reports generator")
+	}
+
+	if module.reportsModule == nil {
+		log.Printf("question: module created with nil reportsModule")
+	} else {
+		log.Printf("question: module created with reports module for slash commands")
 	}
 
 	return module, nil
@@ -156,12 +169,18 @@ func (m *Module) initHandlers() {
 	m.session.AddHandler(func(s *discordgo.Session, r *discordgo.Ready) {
 		username := formatDiscordUsername(s.State.User.Username, s.State.User.Discriminator)
 		log.Printf("question: logged in as %s", username)
-		if err := shareddiscord.RegisterSlashCommands(s, m.cfg.Base.GuildID,
+		commands := []string{
 			shareddiscord.CommandQuestion,
 			shareddiscord.CommandRefresh,
 			shareddiscord.CommandContext,
 			shareddiscord.CommandSummary,
-		); err != nil {
+		}
+		// Add /report command if reports module is available
+		if m.reportsModule != nil {
+			commands = append(commands, shareddiscord.CommandReport)
+			log.Printf("question: registering /report command")
+		}
+		if err := shareddiscord.RegisterSlashCommands(s, m.cfg.Base.GuildID, commands...); err != nil {
 			log.Printf("question: register commands failed: %v", err)
 		}
 	})
@@ -176,6 +195,19 @@ func (m *Module) initHandlers() {
 			m.handleContextSlash(s, i)
 		case "summary":
 			m.handleSummarySlash(s, i)
+		case "report":
+			if m.reportsModule != nil {
+				m.reportsModule.HandleReportSlash(s, i)
+			} else {
+				formatted := shareddiscord.FormatStyledBlock("Report", "Reports module is not available. Please check server configuration.")
+				shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
+					Type: discordgo.InteractionResponseChannelMessageWithSource,
+					Data: &discordgo.InteractionResponseData{
+						Content: formatted,
+						Flags:   discordgo.MessageFlagsEphemeral,
+					},
+				})
+			}
 		}
 	})
 }

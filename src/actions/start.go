@@ -42,7 +42,7 @@ func StartAll(ctx context.Context, db *gorm.DB) (*Manager, error) {
 		var err error
 		if reportsMod != nil {
 			log.Printf("actions: passing reports module to question module")
-			mod, err = questionmodule.NewModuleWithReports(&qaCfg, db, reportsMod)
+			mod, err = questionmodule.NewModuleWithReports(&qaCfg, db, reportsMod, reportsMod)
 		} else {
 			log.Printf("actions: reports module not available, creating question module without reports")
 			mod, err = questionmodule.NewModule(&qaCfg, db)

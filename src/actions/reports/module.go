@@ -35,6 +35,15 @@ func (m *Module) GenerateReport(s *discordgo.Session, channelID string, network 
 	m.handler.GenerateReport(s, channelID, network, refID, refDBID)
 }
 
+// HandleReportSlash handles the /report slash command
+func (m *Module) HandleReportSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
+	if m.handler == nil {
+		log.Printf("reports: handler not initialized")
+		return
+	}
+	m.handler.HandleReportSlash(s, i)
+}
+
 // NewModule creates a new reports module
 func NewModule(cfg *sharedconfig.ReportsConfig, db *gorm.DB) (*Module, error) {
 	if cfg == nil {
@@ -129,4 +138,3 @@ func formatDiscordUsername(username, discriminator string) string {
 	}
 	return fmt.Sprintf("%s#%s", username, discriminator)
 }
-
