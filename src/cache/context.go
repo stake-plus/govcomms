@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -83,9 +84,31 @@ func (cs *ContextStore) BuildContext(networkID uint8, refID uint32) (string, err
 	if err != nil {
 		return "", err
 	}
+	return FormatQAContext(qas), nil
+}
 
+// BuildContextByNetworkName resolves the network name before building context.
+func (cs *ContextStore) BuildContextByNetworkName(network string, refID uint32) (string, error) {
+	networkID, err := cs.lookupNetworkID(network)
+	if err != nil {
+		return "", err
+	}
+	return cs.BuildContext(networkID, refID)
+}
+
+// GetRecentQAsByNetworkName resolves the network name before fetching Q&A rows.
+func (cs *ContextStore) GetRecentQAsByNetworkName(network string, refID uint32, limit int) ([]QAHistory, error) {
+	networkID, err := cs.lookupNetworkID(network)
+	if err != nil {
+		return nil, err
+	}
+	return cs.GetRecentQAs(networkID, refID, limit)
+}
+
+// FormatQAContext renders a slice of QAHistory into the legacy text block.
+func FormatQAContext(qas []QAHistory) string {
 	if len(qas) == 0 {
-		return "", nil
+		return ""
 	}
 
 	var builder strings.Builder
@@ -99,5 +122,34 @@ func (cs *ContextStore) BuildContext(networkID uint8, refID uint32) (string, err
 		}
 	}
 
-	return builder.String(), nil
+	return builder.String()
+}
+
+func (cs *ContextStore) lookupNetworkID(network string) (uint8, error) {
+	if cs == nil || cs.db == nil {
+		return 0, fmt.Errorf("context store not initialized")
+	}
+	name := strings.ToLower(strings.TrimSpace(network))
+	if name == "" {
+		return 0, fmt.Errorf("network name is required")
+	}
+
+	var row struct {
+		ID uint8 `gorm:"column:id"`
+	}
+	err := cs.db.
+		Table("networks").
+		Select("id").
+		Where("LOWER(name) = ?", name).
+		First(&row).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, fmt.Errorf("network %s not found", network)
+		}
+		return 0, err
+	}
+	if row.ID == 0 {
+		return 0, fmt.Errorf("network %s not found", network)
+	}
+	return row.ID, nil
 }

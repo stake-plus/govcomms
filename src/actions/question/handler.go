@@ -204,48 +204,45 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 		return
 	}
 
-	qaContext, err := m.contextStore.BuildContext(threadInfo.NetworkID, uint32(threadInfo.RefID))
-	if err != nil {
-		log.Printf("question: build context: %v", err)
-		qaContext = ""
+	var qaContext string
+	if !m.mcpEnabled {
+		qaContext, err = m.contextStore.BuildContext(threadInfo.NetworkID, uint32(threadInfo.RefID))
+		if err != nil {
+			log.Printf("question: build context: %v", err)
+			qaContext = ""
+		}
 	}
 
-	fullContent := content + qaContext
-	ctx := context.Background()
-	opts := aicore.Options{
-		Model:        m.cfg.AIModel,
-		SystemPrompt: m.cfg.AISystemPrompt,
-	}
-
-	var contextBuilder strings.Builder
-	contextBuilder.WriteString(fmt.Sprintf(
-		"You are assisting with %s referendum #%d.\n- Network: %s\n- Referendum ID: %d\n",
-		network.Name, threadInfo.RefID, network.Name, threadInfo.RefID))
-	if m.mcpEnabled {
-		contextBuilder.WriteString("You do NOT have the proposal body in your context. You MUST call the tool `fetch_referendum_data` before answering. Example calls:\n")
-		contextBuilder.WriteString("1. metadata: {\"network\":\"" + strings.ToLower(network.Name) + "\",\"refId\":" + fmt.Sprint(threadInfo.RefID) + ",\"resource\":\"metadata\"}\n")
-		contextBuilder.WriteString("2. content: {\"network\":\"" + strings.ToLower(network.Name) + "\",\"refId\":" + fmt.Sprint(threadInfo.RefID) + ",\"resource\":\"content\"}\n")
-		contextBuilder.WriteString("Only after reviewing metadata/content should you answer. Fetch attachments if needed.\n")
-	} else {
-		contextBuilder.WriteString("Full proposal text:\n")
-		contextBuilder.WriteString(content)
-	}
+	fullContent := content
 	if strings.TrimSpace(qaContext) != "" {
-		contextBuilder.WriteString("\nRecent Q&A history:\n")
-		contextBuilder.WriteString(qaContext)
+		fullContent += qaContext
+	}
+	ctx := context.Background()
+	basePrompt := strings.TrimSpace(m.cfg.AISystemPrompt)
+	respondOpts := aicore.Options{
+		Model:        m.cfg.AIModel,
+		SystemPrompt: m.buildRespondSystemPrompt(basePrompt, network.Name, threadInfo.RefID, content, qaContext),
 	}
 
-	input := contextBuilder.String() + "\n\nQuestion:\n" + question
+	input := strings.TrimSpace(question)
+	if input == "" {
+		input = question
+	}
 
 	tools := []aicore.Tool{{Type: "web_search"}}
 	if mcptool := m.buildMCPTool(strings.ToLower(network.Name), uint32(threadInfo.RefID)); mcptool != nil {
 		tools = append(tools, *mcptool)
 	}
 
-	answer, err := m.aiClient.Respond(ctx, input, tools, opts)
+	answer, err := m.aiClient.Respond(ctx, input, tools, respondOpts)
 	if err != nil {
 		log.Printf("question: web search failed, fallback: %v", err)
-		answer, err = m.aiClient.AnswerQuestion(ctx, fullContent, question, opts)
+		fallbackOpts := respondOpts
+		fallbackOpts.SystemPrompt = basePrompt
+		if m.mcpEnabled {
+			fullContent = content
+		}
+		answer, err = m.aiClient.AnswerQuestion(ctx, fullContent, question, fallbackOpts)
 	}
 	if err != nil {
 		log.Printf("question: AI failure: %v", err)
@@ -277,6 +274,35 @@ func (m *Module) buildMCPTool(network string, refID uint32) *aicore.Tool {
 		tool.Defaults["resource"] = "metadata"
 	}
 	return tool
+}
+
+func (m *Module) buildRespondSystemPrompt(basePrompt, networkName string, refID uint64, content, qaContext string) string {
+	var builder strings.Builder
+	if trimmed := strings.TrimSpace(basePrompt); trimmed != "" {
+		builder.WriteString(trimmed)
+		builder.WriteString("\n\n")
+	}
+
+	builder.WriteString(fmt.Sprintf(
+		"You are assisting with %s referendum #%d.\n- Network: %s\n- Referendum ID: %d\n",
+		networkName, refID, networkName, refID))
+
+	if m.mcpEnabled {
+		slug := strings.ToLower(strings.TrimSpace(networkName))
+		builder.WriteString("Use the `fetch_referendum_data` tool to retrieve metadata and full proposal content before answering.\n")
+		builder.WriteString(fmt.Sprintf("Metadata example: {\"network\":\"%s\",\"refId\":%d,\"resource\":\"metadata\"}\n", slug, refID))
+		builder.WriteString(fmt.Sprintf("Content example: {\"network\":\"%s\",\"refId\":%d,\"resource\":\"content\"}\n", slug, refID))
+		builder.WriteString("Request attachments when metadata lists files, and call the tool with {\"resource\":\"history\"} to review previous moderator Q&A exchanges when helpful. Avoid repeating tool calls after you have the information you need and then deliver the final answer.\n")
+	} else {
+		builder.WriteString("Full proposal text:\n")
+		builder.WriteString(content)
+		if strings.TrimSpace(qaContext) != "" {
+			builder.WriteString("\nRecent Q&A history:\n")
+			builder.WriteString(qaContext)
+		}
+	}
+
+	return builder.String()
 }
 
 func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {

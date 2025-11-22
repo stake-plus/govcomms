@@ -153,10 +153,12 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 	stallCount := 0
 	metadataFetched := false
 	contentFetched := false
+	historyFetched := false
 	attachmentNames := []string{}
 	attachmentsRetrieved := map[string]bool{}
 	finalReminderSent := false
 	base64ReminderSent := false
+	historyReminderSent := false
 	toolsDisabled := false
 
 	hasPendingAttachments := func() bool {
@@ -189,7 +191,7 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 		}
 		if !toolsDisabled && len(toolDefs) > 0 {
 			reqBody["tools"] = toolDefs
-			if !(metadataFetched && contentFetched && !hasPendingAttachments()) && strings.TrimSpace(forced) != "" {
+			if !(metadataFetched && contentFetched && historyFetched && !hasPendingAttachments()) && strings.TrimSpace(forced) != "" {
 				reqBody["tool_choice"] = buildAnthropicToolChoice(forced)
 			} else {
 				reqBody["tool_choice"] = map[string]any{"type": "auto"}
@@ -312,6 +314,8 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 				if fileArg != "" {
 					attachmentsRetrieved[fileArg] = true
 				}
+			case "history":
+				historyFetched = true
 			}
 		}
 
@@ -326,7 +330,7 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 				messages = append(messages, anthropicMessage{
 					Role: "user",
 					Content: []anthropicContentBlock{
-						textBlock("You already retrieved the referendum metadata and content. Use the information you have and provide the final answer without calling the tool again."),
+						textBlock("You already retrieved the required referendum context. Use the information you have and provide the final answer without calling the tool again."),
 					},
 				})
 				stallCount = 0
@@ -359,11 +363,22 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 			base64ReminderSent = true
 		}
 
-		if metadataFetched && contentFetched && !hasPendingAttachments() && !finalReminderSent {
+		if metadataFetched && contentFetched && !historyFetched && !historyReminderSent {
 			messages = append(messages, anthropicMessage{
 				Role: "user",
 				Content: []anthropicContentBlock{
-					textBlock("You now have metadata, the full proposal content, and attachments. Provide the final answer without calling the tool again."),
+					textBlock("Retrieve the recent Q&A history via {\"resource\":\"history\"} before answering."),
+				},
+			})
+			historyReminderSent = true
+			continue
+		}
+
+		if metadataFetched && contentFetched && historyFetched && !hasPendingAttachments() && !finalReminderSent {
+			messages = append(messages, anthropicMessage{
+				Role: "user",
+				Content: []anthropicContentBlock{
+					textBlock("You now have metadata, the full proposal content, prior Q&A history, and any attachments you needed. Provide the final answer without calling the tool again."),
 				},
 			})
 			finalReminderSent = true

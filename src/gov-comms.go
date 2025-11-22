@@ -81,13 +81,14 @@ func startMCPServer(ctx context.Context, db *gorm.DB) *mcp.Server {
 		log.Printf("mcp: cache init failed: %v", err)
 		return nil
 	}
+	contextStore := cachepkg.NewContextStore(db)
 
 	logger := log.New(os.Stdout, "[mcp] ", log.LstdFlags|log.Lmsgprefix)
 	server, err := mcp.NewServer(mcp.Config{
 		ListenAddr: cfg.Listen,
 		AuthToken:  cfg.AuthToken,
 		Logger:     logger,
-	}, cacheManager)
+	}, cacheManager, contextStore)
 	if err != nil {
 		log.Printf("mcp: server init failed: %v", err)
 		return nil

@@ -97,6 +97,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 	stallCount := 0
 	metadataFetched := false
 	contentFetched := false
+	historyFetched := false
 	attachmentNames := []string{}
 	attachmentsRetrieved := map[string]bool{}
 	finalReminderSent := false
@@ -106,6 +107,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 	callSeq := 0
 	metadataHintSent := false
 	contentHintSent := false
+	historyReminderSent := false
 
 	hasPendingAttachments := func() bool {
 		for _, name := range attachmentNames {
@@ -246,6 +248,8 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 				if fileArg != "" {
 					attachmentsRetrieved[fileArg] = true
 				}
+			case "history":
+				historyFetched = true
 			}
 		}
 
@@ -255,7 +259,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 				contents = append(contents, geminiContent{
 					Role: "user",
 					Parts: []geminiPart{
-						{Text: "You already retrieved the referendum metadata and content. Use the information you have and provide the final answer without calling the tool again."},
+						{Text: "You already retrieved the required referendum context. Use the information you have and provide the final answer without calling the tool again."},
 					},
 				})
 				stallCount = 0
@@ -289,11 +293,22 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			base64ReminderSent = true
 		}
 
-		if metadataFetched && contentFetched && !hasPendingAttachments() && !finalReminderSent {
+		if metadataFetched && contentFetched && !historyFetched && !historyReminderSent {
 			contents = append(contents, geminiContent{
 				Role: "user",
 				Parts: []geminiPart{
-					{Text: "You now have metadata, the full proposal content, and attachments. Provide the final answer without calling the tool again."},
+					{Text: "Retrieve the recent Q&A history via {\"resource\":\"history\"} before answering."},
+				},
+			})
+			historyReminderSent = true
+			continue
+		}
+
+		if metadataFetched && contentFetched && historyFetched && !hasPendingAttachments() && !finalReminderSent {
+			contents = append(contents, geminiContent{
+				Role: "user",
+				Parts: []geminiPart{
+					{Text: "You now have metadata, the full proposal content, previous Q&A history, and any attachments you needed. Provide the final answer without calling the tool again."},
 				},
 			})
 			finalReminderSent = true

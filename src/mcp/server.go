@@ -29,22 +29,27 @@ type Config struct {
 
 // Server exposes referendum cache data via a lightweight MCP-inspired API.
 type Server struct {
-	cache      *cache.Manager
-	cfg        Config
-	httpServer *http.Server
+	cache        *cache.Manager
+	contextStore *cache.ContextStore
+	cfg          Config
+	httpServer   *http.Server
 }
 
 // NewServer constructs a server bound to the provided cache manager.
-func NewServer(cfg Config, cacheManager *cache.Manager) (*Server, error) {
+func NewServer(cfg Config, cacheManager *cache.Manager, contextStore *cache.ContextStore) (*Server, error) {
 	if cacheManager == nil {
 		return nil, fmt.Errorf("mcp: cache manager is required")
+	}
+	if contextStore == nil {
+		return nil, fmt.Errorf("mcp: context store is required")
 	}
 	if strings.TrimSpace(cfg.ListenAddr) == "" {
 		cfg.ListenAddr = "127.0.0.1:7081"
 	}
 	return &Server{
-		cache: cacheManager,
-		cfg:   cfg,
+		cache:        cacheManager,
+		contextStore: contextStore,
+		cfg:          cfg,
 	}, nil
 }
 
@@ -145,6 +150,9 @@ func (s *Server) handleReferenda(w http.ResponseWriter, r *http.Request) {
 			s.logf("mcp: attachments network=%s ref=%d", network, refID)
 		}
 		s.handleAttachments(w, network, uint32(refID), fileParam)
+	case "history":
+		s.logf("mcp: history network=%s ref=%d", network, refID)
+		s.handleHistory(w, network, uint32(refID))
 	default:
 		http.NotFound(w, r)
 	}
@@ -242,6 +250,38 @@ func (s *Server) handleAttachments(w http.ResponseWriter, network string, refID 
 	writeJSON(w, http.StatusOK, payload)
 }
 
+func (s *Server) handleHistory(w http.ResponseWriter, network string, refID uint32) {
+	if s.contextStore == nil {
+		http.Error(w, "history unavailable", http.StatusNotImplemented)
+		return
+	}
+
+	qas, err := s.contextStore.GetRecentQAsByNetworkName(network, refID, 10)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("history retrieval failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+	historyText := cache.FormatQAContext(qas)
+	payload := HistoryPayload{
+		Network:     strings.TrimSpace(network),
+		RefID:       refID,
+		HistoryText: historyText,
+	}
+	if len(qas) > 0 {
+		payload.Entries = make([]HistoryEntry, 0, len(qas))
+		for _, qa := range qas {
+			payload.Entries = append(payload.Entries, HistoryEntry{
+				ThreadID: qa.ThreadID,
+				UserID:   qa.UserID,
+				Question: qa.Question,
+				Answer:   qa.Answer,
+				AskedAt:  qa.CreatedAt,
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
 func equalAttachmentFile(candidate, requested string) bool {
 	if strings.EqualFold(candidate, requested) {
 		return true
@@ -266,6 +306,23 @@ type ReferendumPayload struct {
 	Content     string             `json:"content,omitempty"`
 	Attachments []cache.Attachment `json:"attachments,omitempty"`
 	RefreshedAt time.Time          `json:"refreshedAt"`
+}
+
+// HistoryPayload structures the Q&A history response.
+type HistoryPayload struct {
+	Network     string         `json:"network"`
+	RefID       uint32         `json:"refId"`
+	HistoryText string         `json:"historyText,omitempty"`
+	Entries     []HistoryEntry `json:"entries,omitempty"`
+}
+
+// HistoryEntry represents a single historical Q&A pair.
+type HistoryEntry struct {
+	ThreadID string    `json:"threadId,omitempty"`
+	UserID   string    `json:"userId,omitempty"`
+	Question string    `json:"question"`
+	Answer   string    `json:"answer"`
+	AskedAt  time.Time `json:"askedAt"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

@@ -331,10 +331,12 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 	stallCount := 0
 	metadataFetched := false
 	contentFetched := false
+	historyFetched := false
 	attachmentNames := []string{}
 	attachmentsRetrieved := map[string]bool{}
 	finalReminderSent := false
 	base64ReminderSent := false
+	historyReminderSent := false
 	toolsDisabled := false
 
 	hasPendingAttachments := func() bool {
@@ -367,7 +369,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 
 		if !toolsDisabled && len(toolDefs) > 0 {
 			reqBody["tools"] = toolDefs
-			if !(metadataFetched && contentFetched && !hasPendingAttachments()) && strings.TrimSpace(forced) != "" {
+			if !(metadataFetched && contentFetched && historyFetched && !hasPendingAttachments()) && strings.TrimSpace(forced) != "" {
 				reqBody["tool_choice"] = buildChatToolChoice(forced)
 			} else {
 				reqBody["tool_choice"] = "auto"
@@ -489,6 +491,8 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 				if fileArg != "" {
 					attachmentsRetrieved[fileArg] = true
 				}
+			case "history":
+				historyFetched = true
 			}
 		}
 
@@ -497,7 +501,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			if stallCount >= 2 {
 				messages = append(messages, chatMessagePayload{
 					Role:    "user",
-					Content: "You already retrieved the referendum metadata and content. Use the information you have and provide the final answer without calling the tool again.",
+					Content: "You already retrieved the required referendum context. Use the information you have and provide the final answer without calling the tool again.",
 				})
 				stallCount = 0
 			}
@@ -517,6 +521,15 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			continue
 		}
 
+		if metadataFetched && contentFetched && !historyFetched && !historyReminderSent {
+			messages = append(messages, chatMessagePayload{
+				Role:    "user",
+				Content: "You still need the previous Q&A context. Call the tool with {\"resource\":\"history\"} before answering.",
+			})
+			historyReminderSent = true
+			continue
+		}
+
 		if !hasPendingAttachments() && len(attachmentNames) > 0 && !base64ReminderSent {
 			messages = append(messages, chatMessagePayload{
 				Role:    "user",
@@ -525,10 +538,10 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			base64ReminderSent = true
 		}
 
-		if metadataFetched && contentFetched && !hasPendingAttachments() && !finalReminderSent {
+		if metadataFetched && contentFetched && historyFetched && !hasPendingAttachments() && !finalReminderSent {
 			messages = append(messages, chatMessagePayload{
 				Role:    "user",
-				Content: "You now have metadata, the full proposal content, and attachments. Provide the final answer without calling the tool again.",
+				Content: "You now have metadata, the full proposal content, prior Q&A history, and any needed attachments. Provide the final answer without calling the tool again.",
 			})
 			finalReminderSent = true
 			toolsDisabled = true
