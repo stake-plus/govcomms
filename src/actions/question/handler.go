@@ -1144,7 +1144,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 			// Split context itself if too long
 			chunks := splitLongText(header+"Background Context 📖\n\n", summary.BackgroundContext, maxChars)
 			for i, chunk := range chunks {
-				title := fmt.Sprintf("Background Context 📖", summary.Network, summary.RefID)
+				title := "Background Context 📖"
 				if i > 0 {
 					title += " (continued)"
 				}
@@ -1165,7 +1165,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 		} else {
 			chunks := splitLongText("Referendum Summary 📝\n\n", summary.Summary, maxChars)
 			for i, chunk := range chunks {
-				title := fmt.Sprintf("Referendum Summary 📝", summary.Network, summary.RefID)
+				title := "Referendum Summary 📝"
 				if i > 0 {
 					title += " (continued)"
 				}
