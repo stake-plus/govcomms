@@ -72,6 +72,11 @@ func (h *Handler) GenerateReport(s *discordgo.Session, channelID string, network
 
 // generateAndSendPDF generates a comprehensive PDF report and uploads it to Discord
 func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, network string, refID uint32, refDBID uint64, entry *cache.Entry) {
+	// Get channel name from Discord
+	channelName := ""
+	if channel, err := s.Channel(channelID); err == nil && channel != nil {
+		channelName = channel.Name
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
@@ -252,6 +257,7 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 		Network:              network,
 		RefID:                refID,
 		Title:                entry.Summary.Title,
+		ChannelName:          channelName,
 		Summary:              entry.Summary,
 		Claims:               entry.Claims,
 		TeamMembers:          entry.TeamMembers,
