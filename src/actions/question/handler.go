@@ -1086,15 +1086,44 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Section 1: Background Context & Summary (grouped together)
 	var contextSummaryBuilder strings.Builder
-	contextSummaryBuilder.WriteString(fmt.Sprintf("📋 Overview\n\n\n%s Referendum: %s\n\n\n📖 Background Context\n\n%s\n\n\n📝 Summary\n\n%s\n\n\n", summary.Network, channelTitle, summary.BackgroundContext, summary.Summary))
+	contextSummaryBuilder.WriteString(fmt.Sprintf("📋 Overview\n\n%s Referendum #%d\n%s\n\n", summary.Network, summary.RefID, channelTitle))
+	contextSummaryBuilder.WriteString("📖 Background Context\n\n")
+	contextSummaryBuilder.WriteString(summary.BackgroundContext)
+	contextSummaryBuilder.WriteString("\n\n")
+	contextSummaryBuilder.WriteString("📝 Summary\n\n")
+	contextSummaryBuilder.WriteString(summary.Summary)
+	contextSummaryBuilder.WriteString("\n\n")
+
+	contextSummaryText := contextSummaryBuilder.String()
+	if len(contextSummaryText) > maxChars {
+		// Split context and summary if needed
+		header := fmt.Sprintf("📋 Overview\n\n%s Referendum #%d\n%s\n\n", summary.Network, summary.RefID, channelTitle)
+		contextPart := fmt.Sprintf("%s📖 Background Context\n\n%s", header, summary.BackgroundContext)
+		summaryPart := fmt.Sprintf("📝 Summary\n\n%s", summary.Summary)
+
+		if len(contextPart) <= maxChars {
+			messages = append(messages, contextPart)
+		} else {
+			// Split context itself if too long
+			messages = append(messages, splitLongText(header+"📖 Background Context\n\n", summary.BackgroundContext, maxChars)...)
+		}
+
+		if len(summaryPart) <= maxChars {
+			messages = append(messages, summaryPart)
+		} else {
+			messages = append(messages, splitLongText("📝 Summary\n\n", summary.Summary, maxChars)...)
+		}
+	} else {
+		messages = append(messages, contextSummaryText)
+	}
 
 	// Section 2: All Claims (grouped together)
 	var claimsBuilder strings.Builder
-	claimsBuilder.WriteString("Referendum Claims and Warranties Analysis 🔍\n\n")
+	claimsBuilder.WriteString("Referendum Claims and Warranties Analysis 🔍\n\n\n")
 
 	// Valid Claims
 	if len(summary.ValidClaims) > 0 {
-		claimsBuilder.WriteString(fmt.Sprintf("✅ Valid Claims — %d verified\n", len(summary.ValidClaims)))
+		claimsBuilder.WriteString(fmt.Sprintf("✅ Valid Claims — %d verified\n\n", len(summary.ValidClaims)))
 		for _, claim := range summary.ValidClaims {
 			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n", claim))
 		}
@@ -1103,7 +1132,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Unverified/Unknown Claims
 	if len(summary.UnverifiedClaims) > 0 {
-		claimsBuilder.WriteString(fmt.Sprintf("❓ Unverified Claims — %d unconfirmed\n", len(summary.UnverifiedClaims)))
+		claimsBuilder.WriteString(fmt.Sprintf("❓ Unverified Claims — %d unconfirmed\n\n", len(summary.UnverifiedClaims)))
 		for _, claim := range summary.UnverifiedClaims {
 			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n", claim))
 		}
@@ -1112,7 +1141,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Invalid Claims
 	if len(summary.InvalidClaims) > 0 {
-		claimsBuilder.WriteString(fmt.Sprintf("❌ Invalid Claims — %d rejected\n", len(summary.InvalidClaims)))
+		claimsBuilder.WriteString(fmt.Sprintf("❌ Invalid Claims — %d rejected\n\n", len(summary.InvalidClaims)))
 		for _, claim := range summary.InvalidClaims {
 			claimsBuilder.WriteString(fmt.Sprintf("  • %s\n", claim))
 		}
@@ -1200,7 +1229,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 			teamContentBuilder.WriteString(fmt.Sprintf("Real: %s\nSkilled: %s\n", isRealMark, hasSkillsMark))
 			teamContentBuilder.WriteString("History:\n")
 			if historyBullets != "" {
-				teamContentBuilder.WriteString(fmt.Sprintf("%s\n\n\n", historyBullets))
+				teamContentBuilder.WriteString(historyBullets)
 			} else {
 				teamContentBuilder.WriteString("    • No history available\n")
 			}
@@ -1209,10 +1238,15 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 		teamContentBuilder.WriteString("No team members found\n")
 	}
 
-	teamPrefix := "Team Background and Skill Summary ⚡\n \n \n"
+	teamPrefix := "Team Background and Skill Summary ⚡\n\n\n"
 	teamContent := teamContentBuilder.String()
 	teamText := teamPrefix + teamContent
-	messages = append(messages, teamText)
+
+	if len(teamText) > maxChars {
+		messages = append(messages, splitLongText(teamPrefix, teamContent, maxChars)...)
+	} else {
+		messages = append(messages, teamText)
+	}
 
 	return messages
 }
