@@ -1246,7 +1246,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Add breakdown statistics
 	if len(summary.TeamMembers) > 0 {
-		teamContentBuilder.WriteString("### Team Breakdown 📊\n\n")
+		teamContentBuilder.WriteString("#### Team Breakdown 📊\n\n")
 		if realWithSkills > 0 {
 			teamContentBuilder.WriteString(fmt.Sprintf("✅ **Verified + Skilled:** %d of %d\n", realWithSkills, realWithSkills+realNoSkills+notRealWithSkills+notRealNoSkills))
 		}
