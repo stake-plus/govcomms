@@ -14,6 +14,12 @@ import (
 	"strings"
 )
 
+var (
+	googleDocStandardPattern  = regexp.MustCompile(`/document/(?:u/\d+/)?d/([a-zA-Z0-9-_]+)`)
+	googleDocPublishedPattern = regexp.MustCompile(`/document/d/e/([a-zA-Z0-9-_]+)`)
+	googleDocQueryPattern     = regexp.MustCompile(`(?i)[?&](?:id|docid)=([a-zA-Z0-9-_]+)`)
+)
+
 type documentPayload struct {
 	Content string
 	Kind    string
@@ -306,12 +312,11 @@ func (m *Manager) downloadPDF(link string) (string, error) {
 }
 
 func (m *Manager) downloadGoogleDoc(link string) (string, error) {
-	docID := extractGoogleDocID(link)
-	if docID == "" {
-		return "", fmt.Errorf("could not extract Google Doc ID")
+	exportURL, err := buildGoogleDocExportURL(link)
+	if err != nil {
+		return "", err
 	}
 
-	exportURL := fmt.Sprintf("https://docs.google.com/document/d/%s/export?format=txt", docID)
 	resp, err := m.httpClient.Get(exportURL)
 	if err != nil {
 		return "", err
@@ -334,6 +339,22 @@ func (m *Manager) downloadGoogleDoc(link string) (string, error) {
 	}
 
 	return text, nil
+}
+
+func buildGoogleDocExportURL(link string) (string, error) {
+	if matches := googleDocPublishedPattern.FindStringSubmatch(link); len(matches) > 1 {
+		return fmt.Sprintf("https://docs.google.com/document/d/e/%s/pub?format=txt", matches[1]), nil
+	}
+
+	if matches := googleDocStandardPattern.FindStringSubmatch(link); len(matches) > 1 {
+		return fmt.Sprintf("https://docs.google.com/document/d/%s/export?format=txt", matches[1]), nil
+	}
+
+	if matches := googleDocQueryPattern.FindStringSubmatch(link); len(matches) > 1 {
+		return fmt.Sprintf("https://docs.google.com/document/d/%s/export?format=txt", matches[1]), nil
+	}
+
+	return "", fmt.Errorf("could not extract Google Doc ID")
 }
 
 func (m *Manager) downloadGenericFile(link string) (string, error) {
@@ -429,23 +450,6 @@ func extensionFor(link, contentType string) string {
 	}
 
 	return ".bin"
-}
-
-func extractGoogleDocID(link string) string {
-	patterns := []string{
-		`/document/d/([a-zA-Z0-9-_]+)`,
-		`docId=([a-zA-Z0-9-_]+)`,
-	}
-
-	for _, pattern := range patterns {
-		re := regexp.MustCompile(pattern)
-		matches := re.FindStringSubmatch(link)
-		if len(matches) > 1 {
-			return matches[1]
-		}
-	}
-
-	return ""
 }
 
 func isTextContent(content string) bool {
