@@ -516,9 +516,13 @@ func buildGeminiToolsPayload(tools []core.Tool, enableSearch bool) ([]map[string
 		})
 	}
 	if enableSearch {
-		toolsPayload = append(toolsPayload, map[string]any{
-			"google_search": map[string]any{},
-		})
+		if len(declarations) == 0 {
+			toolsPayload = append(toolsPayload, map[string]any{
+				"google_search": map[string]any{},
+			})
+		} else {
+			log.Printf("gemini: skipping google_search tool because function calling is enabled")
+		}
 	}
 	return toolsPayload, toolMap, functionNames
 }

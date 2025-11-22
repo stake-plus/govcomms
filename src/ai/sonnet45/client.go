@@ -18,11 +18,12 @@ import (
 )
 
 const (
-	defaultModel       = "claude-sonnet-4-5"
-	anthropicEndpoint  = "https://api.anthropic.com/v1/messages"
-	defaultMaxTokens   = 8192
-	defaultTemperature = 0.1
-	requestTimeout     = 240 * time.Second
+	defaultModel          = "claude-sonnet-4-5"
+	anthropicEndpoint     = "https://api.anthropic.com/v1/messages"
+	defaultMaxTokens      = 8192
+	defaultTemperature    = 0.1
+	requestTimeout        = 240 * time.Second
+	sonnetPromptSoftLimit = 8192
 )
 
 func init() {
@@ -93,6 +94,8 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 	finalReminderSent := false
 	base64ReminderSent := false
 	toolsDisabled := false
+	currentPromptTokens := promptTokenCount(opts.SystemPrompt, messages)
+	promptBudgetExceeded := false
 
 	hasPendingAttachments := func() bool {
 		for _, name := range attachmentNames {
@@ -173,6 +176,7 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 			Role:    "assistant",
 			Content: resp.Content,
 		})
+		currentPromptTokens = promptTokenCount(opts.SystemPrompt, messages)
 
 		if len(toolUses) == 0 {
 			if strings.TrimSpace(textOutput) == "" {
@@ -186,48 +190,56 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 			continue
 		}
 
-		callOutputs := make(map[string]string, len(convertedCalls))
-		pendingCalls := make([]openAIToolCall, 0, len(convertedCalls))
-		pendingKeys := make(map[string]string, len(convertedCalls))
-
-		for _, call := range convertedCalls {
-			key := toolCacheKey(call)
-			if val, ok := toolCache[key]; ok {
-				callOutputs[call.ID] = val
-				continue
-			}
-			pendingCalls = append(pendingCalls, call)
-			pendingKeys[call.ID] = key
-		}
-
-		if len(pendingCalls) > 0 {
-			outputs, execErr := c.executeToolCalls(ctx, pendingCalls, toolMap)
-			if execErr != nil {
-				return "", execErr
-			}
-			for _, out := range outputs {
-				callOutputs[out.ToolCallID] = out.Output
-				if key := pendingKeys[out.ToolCallID]; key != "" {
-					toolCache[key] = out.Output
-				}
-			}
-		}
-
 		pendingCallExecuted := false
 		metadataAnnouncedAttachments := false
-		toolResultBlocks := make([]anthropicContentBlock, 0, len(convertedCalls))
 
 		for _, call := range convertedCalls {
-			content := callOutputs[call.ID]
-			toolResultBlocks = append(toolResultBlocks, anthropicContentBlock{
-				Type:      "tool_result",
-				ToolUseID: call.ID,
-				Content:   content,
+			resType := normalizeResource(resourceFromToolCall(call))
+			fileArg := attachmentFileFromCall(call)
+			key := toolCacheKey(call)
+			content := ""
+			cacheHit := false
+			skippedDueToBudget := false
+
+			if val, ok := toolCache[key]; ok {
+				content = val
+				cacheHit = true
+			} else if promptBudgetExceeded && resType == "attachments" {
+				content = tokenBudgetAttachmentError(fileArg)
+				skippedDueToBudget = true
+				if fileArg != "" {
+					attachmentsRetrieved[fileArg] = true
+				}
+			} else {
+				outputs, execErr := c.executeToolCalls(ctx, []openAIToolCall{call}, toolMap)
+				if execErr != nil {
+					return "", execErr
+				}
+				if len(outputs) == 0 {
+					return "", fmt.Errorf("sonnet-4.5: tool call returned no output")
+				}
+				content = outputs[0].Output
+				if key != "" {
+					toolCache[key] = content
+				}
+			}
+
+			messages = append(messages, anthropicMessage{
+				Role: "user",
+				Content: []anthropicContentBlock{
+					{
+						Type:      "tool_result",
+						ToolUseID: call.ID,
+						Content:   content,
+					},
+				},
 			})
-			if _, ok := pendingKeys[call.ID]; ok {
+			currentPromptTokens = promptTokenCount(opts.SystemPrompt, messages)
+
+			if !cacheHit || skippedDueToBudget {
 				pendingCallExecuted = true
 			}
-			resType := normalizeResource(resourceFromToolCall(call))
+
 			switch resType {
 			case "content":
 				contentFetched = true
@@ -238,22 +250,31 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 					if len(attachmentNames) == 0 {
 						attachmentNames = names
 					}
-					if hasPendingAttachments() {
+					if hasPendingAttachments() && !promptBudgetExceeded {
 						metadataAnnouncedAttachments = true
 					}
 				}
 			case "attachments":
-				fileArg := attachmentFileFromCall(call)
-				if fileArg != "" {
+				if fileArg != "" && !skippedDueToBudget {
 					attachmentsRetrieved[fileArg] = true
 				}
 			}
-		}
 
-		messages = append(messages, anthropicMessage{
-			Role:    "user",
-			Content: toolResultBlocks,
-		})
+			if !promptBudgetExceeded && currentPromptTokens >= sonnetPromptSoftLimit {
+				promptBudgetExceeded = true
+				toolsDisabled = true
+				markAllAttachmentsRetrieved(attachmentNames, attachmentsRetrieved)
+				messages = append(messages, anthropicMessage{
+					Role: "user",
+					Content: []anthropicContentBlock{
+						textBlock("Token budget is nearly exhausted. Use the information collected so far and provide the final answer without calling tools again."),
+					},
+				})
+				currentPromptTokens = promptTokenCount(opts.SystemPrompt, messages)
+				finalReminderSent = true
+				base64ReminderSent = true
+			}
+		}
 
 		if !pendingCallExecuted {
 			stallCount++
@@ -264,13 +285,14 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 						textBlock("You already retrieved the referendum metadata and content. Use the information you have and provide the final answer without calling the tool again."),
 					},
 				})
+				currentPromptTokens = promptTokenCount(opts.SystemPrompt, messages)
 				stallCount = 0
 			}
 		} else {
 			stallCount = 0
 		}
 
-		if metadataAnnouncedAttachments && hasPendingAttachments() {
+		if metadataAnnouncedAttachments && hasPendingAttachments() && !promptBudgetExceeded {
 			example := ""
 			if next := nextPendingAttachment(); next != "" {
 				example = fmt.Sprintf(" For example: {\"resource\":\"attachments\",\"file\":\"%s\"}.", next)
@@ -281,6 +303,7 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 					textBlock("Metadata references attachments." + example + " Retrieve each file before answering."),
 				},
 			})
+			currentPromptTokens = promptTokenCount(opts.SystemPrompt, messages)
 			continue
 		}
 
@@ -291,6 +314,7 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 					textBlock("Attachment content is provided as base64 text in the tool response. Decode the base64 string to inspect the file before answering."),
 				},
 			})
+			currentPromptTokens = promptTokenCount(opts.SystemPrompt, messages)
 			base64ReminderSent = true
 		}
 
@@ -301,6 +325,7 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 					textBlock("You now have metadata, the full proposal content, and attachments. Provide the final answer without calling the tool again."),
 				},
 			})
+			currentPromptTokens = promptTokenCount(opts.SystemPrompt, messages)
 			finalReminderSent = true
 			toolsDisabled = true
 		}
@@ -445,6 +470,78 @@ func orFloat(v, def float64) float64 {
 		return v
 	}
 	return def
+}
+
+func promptTokenCount(systemPrompt string, messages []anthropicMessage) int {
+	total := 0
+	if strings.TrimSpace(systemPrompt) != "" {
+		total += estimateTextTokens(systemPrompt)
+	}
+	for _, msg := range messages {
+		total += contentTokens(msg.Content)
+	}
+	return total
+}
+
+func contentTokens(blocks []anthropicContentBlock) int {
+	total := 0
+	for _, block := range blocks {
+		total += blockTokens(block)
+	}
+	return total
+}
+
+func blockTokens(block anthropicContentBlock) int {
+	switch strings.ToLower(block.Type) {
+	case "text":
+		return estimateTextTokens(block.Text)
+	case "tool_result":
+		return estimateTextTokens(fmt.Sprint(block.Content))
+	case "tool_use":
+		if len(block.Input) == 0 {
+			return 0
+		}
+		raw, err := json.Marshal(block.Input)
+		if err != nil {
+			return estimateTextTokens(fmt.Sprint(block.Input))
+		}
+		return estimateTextTokens(string(raw))
+	default:
+		if strings.TrimSpace(block.Text) != "" {
+			return estimateTextTokens(block.Text)
+		}
+		if block.Content != nil {
+			return estimateTextTokens(fmt.Sprint(block.Content))
+		}
+	}
+	return 0
+}
+
+func estimateTextTokens(text string) int {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return 0
+	}
+	length := len(text)
+	return (length+3)/4 + 4
+}
+
+func tokenBudgetAttachmentError(file string) string {
+	name := strings.TrimSpace(file)
+	if name == "" {
+		return `{"error":"attachment skipped due to token budget"}`
+	}
+	return fmt.Sprintf(`{"error":"attachment %s skipped due to token budget"}`, name)
+}
+
+func markAllAttachmentsRetrieved(names []string, retrieved map[string]bool) {
+	for _, name := range names {
+		n := strings.TrimSpace(name)
+		if n == "" {
+			continue
+		}
+		retrieved[n] = true
+	}
 }
 
 func buildAnthropicToolsPayload(tools []core.Tool) ([]map[string]any, map[string]core.Tool, string) {
