@@ -1230,7 +1230,7 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 			teamContentBuilder.WriteString(fmt.Sprintf("Name: %s\n", member.Name))
 			teamContentBuilder.WriteString(fmt.Sprintf("Role: %s\n", member.Role))
-			teamContentBuilder.WriteString(fmt.Sprintf("Real: %s -- Skilled: %s\n\n", isRealMark, hasSkillsMark))
+			teamContentBuilder.WriteString(fmt.Sprintf("Real: %s\nSkilled: %s\n\n", isRealMark, hasSkillsMark))
 			teamContentBuilder.WriteString("History:\n")
 			if historyBullets != "" {
 				teamContentBuilder.WriteString(fmt.Sprintf("%s\n\n", historyBullets))
