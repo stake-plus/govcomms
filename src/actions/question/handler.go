@@ -1196,6 +1196,8 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 		claimsBuilder.WriteString("No claims found\n")
 	}
 
+	claimsBuilder.WriteString("\n\n")
+
 	claimsText := claimsBuilder.String()
 	if len(claimsText) > maxChars {
 		// Extract the content without the prefix for splitting
@@ -1246,7 +1248,6 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 
 	// Add breakdown statistics
 	if len(summary.TeamMembers) > 0 {
-		teamContentBuilder.WriteString("#### Team Breakdown 📊\n\n")
 		if realWithSkills > 0 {
 			teamContentBuilder.WriteString(fmt.Sprintf("✅ **Verified + Skilled:** %d of %d\n", realWithSkills, realWithSkills+realNoSkills+notRealWithSkills+notRealNoSkills))
 		}
