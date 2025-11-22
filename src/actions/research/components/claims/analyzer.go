@@ -170,6 +170,7 @@ SOURCES: [Comma-separated list of primary URLs where you found evidence, or "No 
 
 func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]VerificationResult, error) {
 	results := make([]VerificationResult, len(claims))
+	var resultsMu sync.Mutex // Protect concurrent writes to results slice
 	semaphore := make(chan struct{}, 1) // 1 concurrent operation
 
 	// Initial delay to let rate limits reset
@@ -202,18 +203,22 @@ func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]Verifica
 			case semaphore <- struct{}{}:
 				defer func() { <-semaphore }()
 			case <-claimCtx.Done():
+				resultsMu.Lock()
 				results[index] = VerificationResult{
 					Claim:      c.Claim,
 					Status:     StatusUnknown,
 					Evidence:   "Verification timeout",
 					SourceURLs: []string{},
 				}
+				resultsMu.Unlock()
 				return
 			}
 
 			log.Printf("Verifying claim %d of %d: %s", index+1, len(claims), c.Claim)
 			result := a.VerifySingleClaim(claimCtx, c)
+			resultsMu.Lock()
 			results[index] = result
+			resultsMu.Unlock()
 			log.Printf("Claim %d verification result: %s", index+1, result.Status)
 		}(i, claims[i])
 
@@ -230,6 +235,12 @@ func (a *Analyzer) VerifyClaims(ctx context.Context, claims []Claim) ([]Verifica
 		case <-claimCtx.Done():
 			// Claim timeout
 			log.Printf("Claim %d timed out", i+1)
+		case <-ctx.Done():
+			// Parent context cancelled - ensure goroutine completes
+			claimCancel()
+			// Wait for goroutine to finish before returning
+			<-done
+			return results, ctx.Err()
 		}
 
 		claimCancel()

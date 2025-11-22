@@ -86,6 +86,7 @@ Proposal:
 
 func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember) ([]TeamAnalysisResult, error) {
 	results := make([]TeamAnalysisResult, len(members))
+	var resultsMu sync.Mutex // Protect concurrent writes to results slice
 	semaphore := make(chan struct{}, 1) // 1 concurrent operation
 
 	// Initial delay to let rate limits reset
@@ -118,6 +119,7 @@ func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember)
 			case semaphore <- struct{}{}:
 				defer func() { <-semaphore }()
 			case <-memberCtx.Done():
+				resultsMu.Lock()
 				results[index] = TeamAnalysisResult{
 					Name:            m.Name,
 					Role:            m.Role,
@@ -126,12 +128,15 @@ func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember)
 					Capability:      "Analysis timeout",
 					VerifiedURLs:    []string{},
 				}
+				resultsMu.Unlock()
 				return
 			}
 
 			log.Printf("Analyzing team member %d of %d: %s", index+1, len(members), m.Name)
 			result := a.analyzeSingleMember(memberCtx, m)
+			resultsMu.Lock()
 			results[index] = result
+			resultsMu.Unlock()
 		}(i, members[i])
 
 		// Wait for this member to complete
@@ -147,6 +152,12 @@ func (a *Analyzer) AnalyzeTeamMembers(ctx context.Context, members []TeamMember)
 		case <-memberCtx.Done():
 			// Member timeout
 			log.Printf("Team member %d analysis timed out", i+1)
+		case <-ctx.Done():
+			// Parent context cancelled - ensure goroutine completes
+			memberCancel()
+			// Wait for goroutine to finish before returning
+			<-done
+			return results, ctx.Err()
 		}
 
 		memberCancel()

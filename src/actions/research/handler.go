@@ -58,7 +58,7 @@ func (h *Handler) HandleSlash(s *discordgo.Session, i *discordgo.InteractionCrea
 		return
 	}
 
-	if h.Config.ResearchRoleID != "" && !shareddiscord.HasRole(s, h.Config.Base.GuildID, i.Member.User.ID, h.Config.ResearchRoleID) {
+	if h.Config.ResearchRoleID != "" && (i.Member == nil || i.Member.User == nil || !shareddiscord.HasRole(s, h.Config.Base.GuildID, i.Member.User.ID, h.Config.ResearchRoleID)) {
 		formatted := shareddiscord.FormatStyledBlock("Research", "You don't have permission to use this command.")
 		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,

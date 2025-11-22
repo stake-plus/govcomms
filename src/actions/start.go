@@ -22,7 +22,9 @@ func StartAll(ctx context.Context, db *gorm.DB) (*Manager, error) {
 		if err != nil {
 			return nil, fmt.Errorf("actions: init question module: %w", err)
 		}
-		mgr.Add(mod)
+		if err := mgr.Add(mod); err != nil {
+			return nil, fmt.Errorf("actions: add question module: %w", err)
+		}
 	} else {
 		log.Printf("actions: QA module disabled via configuration")
 	}
@@ -33,7 +35,9 @@ func StartAll(ctx context.Context, db *gorm.DB) (*Manager, error) {
 		if err != nil {
 			return nil, fmt.Errorf("actions: init research module: %w", err)
 		}
-		mgr.Add(mod)
+		if err := mgr.Add(mod); err != nil {
+			return nil, fmt.Errorf("actions: add research module: %w", err)
+		}
 	} else {
 		log.Printf("actions: research module disabled via configuration")
 	}
@@ -44,7 +48,9 @@ func StartAll(ctx context.Context, db *gorm.DB) (*Manager, error) {
 		if err != nil {
 			return nil, fmt.Errorf("actions: init feedback module: %w", err)
 		}
-		mgr.Add(mod)
+		if err := mgr.Add(mod); err != nil {
+			return nil, fmt.Errorf("actions: add feedback module: %w", err)
+		}
 	} else {
 		log.Printf("actions: feedback module disabled via configuration")
 	}

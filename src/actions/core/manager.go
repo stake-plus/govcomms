@@ -28,13 +28,14 @@ func NewManager(mods ...Module) *Manager {
 }
 
 // Add registers additional modules before Start is invoked.
-func (m *Manager) Add(mod Module) {
+func (m *Manager) Add(mod Module) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.started {
-		panic("actions.Manager: cannot add modules after start")
+		return fmt.Errorf("actions.Manager: cannot add modules after start")
 	}
 	m.modules = append(m.modules, mod)
+	return nil
 }
 
 // Start initializes all modules. If any module fails, previously started modules are stopped.

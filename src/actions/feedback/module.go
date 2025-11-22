@@ -243,6 +243,10 @@ func (b *Module) ensureThreadMapping(channelID string) (*sharedgov.ThreadInfo, e
 		return nil, err
 	}
 
+	if b.session == nil {
+		return nil, fmt.Errorf("discord session not initialized")
+	}
+
 	thread, fetchErr := b.session.Channel(channelID)
 	if fetchErr != nil {
 		return nil, fetchErr

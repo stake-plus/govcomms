@@ -331,6 +331,8 @@ func (m *Manager) downloadDocument(link string) (documentPayload, error) {
 }
 
 func (m *Manager) pdfSupported() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.pdfToolsAvailable {
 		return true
 	}

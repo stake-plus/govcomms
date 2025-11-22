@@ -154,7 +154,7 @@ func (m *Module) initHandlers() {
 }
 
 func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if m.cfg.QARoleID != "" && !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID) {
+	if m.cfg.QARoleID != "" && (i.Member == nil || i.Member.User == nil || !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID)) {
 		formatted := shareddiscord.FormatStyledBlock("Question", "You don't have permission to use this command.")
 		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -282,7 +282,13 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 		return
 	}
 
-	if err := m.contextStore.SaveQA(threadInfo.NetworkID, uint32(threadInfo.RefID), i.ChannelID, i.Member.User.ID, question, answer); err != nil {
+	userID := ""
+	if i.Member != nil && i.Member.User != nil {
+		userID = i.Member.User.ID
+	} else if i.User != nil {
+		userID = i.User.ID
+	}
+	if err := m.contextStore.SaveQA(threadInfo.NetworkID, uint32(threadInfo.RefID), i.ChannelID, userID, question, answer); err != nil {
 		log.Printf("question: save QA history: %v", err)
 	}
 
@@ -350,7 +356,7 @@ func (m *Module) createAIClient() (aicore.Client, sharedconfig.AIConfig, error) 
 
 func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
 	// Check permissions first
-	if m.cfg.QARoleID != "" && !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID) {
+	if m.cfg.QARoleID != "" && (i.Member == nil || i.Member.User == nil || !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID)) {
 		if err := shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{
@@ -419,7 +425,7 @@ func (m *Module) handleContextSlash(s *discordgo.Session, i *discordgo.Interacti
 }
 
 func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if m.cfg.QARoleID != "" && !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID) {
+	if m.cfg.QARoleID != "" && (i.Member == nil || i.Member.User == nil || !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID)) {
 		formatted := shareddiscord.FormatStyledBlock("Refresh", "You don't have permission to use this command.")
 		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
@@ -688,6 +694,13 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 	// Claims analysis
 	go func() {
 		defer func() { done <- true }()
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			claimsErr = ctx.Err()
+			return
+		default:
+		}
 		topClaims, totalClaims, err := claimsAnalyzer.ExtractTopClaims(ctx, proposalContent)
 		if err != nil {
 			claimsErr = fmt.Errorf("extract claims: %w", err)
@@ -698,16 +711,31 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 			return
 		}
 
+		// Check context cancellation before verification
+		select {
+		case <-ctx.Done():
+			claimsErr = ctx.Err()
+			return
+		default:
+		}
 		results, err := claimsAnalyzer.VerifyClaims(ctx, topClaims)
 		if err != nil {
 			claimsErr = fmt.Errorf("verify claims: %w", err)
 			return
 		}
 
-		claimResults := make([]cache.ClaimResult, len(results))
+		claimResults := make([]cache.ClaimResult, 0, len(results))
 		for i, result := range results {
+			// Skip zero-value results (from cancelled/partial processing)
+			if result.Claim == "" && result.Status == "" && result.Evidence == "" {
+				continue
+			}
+			if i >= len(topClaims) {
+				log.Printf("question: silent research: result index %d out of bounds for claims", i)
+				break
+			}
 			claim := topClaims[i]
-			claimResults[i] = cache.ClaimResult{
+			claimResults = append(claimResults, cache.ClaimResult{
 				Claim:      claim.Claim,
 				Category:   claim.Category,
 				URLs:       claim.URLs,
@@ -715,7 +743,7 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 				Status:     string(result.Status),
 				Evidence:   result.Evidence,
 				SourceURLs: result.SourceURLs,
-			}
+			})
 		}
 
 		claimsData = &cache.ClaimsData{
@@ -731,6 +759,13 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 	// Teams analysis
 	go func() {
 		defer func() { done <- true }()
+		// Check context cancellation
+		select {
+		case <-ctx.Done():
+			teamsErr = ctx.Err()
+			return
+		default:
+		}
 		members, err := teamsAnalyzer.ExtractTeamMembers(ctx, proposalContent)
 		if err != nil {
 			teamsErr = fmt.Errorf("extract team members: %w", err)
@@ -741,16 +776,31 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 			return
 		}
 
+		// Check context cancellation before analysis
+		select {
+		case <-ctx.Done():
+			teamsErr = ctx.Err()
+			return
+		default:
+		}
 		results, err := teamsAnalyzer.AnalyzeTeamMembers(ctx, members)
 		if err != nil {
 			teamsErr = fmt.Errorf("analyze team members: %w", err)
 			return
 		}
 
-		memberData := make([]cache.TeamMemberData, len(results))
+		memberData := make([]cache.TeamMemberData, 0, len(results))
 		for i, result := range results {
+			// Skip zero-value results (from cancelled/partial processing)
+			if result.Name == "" && result.Role == "" && result.Capability == "" {
+				continue
+			}
+			if i >= len(members) {
+				log.Printf("question: silent research: result index %d out of bounds for members", i)
+				break
+			}
 			member := members[i]
-			memberData[i] = cache.TeamMemberData{
+			memberData = append(memberData, cache.TeamMemberData{
 				Name:            result.Name,
 				Role:            result.Role,
 				IsReal:          &result.IsReal,
@@ -761,7 +811,7 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 				LinkedIn:        member.LinkedIn,
 				Other:           member.Other,
 				VerifiedURLs:    result.VerifiedURLs,
-			}
+			})
 		}
 
 		teamsData = &cache.TeamsData{
@@ -1499,7 +1549,7 @@ func splitLongText(prefix string, text string, maxChars int) []string {
 
 // handleSummarySlash handles the /summary command.
 func (m *Module) handleSummarySlash(s *discordgo.Session, i *discordgo.InteractionCreate) {
-	if m.cfg.QARoleID != "" && !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID) {
+	if m.cfg.QARoleID != "" && (i.Member == nil || i.Member.User == nil || !shareddiscord.HasRole(s, m.cfg.Base.GuildID, i.Member.User.ID, m.cfg.QARoleID)) {
 		formatted := shareddiscord.FormatStyledBlock("Summary", "You don't have permission to use this command.")
 		shareddiscord.InteractionRespondNoEmbed(s, i.Interaction, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,

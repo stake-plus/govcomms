@@ -67,7 +67,7 @@ func main() {
 		_ = mcpServer.Stop(shutdownCtx)
 	}
 
-	if sqlDB, err := db.DB(); err == nil {
+	if sqlDB, err := db.DB(); err == nil && sqlDB != nil {
 		sqlDB.Close()
 	}
 }
