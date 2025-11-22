@@ -18,19 +18,46 @@ import (
 )
 
 const (
-	baseURL          = "https://generativelanguage.googleapis.com/v1beta"
-	defaultModelName = "gemini-2.5-flash"
-	defaultMaxTokens = 16000
+	providerKey             = "gemini25"
+	baseURL                 = "https://generativelanguage.googleapis.com/v1beta"
+	defaultModelName        = "gemini-2.5-flash"
+	defaultMaxTokens        = 16000
+	defaultTemperature      = 0.2
+	defaultTopP             = 0.9
+	defaultTopK             = 64
+	defaultFrequencyPenalty = 0.0
+	defaultPresencePenalty  = 0.0
+	defaultRequestTimeout   = 240 * time.Second
+	defaultRetryAttempts    = 3
+	defaultRetryBackoff     = 2 * time.Second
+	maxToolIterations       = 20
+	minTopP                 = 0.01
+	maxTopP                 = 1.0
+	minTopK                 = 1
+	maxTopK                 = 256
+	penaltyMin              = -2.0
+	penaltyMax              = 2.0
+)
+
+const (
+	extraTopPKey             = "gemini.top_p"
+	extraTopKKey             = "gemini.top_k"
+	extraFrequencyPenaltyKey = "gemini.frequency_penalty"
+	extraPresencePenaltyKey  = "gemini.presence_penalty"
 )
 
 func init() {
-	core.RegisterProvider("gemini25", newClient)
+	core.RegisterProvider(providerKey, newClient)
 }
 
 type client struct {
-	apiKey     string
-	httpClient *http.Client
-	defaults   core.Options
+	apiKey           string
+	httpClient       *http.Client
+	defaults         core.Options
+	topP             float64
+	topK             int
+	frequencyPenalty float64
+	presencePenalty  float64
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
@@ -42,16 +69,29 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 	if strings.TrimSpace(model) == "" {
 		model = defaultModelName
 	}
+	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
+	topK := core.ExtraInt(cfg.Extra, extraTopKKey, defaultTopK)
+	if topK < minTopK {
+		topK = minTopK
+	} else if topK > maxTopK {
+		topK = maxTopK
+	}
+	frequencyPenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraFrequencyPenaltyKey, defaultFrequencyPenalty), penaltyMin, penaltyMax)
+	presencePenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraPresencePenaltyKey, defaultPresencePenalty), penaltyMin, penaltyMax)
 
 	return &client{
 		apiKey:     cfg.GeminiKey,
-		httpClient: webclient.NewDefault(240 * time.Second),
+		httpClient: webclient.NewDefault(defaultRequestTimeout),
 		defaults: core.Options{
 			Model:               model,
-			Temperature:         orFloat(cfg.Temperature, 0.2),
+			Temperature:         orFloat(cfg.Temperature, defaultTemperature),
 			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, defaultMaxTokens),
 			SystemPrompt:        cfg.SystemPrompt,
 		},
+		topP:             topP,
+		topK:             topK,
+		frequencyPenalty: frequencyPenalty,
+		presencePenalty:  presencePenalty,
 	}, nil
 }
 
@@ -89,8 +129,12 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 	}
 
 	generationConfig := map[string]any{
-		"temperature":     opts.Temperature,
-		"maxOutputTokens": maxTokens(opts.MaxCompletionTokens),
+		"temperature":      opts.Temperature,
+		"maxOutputTokens":  maxTokens(opts.MaxCompletionTokens),
+		"topP":             c.topP,
+		"topK":             c.topK,
+		"presencePenalty":  c.presencePenalty,
+		"frequencyPenalty": c.frequencyPenalty,
 	}
 
 	toolCache := make(map[string]string)
@@ -127,7 +171,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 		return ""
 	}
 
-	for iteration := 0; iteration < 20; iteration++ {
+	for iteration := 0; iteration < maxToolIterations; iteration++ {
 		body := map[string]any{
 			"contents":          contents,
 			"generationConfig":  generationConfig,
@@ -349,8 +393,12 @@ func (c *client) buildRequestBody(opts core.Options, userText string, enableSear
 	body := map[string]any{
 		"contents": []map[string]any{content},
 		"generationConfig": map[string]any{
-			"temperature":     opts.Temperature,
-			"maxOutputTokens": maxTokens(opts.MaxCompletionTokens),
+			"temperature":      opts.Temperature,
+			"maxOutputTokens":  maxTokens(opts.MaxCompletionTokens),
+			"topP":             c.topP,
+			"topK":             c.topK,
+			"presencePenalty":  c.presencePenalty,
+			"frequencyPenalty": c.frequencyPenalty,
 		},
 	}
 
@@ -395,7 +443,7 @@ func (c *client) callGenerateContent(ctx context.Context, model string, payload 
 	url := fmt.Sprintf("%s/%s:generateContent?key=%s", baseURL, modelPath, c.apiKey)
 	bodyBytes, _ := json.Marshal(payload)
 
-	_, body, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+	_, body, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err

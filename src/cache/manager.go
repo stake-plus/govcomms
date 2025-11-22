@@ -114,13 +114,20 @@ func (m *Manager) Refresh(network string, refID uint32) (*Entry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	paths := m.cachePaths(network, refID)
-
-	if err := os.RemoveAll(paths.BaseDir); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("clear cache dir: %w", err)
+	finalPaths := m.cachePaths(network, refID)
+	tempBase, err := os.MkdirTemp(m.root, "refresh-stage-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temp cache dir: %w", err)
 	}
+	stagePaths := newCachePaths(tempBase)
+	keepStage := false
+	defer func() {
+		if !keepStage {
+			_ = os.RemoveAll(tempBase)
+		}
+	}()
 
-	if err := createCacheDirs(paths); err != nil {
+	if err := createCacheDirs(stagePaths); err != nil {
 		return nil, err
 	}
 
@@ -136,9 +143,9 @@ func (m *Manager) Refresh(network string, refID uint32) (*Entry, error) {
 	combined.WriteString("\n\n")
 
 	links := extractLinks(proposalContent)
-	attachments := m.processAttachments(paths, links, &combined)
+	attachments := m.processAttachments(stagePaths, links, &combined)
 
-	if err := os.WriteFile(paths.ProposalPath, []byte(combined.String()), 0o644); err != nil {
+	if err := os.WriteFile(stagePaths.ProposalPath, []byte(combined.String()), 0o644); err != nil {
 		return nil, fmt.Errorf("write proposal: %w", err)
 	}
 
@@ -148,12 +155,27 @@ func (m *Manager) Refresh(network string, refID uint32) (*Entry, error) {
 		ProposalFile: proposalFileName,
 		Attachments:  attachments,
 		RefreshedAt:  time.Now().UTC(),
-		baseDir:      paths.BaseDir,
+		baseDir:      stagePaths.BaseDir,
 	}
 
-	if err := saveMetadata(paths, entry); err != nil {
+	if err := saveMetadata(stagePaths, entry); err != nil {
 		return nil, err
 	}
+
+	if err := os.MkdirAll(filepath.Dir(finalPaths.BaseDir), 0o755); err != nil {
+		return nil, fmt.Errorf("prepare cache dir: %w", err)
+	}
+
+	if err := os.RemoveAll(finalPaths.BaseDir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("clear cache dir: %w", err)
+	}
+
+	if err := os.Rename(stagePaths.BaseDir, finalPaths.BaseDir); err != nil {
+		return nil, fmt.Errorf("activate cache dir: %w", err)
+	}
+
+	keepStage = true
+	entry.baseDir = finalPaths.BaseDir
 
 	return entry, nil
 }
@@ -233,6 +255,10 @@ func (m *Manager) cachePaths(network string, refID uint32) cachePaths {
 	refSegment := fmt.Sprintf("%d", refID)
 	base := filepath.Join(m.root, networkSegment, refSegment)
 
+	return newCachePaths(base)
+}
+
+func newCachePaths(base string) cachePaths {
 	return cachePaths{
 		BaseDir:      base,
 		ProposalPath: filepath.Join(base, proposalFileName),

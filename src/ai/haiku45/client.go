@@ -18,21 +18,39 @@ import (
 )
 
 const (
-	defaultModel        = "claude-haiku-4-5"
-	anthropicEndpoint   = "https://api.anthropic.com/v1/messages"
-	defaultMaxTokens    = 8192
-	defaultTemperature  = 0.2
-	defaultRequestDelay = 240 * time.Second
+	providerKey           = "haiku45"
+	defaultModel          = "claude-haiku-4-5"
+	anthropicEndpoint     = "https://api.anthropic.com/v1/messages"
+	defaultMaxTokens      = 8192
+	defaultTemperature    = 0.2
+	defaultTopP           = 0.8
+	defaultTopK           = 40
+	defaultRequestTimeout = 240 * time.Second
+	defaultRetryAttempts  = 3
+	defaultRetryBackoff   = 2 * time.Second
+	maxToolIterations     = 20
+	minTopP               = 0.01
+	maxTopP               = 1.0
+	minTopK               = 1
+	maxTopK               = 500
+	metadataApplication   = "govcomms"
+)
+
+const (
+	extraTopPKey = "haiku.top_p"
+	extraTopKKey = "haiku.top_k"
 )
 
 func init() {
-	core.RegisterProvider("haiku45", newClient)
+	core.RegisterProvider(providerKey, newClient)
 }
 
 type client struct {
 	apiKey     string
 	httpClient *http.Client
 	defaults   core.Options
+	topP       float64
+	topK       int
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
@@ -40,16 +58,26 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 		return nil, fmt.Errorf("haiku-4.5: Claude API key not configured")
 	}
 
+	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
+	topK := core.ExtraInt(cfg.Extra, extraTopKKey, defaultTopK)
+	if topK < minTopK {
+		topK = minTopK
+	} else if topK > maxTopK {
+		topK = maxTopK
+	}
+
 	return &client{
 		apiKey:     cfg.ClaudeKey,
-		httpClient: webclient.NewDefault(defaultRequestDelay),
+		httpClient: webclient.NewDefault(defaultRequestTimeout),
 		defaults: core.Options{
 			Model:               valueOrDefault(cfg.Model, defaultModel),
 			Temperature:         orFloat(cfg.Temperature, defaultTemperature),
 			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, defaultMaxTokens),
 			SystemPrompt:        cfg.SystemPrompt,
-			EnableWebSearch:     cfg.Extra["enable_web_search"] == "1",
+			EnableWebSearch:     core.ExtraBool(cfg.Extra, "enable_web_search", false),
 		},
+		topP: topP,
+		topK: topK,
 	}, nil
 }
 
@@ -78,6 +106,9 @@ func (c *client) invoke(ctx context.Context, opts core.Options, input string, to
 		"system":      opts.SystemPrompt,
 		"max_tokens":  maxTokens,
 		"temperature": opts.Temperature,
+		"top_p":       c.topP,
+		"top_k":       c.topK,
+		"metadata":    requestMetadata(),
 		"messages": []map[string]interface{}{
 			{
 				"role": "user",
@@ -89,7 +120,7 @@ func (c *client) invoke(ctx context.Context, opts core.Options, input string, to
 	}
 
 	bodyBytes, _ := json.Marshal(body)
-	_, responseBody, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+	_, responseBody, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicEndpoint, bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err
@@ -179,12 +210,15 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 		return ""
 	}
 
-	for iteration := 0; iteration < 20; iteration++ {
+	for iteration := 0; iteration < maxToolIterations; iteration++ {
 		reqBody := map[string]any{
 			"model":       opts.Model,
 			"messages":    messages,
 			"max_tokens":  maxTokens,
 			"temperature": opts.Temperature,
+			"top_p":       c.topP,
+			"top_k":       c.topK,
+			"metadata":    requestMetadata(),
 		}
 		if strings.TrimSpace(opts.SystemPrompt) != "" {
 			reqBody["system"] = opts.SystemPrompt
@@ -199,7 +233,7 @@ func (c *client) respondWithTools(ctx context.Context, input string, tools []cor
 		}
 
 		bodyBytes, _ := json.Marshal(reqBody)
-		_, payload, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+		_, payload, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, anthropicEndpoint, bytes.NewBuffer(bodyBytes))
 			if err != nil {
 				return 0, nil, err
@@ -422,6 +456,13 @@ func shouldEnableWebSearch(opts core.Options, tools []core.Tool) bool {
 		}
 	}
 	return false
+}
+
+func requestMetadata() map[string]string {
+	return map[string]string{
+		"application": metadataApplication,
+		"provider":    providerKey,
+	}
 }
 
 func extractText(chunks []struct {

@@ -18,20 +18,41 @@ import (
 )
 
 const (
-	apiURL             = "https://api.deepseek.com/chat/completions"
-	defaultModel       = "deepseek-chat"
-	defaultMaxTokens   = 8192
-	defaultTemperature = 0.7
+	providerKey             = "deepseek3"
+	apiURL                  = "https://api.deepseek.com/chat/completions"
+	defaultModel            = "deepseek-chat"
+	defaultMaxTokens        = 8192
+	defaultTemperature      = 0.7
+	defaultTopP             = 0.9
+	defaultPresencePenalty  = 0.0
+	defaultFrequencyPenalty = 0.0
+	defaultRequestTimeout   = 240 * time.Second
+	defaultRetryAttempts    = 3
+	defaultRetryBackoff     = 2 * time.Second
+	maxToolIterations       = 20
+	minTopP                 = 0.01
+	maxTopP                 = 1.0
+	penaltyMin              = -2.0
+	penaltyMax              = 2.0
+)
+
+const (
+	extraTopPKey             = "deepseek.top_p"
+	extraPresencePenaltyKey  = "deepseek.presence_penalty"
+	extraFrequencyPenaltyKey = "deepseek.frequency_penalty"
 )
 
 func init() {
-	core.RegisterProvider("deepseek3", newClient)
+	core.RegisterProvider(providerKey, newClient)
 }
 
 type client struct {
-	apiKey     string
-	httpClient *http.Client
-	defaults   core.Options
+	apiKey           string
+	httpClient       *http.Client
+	defaults         core.Options
+	topP             float64
+	frequencyPenalty float64
+	presencePenalty  float64
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
@@ -40,16 +61,22 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 	}
 
 	model := selectDeepSeekModel(cfg.Model)
+	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
+	frequencyPenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraFrequencyPenaltyKey, defaultFrequencyPenalty), penaltyMin, penaltyMax)
+	presencePenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraPresencePenaltyKey, defaultPresencePenalty), penaltyMin, penaltyMax)
 
 	return &client{
 		apiKey:     cfg.DeepSeekKey,
-		httpClient: webclient.NewDefault(240 * time.Second),
+		httpClient: webclient.NewDefault(defaultRequestTimeout),
 		defaults: core.Options{
 			Model:               model,
 			Temperature:         orFloat(cfg.Temperature, defaultTemperature),
 			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, defaultMaxTokens),
 			SystemPrompt:        cfg.SystemPrompt,
 		},
+		topP:             topP,
+		frequencyPenalty: frequencyPenalty,
+		presencePenalty:  presencePenalty,
 	}, nil
 }
 
@@ -79,10 +106,13 @@ func (c *client) buildRequest(opts core.Options, userPrompt string, enableWeb bo
 	})
 
 	body := map[string]any{
-		"model":       opts.Model,
-		"messages":    messages,
-		"temperature": opts.Temperature,
-		"max_tokens":  maxTokens(opts.MaxCompletionTokens),
+		"model":             opts.Model,
+		"messages":          messages,
+		"temperature":       opts.Temperature,
+		"max_tokens":        maxTokens(opts.MaxCompletionTokens),
+		"top_p":             c.topP,
+		"frequency_penalty": c.frequencyPenalty,
+		"presence_penalty":  c.presencePenalty,
 	}
 
 	if enableWeb {
@@ -113,7 +143,7 @@ func (c *client) send(ctx context.Context, payload map[string]any) (string, erro
 
 func (c *client) callAPI(ctx context.Context, payload map[string]any) ([]byte, error) {
 	bodyBytes, _ := json.Marshal(payload)
-	_, body, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+	_, body, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err
@@ -179,12 +209,15 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 		return ""
 	}
 
-	for iteration := 0; iteration < 20; iteration++ {
+	for iteration := 0; iteration < maxToolIterations; iteration++ {
 		reqBody := map[string]any{
-			"model":       opts.Model,
-			"messages":    messages,
-			"temperature": opts.Temperature,
-			"max_tokens":  maxTokens(opts.MaxCompletionTokens),
+			"model":             opts.Model,
+			"messages":          messages,
+			"temperature":       opts.Temperature,
+			"max_tokens":        maxTokens(opts.MaxCompletionTokens),
+			"top_p":             c.topP,
+			"frequency_penalty": c.frequencyPenalty,
+			"presence_penalty":  c.presencePenalty,
 		}
 
 		if !toolsDisabled && len(toolDefs) > 0 {

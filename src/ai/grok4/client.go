@@ -20,19 +20,41 @@ import (
 )
 
 const (
-	apiURL           = "https://api.x.ai/v1/chat/completions"
-	defaultModel     = "grok-4-fast-reasoning"
-	defaultMaxTokens = 8192
+	providerKey             = "grok4"
+	apiURL                  = "https://api.x.ai/v1/chat/completions"
+	defaultModel            = "grok-4-fast-reasoning"
+	defaultMaxTokens        = 8192
+	defaultTemperature      = 1.0
+	defaultTopP             = 0.9
+	defaultFrequencyPenalty = 0.0
+	defaultPresencePenalty  = 0.0
+	defaultRequestTimeout   = 240 * time.Second
+	defaultRetryAttempts    = 3
+	defaultRetryBackoff     = 2 * time.Second
+	maxToolIterations       = 20
+	minTopP                 = 0.01
+	maxTopP                 = 1.0
+	penaltyMin              = -2.0
+	penaltyMax              = 2.0
+)
+
+const (
+	extraTopPKey             = "grok.top_p"
+	extraFrequencyPenaltyKey = "grok.frequency_penalty"
+	extraPresencePenaltyKey  = "grok.presence_penalty"
 )
 
 func init() {
-	core.RegisterProvider("grok4", newClient)
+	core.RegisterProvider(providerKey, newClient)
 }
 
 type client struct {
-	apiKey     string
-	httpClient *http.Client
-	defaults   core.Options
+	apiKey           string
+	httpClient       *http.Client
+	defaults         core.Options
+	topP             float64
+	frequencyPenalty float64
+	presencePenalty  float64
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
@@ -40,15 +62,22 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 		return nil, fmt.Errorf("grok: API key not configured")
 	}
 
+	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
+	frequencyPenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraFrequencyPenaltyKey, defaultFrequencyPenalty), penaltyMin, penaltyMax)
+	presencePenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraPresencePenaltyKey, defaultPresencePenalty), penaltyMin, penaltyMax)
+
 	return &client{
 		apiKey:     cfg.GrokKey,
-		httpClient: webclient.NewDefault(240 * time.Second),
+		httpClient: webclient.NewDefault(defaultRequestTimeout),
 		defaults: core.Options{
 			Model:               valueOrDefault(cfg.Model, defaultModel),
-			Temperature:         orFloat(cfg.Temperature, 1.0),
+			Temperature:         orFloat(cfg.Temperature, defaultTemperature),
 			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, defaultMaxTokens),
 			SystemPrompt:        cfg.SystemPrompt,
 		},
+		topP:             topP,
+		frequencyPenalty: frequencyPenalty,
+		presencePenalty:  presencePenalty,
 	}, nil
 }
 
@@ -84,7 +113,9 @@ func (c *client) buildRequest(opts core.Options, userPrompt string, enableWeb bo
 		"max_output_tokens": maxTokens(opts.MaxCompletionTokens),
 		"stream":            false,
 		"n":                 1,
-		"top_p":             0.9,
+		"top_p":             c.topP,
+		"frequency_penalty": c.frequencyPenalty,
+		"presence_penalty":  c.presencePenalty,
 	}
 
 	if enableWeb {
@@ -99,7 +130,7 @@ func (c *client) buildRequest(opts core.Options, userPrompt string, enableWeb bo
 
 func (c *client) send(ctx context.Context, payload map[string]interface{}) (string, error) {
 	bodyBytes, _ := json.Marshal(payload)
-	_, body, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+	_, body, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err
@@ -445,14 +476,16 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 		return ""
 	}
 
-	for iteration := 0; iteration < 20; iteration++ {
+	for iteration := 0; iteration < maxToolIterations; iteration++ {
 		reqBody := map[string]any{
-			"model":       opts.Model,
-			"messages":    messages,
-			"temperature": opts.Temperature,
-			"stream":      false,
-			"n":           1,
-			"top_p":       0.9,
+			"model":             opts.Model,
+			"messages":          messages,
+			"temperature":       opts.Temperature,
+			"stream":            false,
+			"n":                 1,
+			"top_p":             c.topP,
+			"frequency_penalty": c.frequencyPenalty,
+			"presence_penalty":  c.presencePenalty,
 		}
 		if opts.MaxCompletionTokens > 0 {
 			reqBody["max_output_tokens"] = opts.MaxCompletionTokens
@@ -468,7 +501,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 		}
 
 		bodyBytes, _ := json.Marshal(reqBody)
-		_, body, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
+		_, body, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewBuffer(bodyBytes))
 			if err != nil {
 				return 0, nil, err

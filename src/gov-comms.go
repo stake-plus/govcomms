@@ -22,7 +22,10 @@ import (
 
 func main() {
 	// Use a single DB connection for all modules
-	dsn := shareddata.GetMySQLDSN()
+	dsn, err := shareddata.GetMySQLDSN()
+	if err != nil {
+		log.Fatalf("mysql dsn: %v", err)
+	}
 	db, err := shareddata.ConnectMySQL(dsn)
 	if err != nil {
 		log.Fatalf("db: %v", err)

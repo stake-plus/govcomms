@@ -17,18 +17,14 @@ type AI struct {
 
 // LoadAIFromEnv provides a simple env-only loader; services can merge DB settings over this.
 func LoadAIFromEnv() AI {
+
 	provider := os.Getenv("AI_PROVIDER")
 	if provider == "" {
 		provider = "gpt51"
 	}
+
 	model := os.Getenv("AI_MODEL")
-	if model == "" {
-		if provider == "sonnet45" {
-			model = "claude-sonnet-4-5"
-		} else {
-			model = "gpt-5.1"
-		}
-	}
+
 	return AI{
 		Provider:     provider,
 		OpenAIKey:    os.Getenv("OPENAI_API_KEY"),

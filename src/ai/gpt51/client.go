@@ -17,14 +17,42 @@ import (
 	"github.com/stake-plus/govcomms/src/webclient"
 )
 
+const (
+	providerKey             = "gpt51"
+	chatCompletionsURL      = "https://api.openai.com/v1/chat/completions"
+	defaultModel            = "gpt-5.1"
+	defaultMaxTokens        = 8192
+	defaultTemperature      = 1.0
+	defaultTopP             = 0.9
+	defaultFrequencyPenalty = 0.0
+	defaultPresencePenalty  = 0.0
+	defaultRequestTimeout   = 240 * time.Second
+	defaultRetryAttempts    = 3
+	defaultRetryBackoff     = 2 * time.Second
+	maxToolIterations       = 20
+	minTopP                 = 0.01
+	maxTopP                 = 1.0
+	penaltyMin              = -2.0
+	penaltyMax              = 2.0
+)
+
+const (
+	extraTopPKey             = "gpt51.top_p"
+	extraFrequencyPenaltyKey = "gpt51.frequency_penalty"
+	extraPresencePenaltyKey  = "gpt51.presence_penalty"
+)
+
 func init() {
-	core.RegisterProvider("gpt51", newClient)
+	core.RegisterProvider(providerKey, newClient)
 }
 
 type client struct {
-	apiKey     string
-	httpClient *http.Client
-	defaults   core.Options
+	apiKey           string
+	httpClient       *http.Client
+	defaults         core.Options
+	topP             float64
+	frequencyPenalty float64
+	presencePenalty  float64
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
@@ -32,15 +60,22 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 		return nil, fmt.Errorf("gpt51: OpenAI API key not configured")
 	}
 
+	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, defaultTopP), minTopP, maxTopP)
+	frequencyPenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraFrequencyPenaltyKey, defaultFrequencyPenalty), penaltyMin, penaltyMax)
+	presencePenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraPresencePenaltyKey, defaultPresencePenalty), penaltyMin, penaltyMax)
+
 	return &client{
 		apiKey:     cfg.OpenAIKey,
-		httpClient: webclient.NewDefault(240 * time.Second),
+		httpClient: webclient.NewDefault(defaultRequestTimeout),
 		defaults: core.Options{
-			Model:               valueOrDefault(cfg.Model, "gpt-5.1"),
-			Temperature:         orFloat(cfg.Temperature, 1),
-			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, 8192),
+			Model:               valueOrDefault(cfg.Model, defaultModel),
+			Temperature:         orFloat(cfg.Temperature, defaultTemperature),
+			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, defaultMaxTokens),
 			SystemPrompt:        cfg.SystemPrompt,
 		},
+		topP:             topP,
+		frequencyPenalty: frequencyPenalty,
+		presencePenalty:  presencePenalty,
 	}, nil
 }
 
@@ -52,13 +87,19 @@ func (c *client) AnswerQuestion(ctx context.Context, content string, question st
 		{"role": "user", "content": fmt.Sprintf("Proposal Content:\n%s\n\nQuestion: %s\n\nProvide a direct, concise answer.", content, question)},
 	}
 	reqBody := map[string]interface{}{
-		"model":       merged.Model,
-		"messages":    messages,
-		"temperature": merged.Temperature,
+		"model":             merged.Model,
+		"messages":          messages,
+		"temperature":       merged.Temperature,
+		"top_p":             c.topP,
+		"frequency_penalty": c.frequencyPenalty,
+		"presence_penalty":  c.presencePenalty,
+	}
+	if merged.MaxCompletionTokens > 0 {
+		reqBody["max_completion_tokens"] = merged.MaxCompletionTokens
 	}
 	bodyBytes, _ := json.Marshal(reqBody)
-	_, body, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
-		req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(bodyBytes))
+	_, body, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatCompletionsURL, bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err
 		}
@@ -357,11 +398,14 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 		return ""
 	}
 
-	for iteration := 0; iteration < 20; iteration++ {
+	for iteration := 0; iteration < maxToolIterations; iteration++ {
 		reqBody := map[string]any{
-			"model":       opts.Model,
-			"messages":    messages,
-			"temperature": opts.Temperature,
+			"model":             opts.Model,
+			"messages":          messages,
+			"temperature":       opts.Temperature,
+			"top_p":             c.topP,
+			"frequency_penalty": c.frequencyPenalty,
+			"presence_penalty":  c.presencePenalty,
 		}
 		if opts.MaxCompletionTokens > 0 {
 			reqBody["max_completion_tokens"] = opts.MaxCompletionTokens
@@ -377,8 +421,8 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 		}
 
 		bodyBytes, _ := json.Marshal(reqBody)
-		_, body, err := webclient.DoWithRetry(ctx, 3, 2*time.Second, func() (int, []byte, error) {
-			req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.openai.com/v1/chat/completions", bytes.NewBuffer(bodyBytes))
+		_, body, err := webclient.DoWithRetry(ctx, defaultRetryAttempts, defaultRetryBackoff, func() (int, []byte, error) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatCompletionsURL, bytes.NewBuffer(bodyBytes))
 			if err != nil {
 				return 0, nil, err
 			}

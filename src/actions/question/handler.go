@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/core"
@@ -18,23 +19,25 @@ import (
 )
 
 const answerEmbedColor = 0x3B82F6
+const defaultInteractionTimeout = 2 * time.Minute
 
 var _ core.Module = (*Module)(nil)
 
 // Module owns the Discord session and logic for the Q&A action set.
 type Module struct {
-	cfg            *sharedconfig.QAConfig
-	db             *gorm.DB
-	session        *discordgo.Session
-	cacheManager   *cache.Manager
-	contextStore   *cache.ContextStore
-	aiClient       aicore.Client
-	networkManager *sharedgov.NetworkManager
-	refManager     *sharedgov.ReferendumManager
-	cancel         context.CancelFunc
-	mcpEnabled     bool
-	mcpBaseURL     string
-	mcpAuthToken   string
+	cfg             *sharedconfig.QAConfig
+	db              *gorm.DB
+	session         *discordgo.Session
+	cacheManager    *cache.Manager
+	contextStore    *cache.ContextStore
+	aiClient        aicore.Client
+	networkManager  *sharedgov.NetworkManager
+	refManager      *sharedgov.ReferendumManager
+	cancel          context.CancelFunc
+	mcpEnabled      bool
+	mcpBaseURL      string
+	mcpAuthToken    string
+	responseTimeout time.Duration
 }
 
 // NewModule wires dependencies for the question/refresh/context actions.
@@ -79,17 +82,18 @@ func NewModule(cfg *sharedconfig.QAConfig, db *gorm.DB) (*Module, error) {
 	mcpCfg := sharedconfig.LoadMCPConfig(db)
 
 	return &Module{
-		cfg:            cfg,
-		db:             db,
-		session:        session,
-		cacheManager:   cacheManager,
-		contextStore:   cache.NewContextStore(db),
-		aiClient:       aiClient,
-		networkManager: networkManager,
-		refManager:     refManager,
-		mcpEnabled:     mcpCfg.Enabled,
-		mcpBaseURL:     mcpCfg.Listen,
-		mcpAuthToken:   mcpCfg.AuthToken,
+		cfg:             cfg,
+		db:              db,
+		session:         session,
+		cacheManager:    cacheManager,
+		contextStore:    cache.NewContextStore(db),
+		aiClient:        aiClient,
+		networkManager:  networkManager,
+		refManager:      refManager,
+		mcpEnabled:      mcpCfg.Enabled,
+		mcpBaseURL:      mcpCfg.Listen,
+		mcpAuthToken:    mcpCfg.AuthToken,
+		responseTimeout: defaultInteractionTimeout,
 	}, nil
 }
 
@@ -217,7 +221,12 @@ func (m *Module) handleQuestionSlash(s *discordgo.Session, i *discordgo.Interact
 	if strings.TrimSpace(qaContext) != "" {
 		fullContent += qaContext
 	}
-	ctx := context.Background()
+	timeout := m.responseTimeout
+	if timeout <= 0 {
+		timeout = defaultInteractionTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	basePrompt := strings.TrimSpace(m.cfg.AISystemPrompt)
 	respondOpts := aicore.Options{
 		Model:        m.cfg.AIModel,

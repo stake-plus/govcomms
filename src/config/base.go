@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log"
 	"os"
 	"strings"
 
@@ -31,10 +32,15 @@ func LoadBase(db *gorm.DB) Base {
 		guildID = os.Getenv("GUILD_ID")
 	}
 
+	dsn, err := data.GetMySQLDSN()
+	if err != nil {
+		log.Printf("config: %v", err)
+	}
+
 	return Base{
 		Token:    token,
 		GuildID:  guildID,
-		MySQLDSN: data.GetMySQLDSN(),
+		MySQLDSN: dsn,
 	}
 }
 

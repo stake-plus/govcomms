@@ -245,7 +245,10 @@ func initAIConfig() (sharedconfig.AIConfig, func()) {
 }
 
 func loadAIConfigFromDB() (sharedconfig.AIConfig, func(), error) {
-	dsn := shareddata.GetMySQLDSN()
+	dsn, err := shareddata.GetMySQLDSN()
+	if err != nil {
+		return sharedconfig.AIConfig{}, nil, err
+	}
 	if strings.TrimSpace(dsn) == "" {
 		return sharedconfig.AIConfig{}, nil, fmt.Errorf("MYSQL_DSN is not set")
 	}

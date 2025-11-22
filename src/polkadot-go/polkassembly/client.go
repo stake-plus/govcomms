@@ -12,6 +12,7 @@ import (
 	"net/http/cookiejar"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,7 @@ type Client struct {
 	signer     Signer
 	loginData  *LoginData
 	network    string
+	stateMu    sync.RWMutex
 }
 
 // Comment represents a comment returned by the Polkassembly API.
@@ -83,7 +85,8 @@ func NewClient(endpoint string, signer Signer, network string) *Client {
 
 // Login authenticates the user with Polkassembly
 func (c *Client) Login() error {
-	if c.network == "" {
+	network := c.getNetwork()
+	if network == "" {
 		return fmt.Errorf("login: network not configured")
 	}
 
@@ -94,7 +97,7 @@ func (c *Client) Login() error {
 
 	headers := map[string]string{
 		"Content-Type": "application/json",
-		"x-network":    c.network,
+		"x-network":    network,
 	}
 
 	resp, err := c.post("/auth/actions/addressLoginStart", loginStartReq, headers)
@@ -126,39 +129,41 @@ func (c *Client) Login() error {
 		return fmt.Errorf("login failed: %w", err)
 	}
 
-	if err := json.Unmarshal(resp, &c.loginData); err != nil {
+	var loginResp LoginData
+	if err := json.Unmarshal(resp, &loginResp); err != nil {
 		return fmt.Errorf("parse login response: %w", err)
 	}
-	if c.loginData != nil && c.loginData.Network == "" {
-		c.loginData.Network = c.network
+	if loginResp.Network == "" {
+		loginResp.Network = network
 	}
+	c.setLoginData(&loginResp)
 
 	return nil
 }
 
 // Signup registers a new user with Polkassembly
 func (c *Client) Signup(network string) error {
-	if network != "" {
-		network = strings.ToLower(strings.TrimSpace(network))
+	if trimmed := strings.ToLower(strings.TrimSpace(network)); trimmed != "" {
+		c.setNetwork(trimmed)
 	}
-	if network != "" {
-		c.network = network
-	}
-	if c.network == "" {
+
+	targetNetwork := c.getNetwork()
+	if targetNetwork == "" {
 		return fmt.Errorf("signup: network not specified")
 	}
 
-	if c.loginData != nil && c.loginData.Network == network {
+	loginData := c.getLoginData()
+	if loginData != nil && strings.EqualFold(strings.TrimSpace(loginData.Network), targetNetwork) {
 		return nil
 	}
 
-	if c.loginData != nil && c.loginData.Network != network {
+	if loginData != nil && !strings.EqualFold(strings.TrimSpace(loginData.Network), targetNetwork) {
 		c.Logout()
 	}
 
 	headers := map[string]string{
 		"Content-Type": "application/json",
-		"x-network":    c.network,
+		"x-network":    targetNetwork,
 	}
 
 	signupStartReq := map[string]string{
@@ -213,10 +218,10 @@ func (c *Client) Signup(network string) error {
 	}
 
 	if signupResp.Token != "" {
-		c.loginData = &LoginData{
+		c.setLoginData(&LoginData{
 			Token:   signupResp.Token,
-			Network: c.network,
-		}
+			Network: targetNetwork,
+		})
 		return nil
 	}
 
@@ -226,33 +231,37 @@ func (c *Client) Signup(network string) error {
 
 // PostComment posts a comment to a referendum
 func (c *Client) PostComment(content string, postID int, network string) (string, error) {
-	if c.loginData == nil {
+	loginData := c.getLoginData()
+	if loginData == nil {
 		return "", fmt.Errorf("not logged in")
 	}
 
-	network = strings.ToLower(strings.TrimSpace(network))
-	if network == "" {
-		network = c.network
+	if trimmed := strings.ToLower(strings.TrimSpace(network)); trimmed != "" {
+		c.setNetwork(trimmed)
 	}
-	if network == "" {
+	targetNetwork := c.getNetwork()
+	if targetNetwork == "" {
 		return "", fmt.Errorf("post comment: network not specified")
 	}
-	c.network = network
 
-	if c.loginData.Network != network {
-		if err := c.Signup(network); err != nil {
+	if !strings.EqualFold(strings.TrimSpace(loginData.Network), targetNetwork) {
+		if err := c.Signup(targetNetwork); err != nil {
 			return "", fmt.Errorf("switch network failed: %w", err)
+		}
+		loginData = c.getLoginData()
+		if loginData == nil {
+			return "", fmt.Errorf("post comment: authentication missing after signup")
 		}
 	}
 
 	for attempt := 0; attempt < 2; attempt++ {
 		headers := map[string]string{
 			"Content-Type":  "application/json",
-			"Authorization": fmt.Sprintf("Bearer %s", c.loginData.Token),
-			"x-network":     network,
+			"Authorization": fmt.Sprintf("Bearer %s", loginData.Token),
+			"x-network":     targetNetwork,
 		}
 
-		userID, err := c.fetchUserID(network)
+		userID, err := c.fetchUserID(targetNetwork)
 		if err != nil {
 			return "", fmt.Errorf("fetch user ID: %w", err)
 		}
@@ -276,10 +285,14 @@ func (c *Client) PostComment(content string, postID int, network string) (string
 			log.Printf("polkassembly: addPostComment failed (%s)", logCtx)
 			if errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden) && attempt == 0 {
 				c.Logout()
-				if signupErr := c.Signup(network); signupErr != nil {
+				if signupErr := c.Signup(targetNetwork); signupErr != nil {
 					if loginErr := c.Login(); loginErr != nil {
 						return "", fmt.Errorf("reauthenticate: %w", signupErr)
 					}
+				}
+				loginData = c.getLoginData()
+				if loginData == nil {
+					return "", fmt.Errorf("reauthenticate: missing login data")
 				}
 				continue
 			}
@@ -324,22 +337,20 @@ func (c *Client) ListComments(postID int, network string) ([]Comment, error) {
 		return nil, fmt.Errorf("list comments: invalid post id")
 	}
 
-	if network != "" {
-		network = strings.ToLower(strings.TrimSpace(network))
+	if trimmed := strings.ToLower(strings.TrimSpace(network)); trimmed != "" {
+		c.setNetwork(trimmed)
 	}
 
-	if c.network == "" && network != "" {
-		c.network = network
-	}
-	if c.network == "" {
+	currentNetwork := c.getNetwork()
+	if currentNetwork == "" {
 		return nil, fmt.Errorf("list comments: network not specified")
 	}
 
 	headers := map[string]string{
-		"x-network": c.network,
+		"x-network": currentNetwork,
 	}
-	if c.loginData != nil && c.loginData.Token != "" {
-		headers["Authorization"] = fmt.Sprintf("Bearer %s", c.loginData.Token)
+	if loginData := c.getLoginData(); loginData != nil && strings.TrimSpace(loginData.Token) != "" {
+		headers["Authorization"] = fmt.Sprintf("Bearer %s", loginData.Token)
 	}
 
 	path := fmt.Sprintf("/comments/listing/on-chain-post?postId=%d&page=1&pageSize=50&proposalType=referendums_v2", postID)
@@ -370,27 +381,67 @@ func (c *Client) ListComments(postID int, network string) ([]Comment, error) {
 
 // Logout clears authentication state
 func (c *Client) Logout() {
-	c.loginData = nil
+	c.setLoginData(nil)
 }
 
 // IsLoggedIn returns whether the client is authenticated
 func (c *Client) IsLoggedIn() bool {
-	return c.loginData != nil
+	return c.getLoginData() != nil
+}
+
+func (c *Client) getNetwork() string {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	return c.network
+}
+
+func (c *Client) setNetwork(network string) {
+	normalized := strings.ToLower(strings.TrimSpace(network))
+	if normalized == "" {
+		return
+	}
+	c.stateMu.Lock()
+	c.network = normalized
+	c.stateMu.Unlock()
+}
+
+func (c *Client) getLoginData() *LoginData {
+	c.stateMu.RLock()
+	defer c.stateMu.RUnlock()
+	if c.loginData == nil {
+		return nil
+	}
+	clone := *c.loginData
+	return &clone
+}
+
+func (c *Client) setLoginData(data *LoginData) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if data == nil {
+		c.loginData = nil
+		return
+	}
+	clone := *data
+	c.loginData = &clone
 }
 
 func (c *Client) fetchUserID(network string) (int, error) {
-	if network != "" {
-		c.network = strings.ToLower(strings.TrimSpace(network))
+	if trimmed := strings.ToLower(strings.TrimSpace(network)); trimmed != "" {
+		c.setNetwork(trimmed)
 	}
 
-	if c.loginData == nil || c.loginData.Token == "" {
+	loginData := c.getLoginData()
+	if loginData == nil || strings.TrimSpace(loginData.Token) == "" {
 		return 0, fmt.Errorf("fetch profile: not authenticated")
 	}
 
-	if c.network == "" && c.loginData != nil {
-		c.network = c.loginData.Network
+	currentNetwork := c.getNetwork()
+	if currentNetwork == "" && loginData != nil && strings.TrimSpace(loginData.Network) != "" {
+		c.setNetwork(loginData.Network)
+		currentNetwork = c.getNetwork()
 	}
-	if c.network == "" {
+	if currentNetwork == "" {
 		return 0, fmt.Errorf("fetch profile: network not specified")
 	}
 
@@ -401,8 +452,8 @@ func (c *Client) fetchUserID(network string) (int, error) {
 		if err != nil {
 			return 0, fmt.Errorf("create request: %w", err)
 		}
-		req.Header.Set("x-network", c.network)
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.loginData.Token))
+		req.Header.Set("x-network", currentNetwork)
+		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", loginData.Token))
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -414,6 +465,11 @@ func (c *Client) fetchUserID(network string) (int, error) {
 			if err := c.Login(); err != nil {
 				return 0, fmt.Errorf("reauthenticate: %w", err)
 			}
+			loginData = c.getLoginData()
+			if loginData == nil {
+				return 0, fmt.Errorf("reauthenticate: missing login data")
+			}
+			currentNetwork = c.getNetwork()
 			continue
 		}
 

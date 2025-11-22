@@ -1,15 +1,16 @@
 package data
 
 import (
-	"log"
+	"fmt"
 	"os"
+	"strings"
 )
 
 // GetMySQLDSN returns the MySQL DSN configured via environment.
-func GetMySQLDSN() string {
+func GetMySQLDSN() (string, error) {
 	dsn := os.Getenv("MYSQL_DSN")
-	if dsn == "" {
-		log.Fatalf("MYSQL_DSN is not set")
+	if strings.TrimSpace(dsn) == "" {
+		return "", fmt.Errorf("MYSQL_DSN is not set")
 	}
-	return dsn
+	return dsn, nil
 }
