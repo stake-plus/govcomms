@@ -563,24 +563,31 @@ func (g *Generator) GeneratePDF(data *ReportData) (string, error) {
 func (g *Generator) addOverviewPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	pdf.AddPage()
 
-	// Title - use channel name if available
+	// Network first
+	pdf.SetFont("Arial", "B", 14)
+	g.cellFormat(pdf, 0, 10, fmt.Sprintf("Network: %s", data.Network), "", 0, "L", false, 0, "")
+	pdf.Ln(8)
+
+	// Referendum number
+	pdf.SetFont("Arial", "B", 14)
+	g.cellFormat(pdf, 0, 10, fmt.Sprintf("Referendum #%d", data.RefID), "", 0, "L", false, 0, "")
+	pdf.Ln(8)
+
+	// Title - use channel name if available (smaller size)
 	title := data.ChannelName
 	if title == "" {
 		title = data.Title
 	}
 	if title == "" {
-		title = fmt.Sprintf("%s Referendum #%d", data.Network, data.RefID)
+		title = "No title available"
 	}
 
-	pdf.SetFont("Arial", "B", 20)
-	pdf.SetTextColor(0, 0, 0)
-	g.cellFormat(pdf, 0, 15, title, "", 0, "L", false, 0, "")
-	pdf.Ln(20)
-
-	// Network
-	pdf.SetFont("Arial", "B", 14)
-	g.cellFormat(pdf, 0, 10, fmt.Sprintf("Network: %s", data.Network), "", 0, "L", false, 0, "")
-	pdf.Ln(12)
+	pdf.SetFont("Arial", "B", 12)
+	pdf.CellFormat(0, 10, "Title:", "", 0, "L", false, 0, "")
+	pdf.Ln(6)
+	pdf.SetFont("Arial", "", 11)
+	g.multiCell(pdf, 0, 7, title, "", "", false)
+	pdf.Ln(10)
 
 	// Refreshed date
 	if data.Summary != nil {
@@ -888,6 +895,9 @@ func (g *Generator) addTeamPages(pdf *gofpdf.Fpdf, data *ReportData) {
 
 	pdf.SetFont("Arial", "B", 11)
 	pdf.CellFormat(80, 8, "Name / Moniker", "B", 0, "L", false, 0, "")
+	// Role column starts at 80 (end of name column), move left by 75px (26.5mm)
+	roleStartX := 80.0 - 26.5
+	pdf.SetX(roleStartX)
 	pdf.CellFormat(105, 8, "Role in Project", "B", 0, "L", false, 0, "")
 	pdf.Ln(10)
 
@@ -898,20 +908,22 @@ func (g *Generator) addTeamPages(pdf *gofpdf.Fpdf, data *ReportData) {
 			role = "Not specified"
 		}
 		g.cellFormat(pdf, 80, 7, fmt.Sprintf("%d. %s", idx+1, member.Name), "", 0, "L", false, 0, "")
-		// Move role left by 75px (approximately 26.5mm)
-		pdf.SetX(80 + 26.5)
+		// Move role to same position as header (aligned)
+		pdf.SetX(roleStartX)
 		g.cellFormat(pdf, 105, 7, role, "", 0, "L", false, 0, "")
 		pdf.Ln(7)
 	}
 	pdf.Ln(10)
 
-	// Individual team member pages (no forced page breaks)
-	for _, member := range data.TeamMembers.Members {
-		// Add spacing between members but don't force new page
-		if pdf.GetY() > 250 { // If near bottom of page, add new page
-			pdf.AddPage()
-		} else {
-			pdf.Ln(10) // Add spacing
+	// Individual team member pages
+	for idx, member := range data.TeamMembers.Members {
+		// Check if we need a new page - leave at least 150mm for content
+		if idx > 0 {
+			if pdf.GetY() > 150 {
+				pdf.AddPage()
+			} else {
+				pdf.Ln(15) // Space between members on same page
+			}
 		}
 
 		pdf.SetFont("Arial", "B", 16)
@@ -928,193 +940,132 @@ func (g *Generator) addTeamPages(pdf *gofpdf.Fpdf, data *ReportData) {
 			pdf.Ln(10)
 		}
 
-		// Verification Status in styled box
-		boxY := pdf.GetY()
-		boxWidth := 180.0
-		boxX := 15.0
-		boxHeight := 35.0 // Approximate height for verification status
+		// Verification Status - simple section
+		pdf.SetFont("Arial", "B", 11)
+		pdf.CellFormat(0, 8, "Verification Status", "", 0, "L", false, 0, "")
+		pdf.Ln(8)
+		pdf.SetFont("Arial", "", 10)
 
-		// Calculate actual height needed
-		lines := 2 // IsReal + HasStatedSkills
-		boxHeight = float64(lines)*8.0 + 15.0
-
-		g.drawStyledContentBox(pdf, boxX, boxY, boxWidth, boxHeight, "Verification Status", func() {
-			pdf.SetFont("Arial", "", 10)
-			// Use relative positioning from box top
-			currentY := boxY + 12
-
-			if member.IsReal != nil {
-				if *member.IsReal {
-					iconX := g.drawStatusIcon(pdf, boxX+5, currentY, "verified")
-					pdf.SetXY(iconX, currentY)
-					g.cellFormat(pdf, 0, 7, "Verified Real Person", "", 0, "L", false, 0, "")
-				} else {
-					iconX := g.drawStatusIcon(pdf, boxX+5, currentY, "not_verified")
-					pdf.SetXY(iconX, currentY)
-					g.cellFormat(pdf, 0, 7, "Not Verified", "", 0, "L", false, 0, "")
-				}
-			} else {
-				iconX := g.drawStatusIcon(pdf, boxX+5, currentY, "unknown")
+		currentY := pdf.GetY()
+		if member.IsReal != nil {
+			if *member.IsReal {
+				iconX := g.drawStatusIcon(pdf, 15, currentY, "verified")
 				pdf.SetXY(iconX, currentY)
-				g.cellFormat(pdf, 0, 7, "Unknown", "", 0, "L", false, 0, "")
-			}
-
-			currentY = boxY + 12 + 8
-			if member.HasStatedSkills != nil {
-				if *member.HasStatedSkills {
-					iconX := g.drawStatusIcon(pdf, boxX+5, currentY, "verified")
-					pdf.SetXY(iconX, currentY)
-					g.cellFormat(pdf, 0, 7, "Skills Verified", "", 0, "L", false, 0, "")
-				} else {
-					iconX := g.drawStatusIcon(pdf, boxX+5, currentY, "warning")
-					pdf.SetXY(iconX, currentY)
-					g.cellFormat(pdf, 0, 7, "Skills Unverified", "", 0, "L", false, 0, "")
-				}
+				g.cellFormat(pdf, 0, 7, "Verified Real Person", "", 0, "L", false, 0, "")
 			} else {
-				iconX := g.drawStatusIcon(pdf, boxX+5, currentY, "unknown")
+				iconX := g.drawStatusIcon(pdf, 15, currentY, "not_verified")
 				pdf.SetXY(iconX, currentY)
-				g.cellFormat(pdf, 0, 7, "Unknown", "", 0, "L", false, 0, "")
+				g.cellFormat(pdf, 0, 7, "Not Verified", "", 0, "L", false, 0, "")
 			}
-		})
-		pdf.SetY(boxY + boxHeight + 8)
+		} else {
+			iconX := g.drawStatusIcon(pdf, 15, currentY, "unknown")
+			pdf.SetXY(iconX, currentY)
+			g.cellFormat(pdf, 0, 7, "Unknown", "", 0, "L", false, 0, "")
+		}
+		pdf.Ln(6)
+
+		currentY = pdf.GetY()
+		if member.HasStatedSkills != nil {
+			if *member.HasStatedSkills {
+				iconX := g.drawStatusIcon(pdf, 15, currentY, "verified")
+				pdf.SetXY(iconX, currentY)
+				g.cellFormat(pdf, 0, 7, "Skills Verified", "", 0, "L", false, 0, "")
+			} else {
+				iconX := g.drawStatusIcon(pdf, 15, currentY, "warning")
+				pdf.SetXY(iconX, currentY)
+				g.cellFormat(pdf, 0, 7, "Skills Unverified", "", 0, "L", false, 0, "")
+			}
+		} else {
+			iconX := g.drawStatusIcon(pdf, 15, currentY, "unknown")
+			pdf.SetXY(iconX, currentY)
+			g.cellFormat(pdf, 0, 7, "Unknown", "", 0, "L", false, 0, "")
+		}
+		pdf.Ln(10)
 		pdf.SetTextColor(0, 0, 0)
 
 		// Enhanced team member details
 		details := data.TeamMemberDetailsMap[member.Name]
 
-		// Social Handles in styled box
-		boxY = pdf.GetY()
-		boxWidth = 180.0
-		boxX = 15.0
+		// Social Handles - simple section
+		pdf.SetFont("Arial", "B", 11)
+		pdf.CellFormat(0, 8, "Social Handles & Contact Information", "", 0, "L", false, 0, "")
+		pdf.Ln(8)
+		pdf.SetFont("Arial", "", 9)
 
-		// Calculate height needed for social handles
-		socialLines := 0
 		if details != nil && details.SocialHandles != nil {
-			for _, handles := range details.SocialHandles {
-				socialLines += len(handles)
+			handleLabels := map[string]string{
+				"twitter":  "Twitter",
+				"github":   "GitHub",
+				"discord":  "Discord",
+				"element":  "Element",
+				"email":    "Email",
+				"linkedin": "LinkedIn",
+				"facebook": "Facebook",
+				"forum":    "Forum",
+				"youtube":  "YouTube",
+				"other":    "Other",
+			}
+
+			for key, label := range handleLabels {
+				if handles, ok := details.SocialHandles[key]; ok && len(handles) > 0 {
+					g.cellFormat(pdf, 0, 6, fmt.Sprintf("%s: %s", label, strings.Join(handles, ", ")), "", 0, "L", false, 0, "")
+					pdf.Ln(5)
+				}
 			}
 		} else {
+			// Fallback to basic URLs
 			allURLs := []string{}
 			allURLs = append(allURLs, member.GitHub...)
 			allURLs = append(allURLs, member.Twitter...)
 			allURLs = append(allURLs, member.LinkedIn...)
 			allURLs = append(allURLs, member.Other...)
 			allURLs = append(allURLs, member.VerifiedURLs...)
-			socialLines = len(allURLs)
-		}
-		if socialLines == 0 {
-			socialLines = 1
-		}
-		boxHeight = float64(socialLines)*6.0 + 20.0
 
-		g.drawStyledContentBox(pdf, boxX, boxY, boxWidth, boxHeight, "Social Handles & Contact Information", func() {
-			pdf.SetFont("Arial", "", 9)
-
-			if details != nil && details.SocialHandles != nil {
-				handleLabels := map[string]string{
-					"twitter":  "Twitter",
-					"github":   "GitHub",
-					"discord":  "Discord",
-					"element":  "Element",
-					"email":    "Email",
-					"linkedin": "LinkedIn",
-					"facebook": "Facebook",
-					"forum":    "Forum",
-					"youtube":  "YouTube",
-					"other":    "Other",
-				}
-
-				for key, label := range handleLabels {
-					if handles, ok := details.SocialHandles[key]; ok && len(handles) > 0 {
-						g.cellFormat(pdf, 0, 6, fmt.Sprintf("%s: %s", label, strings.Join(handles, ", ")), "", 0, "L", false, 0, "")
-						pdf.Ln(5)
-					}
-				}
-
-				// Fallback to basic URLs if enhanced details not available
-				if len(details.SocialHandles) == 0 {
-					allURLs := []string{}
-					allURLs = append(allURLs, member.GitHub...)
-					allURLs = append(allURLs, member.Twitter...)
-					allURLs = append(allURLs, member.LinkedIn...)
-					allURLs = append(allURLs, member.Other...)
-					allURLs = append(allURLs, member.VerifiedURLs...)
-
-					if len(allURLs) > 0 {
-						for _, url := range allURLs {
-							g.cellFormat(pdf, 0, 6, url, "", 0, "L", false, 0, "")
-							pdf.Ln(5)
-						}
-					}
+			if len(allURLs) > 0 {
+				for _, url := range allURLs {
+					g.cellFormat(pdf, 0, 6, url, "", 0, "L", false, 0, "")
+					pdf.Ln(5)
 				}
 			} else {
-				// Fallback to basic URLs
-				allURLs := []string{}
-				allURLs = append(allURLs, member.GitHub...)
-				allURLs = append(allURLs, member.Twitter...)
-				allURLs = append(allURLs, member.LinkedIn...)
-				allURLs = append(allURLs, member.Other...)
-				allURLs = append(allURLs, member.VerifiedURLs...)
-
-				if len(allURLs) > 0 {
-					for _, url := range allURLs {
-						g.cellFormat(pdf, 0, 6, url, "", 0, "L", false, 0, "")
-						pdf.Ln(5)
-					}
-				} else {
-					pdf.SetFont("Arial", "I", 9)
-					pdf.SetTextColor(128, 128, 128)
-					g.cellFormat(pdf, 0, 6, "No profile links available", "", 0, "L", false, 0, "")
-					pdf.SetTextColor(0, 0, 0)
-				}
+				pdf.SetFont("Arial", "I", 9)
+				pdf.SetTextColor(128, 128, 128)
+				g.cellFormat(pdf, 0, 6, "No profile links available", "", 0, "L", false, 0, "")
+				pdf.SetTextColor(0, 0, 0)
 			}
-		})
-		pdf.SetY(boxY + boxHeight + 8)
+		}
+		pdf.Ln(10)
 
-		// Skills in styled box
+		// Skills - simple section
 		if details != nil && len(details.Skills) > 0 {
-			boxY := pdf.GetY()
-			boxWidth := 180.0
-			boxX := 15.0
-			boxHeight := float64(len(details.Skills))*8.0 + 20.0
-
-			g.drawStyledContentBox(pdf, boxX, boxY, boxWidth, boxHeight, "Known Skills", func() {
-				pdf.SetFont("Arial", "", 9)
-				for _, skill := range details.Skills {
-					pdf.CellFormat(5, 6, "-", "", 0, "L", false, 0, "")
-					g.multiCell(pdf, 0, 6, skill, "", "", false)
-					pdf.Ln(2)
-				}
-			})
-			pdf.SetY(boxY + boxHeight + 8)
+			pdf.SetFont("Arial", "B", 11)
+			pdf.CellFormat(0, 8, "Known Skills", "", 0, "L", false, 0, "")
+			pdf.Ln(8)
+			pdf.SetFont("Arial", "", 9)
+			for _, skill := range details.Skills {
+				pdf.CellFormat(5, 6, "-", "", 0, "L", false, 0, "")
+				g.multiCell(pdf, 0, 6, skill, "", "", false)
+				pdf.Ln(2)
+			}
+			pdf.Ln(8)
 		}
 
-		// Work History in styled box
+		// Work History - simple section
 		if details != nil && details.WorkHistory != "" {
-			boxY = pdf.GetY()
-			boxWidth = 180.0
-			boxX = 15.0
-			// Estimate height for work history
-			workHistoryLines := (len(details.WorkHistory) / 60) + 3
-			boxHeight := float64(workHistoryLines)*5.0 + 20.0
-
-			g.drawStyledContentBox(pdf, boxX, boxY, boxWidth, boxHeight, "Work History & Background", func() {
-				pdf.SetFont("Arial", "", 9)
-				g.multiCell(pdf, 0, 6, details.WorkHistory, "", "", false)
-			})
-			pdf.SetY(boxY + boxHeight + 8)
+			pdf.SetFont("Arial", "B", 11)
+			pdf.CellFormat(0, 8, "Work History & Background", "", 0, "L", false, 0, "")
+			pdf.Ln(8)
+			pdf.SetFont("Arial", "", 9)
+			pdf.SetX(20) // Indent paragraph
+			g.multiCell(pdf, 0, 6, details.WorkHistory, "", "", false)
+			pdf.Ln(8)
 		} else if member.Capability != "" {
-			boxY = pdf.GetY()
-			boxWidth = 180.0
-			boxX = 15.0
-			capabilityLines := (len(member.Capability) / 60) + 3
-			boxHeight := float64(capabilityLines)*5.0 + 20.0
-
-			g.drawStyledContentBox(pdf, boxX, boxY, boxWidth, boxHeight, "Capability Assessment", func() {
-				pdf.SetFont("Arial", "", 9)
-				g.multiCell(pdf, 0, 6, member.Capability, "", "", false)
-			})
-			pdf.SetY(boxY + boxHeight + 8)
+			pdf.SetFont("Arial", "B", 11)
+			pdf.CellFormat(0, 8, "Capability Assessment", "", 0, "L", false, 0, "")
+			pdf.Ln(8)
+			pdf.SetFont("Arial", "", 9)
+			pdf.SetX(20) // Indent paragraph
+			g.multiCell(pdf, 0, 6, member.Capability, "", "", false)
+			pdf.Ln(8)
 		}
 
 		// Green/Red boxes for team member
@@ -1124,26 +1075,27 @@ func (g *Generator) addTeamPages(pdf *gofpdf.Fpdf, data *ReportData) {
 
 			if len(details.Verified) > 0 {
 				boxY := pdf.GetY()
-				boxHeight := g.drawGreenBox(pdf, boxX, boxY, boxWidth, "Verified/Confirmed", details.Verified)
-				// Update Y position - box may have moved to new page
-				if boxY+boxHeight > 277 { // If box was near bottom, it moved to new page
-					pdf.SetY(20 + boxHeight + 5)
-				} else {
-					pdf.SetY(boxY + boxHeight + 5)
+				// Check if box fits on page
+				if boxY > 200 {
+					pdf.AddPage()
+					boxY = 20.0
 				}
+				boxHeight := g.drawGreenBox(pdf, boxX, boxY, boxWidth, "Verified/Confirmed", details.Verified)
+				pdf.SetY(boxY + boxHeight + 8)
 			}
 
 			if len(details.Concerns) > 0 {
 				boxY := pdf.GetY()
-				boxHeight := g.drawRedBox(pdf, boxX, boxY, boxWidth, "Concerns/Worries", details.Concerns)
-				// Update Y position - box may have moved to new page
-				if boxY+boxHeight > 277 { // If box was near bottom, it moved to new page
-					pdf.SetY(20 + boxHeight + 5)
-				} else {
-					pdf.SetY(boxY + boxHeight + 5)
+				// Check if box fits on page
+				if boxY > 200 {
+					pdf.AddPage()
+					boxY = 20.0
 				}
+				boxHeight := g.drawRedBox(pdf, boxX, boxY, boxWidth, "Concerns/Worries", details.Concerns)
+				pdf.SetY(boxY + boxHeight + 8)
 			}
 		}
+		pdf.Ln(10) // Space between team members
 	}
 }
 
@@ -1442,17 +1394,16 @@ func (g *Generator) addRecommendationsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 		return
 	}
 
-	// Verdict Section Title with styling
-	pdf.SetFont("Arial", "B", 18)
-	pdf.SetTextColor(59, 130, 246) // Blue accent
-	pdf.CellFormat(0, 15, "Final Verdict", "", 0, "L", false, 0, "")
-	pdf.Ln(20)
-	pdf.SetTextColor(0, 0, 0)
+	// Verdict Section Title
+	pdf.SetFont("Arial", "B", 16)
+	pdf.CellFormat(0, 12, "Final Verdict", "", 0, "L", false, 0, "")
+	pdf.Ln(15)
 
-	// Idea Quality in styled box
-	boxY := pdf.GetY()
-	boxWidth := 180.0
-	boxX := 15.0
+	// Idea Quality
+	pdf.SetFont("Arial", "B", 12)
+	pdf.CellFormat(0, 10, "Idea Quality Assessment", "", 0, "L", false, 0, "")
+	pdf.Ln(8)
+	pdf.SetFont("Arial", "", 10)
 	ideaQuality := data.Recommendations.IdeaQuality
 	if ideaQuality == "" {
 		ideaQuality = "Uncertain"
@@ -1460,18 +1411,22 @@ func (g *Generator) addRecommendationsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	var qualityR, qualityG, qualityB int
 	switch strings.ToLower(ideaQuality) {
 	case "good":
-		qualityR, qualityG, qualityB = 220, 255, 220 // Light green
+		qualityR, qualityG, qualityB = 0, 150, 0 // Green text
 	case "bad":
-		qualityR, qualityG, qualityB = 255, 220, 220 // Light red
+		qualityR, qualityG, qualityB = 200, 0, 0 // Red text
 	default:
-		qualityR, qualityG, qualityB = 255, 245, 220 // Light orange
+		qualityR, qualityG, qualityB = 200, 150, 0 // Orange text
 	}
-	boxHeight := 25.0
-	g.drawColoredBox(pdf, boxX, boxY, boxWidth, boxHeight, qualityR, qualityG, qualityB, "Idea Quality Assessment", fmt.Sprintf("Assessment: %s", strings.ToUpper(ideaQuality)))
-	pdf.SetY(boxY + boxHeight + 10)
+	pdf.SetTextColor(qualityR, qualityG, qualityB)
+	g.cellFormat(pdf, 0, 8, fmt.Sprintf("Assessment: %s", strings.ToUpper(ideaQuality)), "", 0, "L", false, 0, "")
+	pdf.Ln(12)
+	pdf.SetTextColor(0, 0, 0)
 
-	// Team Capability in styled box
-	boxY = pdf.GetY()
+	// Team Capability
+	pdf.SetFont("Arial", "B", 12)
+	pdf.CellFormat(0, 10, "Team Capability Assessment", "", 0, "L", false, 0, "")
+	pdf.Ln(8)
+	pdf.SetFont("Arial", "", 10)
 	teamCapability := data.Recommendations.TeamCapability
 	if teamCapability == "" {
 		teamCapability = "Uncertain"
@@ -1479,18 +1434,22 @@ func (g *Generator) addRecommendationsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	var capabilityR, capabilityG, capabilityB int
 	switch strings.ToLower(teamCapability) {
 	case "can deliver":
-		capabilityR, capabilityG, capabilityB = 220, 255, 220 // Light green
+		capabilityR, capabilityG, capabilityB = 0, 150, 0 // Green text
 	case "cannot deliver":
-		capabilityR, capabilityG, capabilityB = 255, 220, 220 // Light red
+		capabilityR, capabilityG, capabilityB = 200, 0, 0 // Red text
 	default:
-		capabilityR, capabilityG, capabilityB = 255, 245, 220 // Light orange
+		capabilityR, capabilityG, capabilityB = 200, 150, 0 // Orange text
 	}
-	boxHeight = 25.0
-	g.drawColoredBox(pdf, boxX, boxY, boxWidth, boxHeight, capabilityR, capabilityG, capabilityB, "Team Capability Assessment", fmt.Sprintf("Assessment: %s", strings.ToUpper(teamCapability)))
-	pdf.SetY(boxY + boxHeight + 10)
+	pdf.SetTextColor(capabilityR, capabilityG, capabilityB)
+	g.cellFormat(pdf, 0, 8, fmt.Sprintf("Assessment: %s", strings.ToUpper(teamCapability)), "", 0, "L", false, 0, "")
+	pdf.Ln(12)
+	pdf.SetTextColor(0, 0, 0)
 
-	// AI Vote Recommendation - Large prominent box
-	boxY = pdf.GetY()
+	// AI Vote Recommendation
+	pdf.SetFont("Arial", "B", 12)
+	pdf.CellFormat(0, 10, "AI Vote Recommendation", "", 0, "L", false, 0, "")
+	pdf.Ln(8)
+	pdf.SetFont("Arial", "B", 14)
 	aiVote := data.Recommendations.AIVote
 	if aiVote == "" {
 		aiVote = "Abstain"
@@ -1498,38 +1457,40 @@ func (g *Generator) addRecommendationsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	var voteR, voteG, voteB int
 	switch strings.ToUpper(aiVote) {
 	case "AYE", "YES":
-		voteR, voteG, voteB = 200, 255, 200 // Brighter green
+		voteR, voteG, voteB = 0, 150, 0 // Green text
 	case "NAY", "NO":
-		voteR, voteG, voteB = 255, 200, 200 // Brighter red
+		voteR, voteG, voteB = 200, 0, 0 // Red text
 	default:
-		voteR, voteG, voteB = 255, 235, 200 // Brighter orange
+		voteR, voteG, voteB = 200, 150, 0 // Orange text
 	}
-	boxHeight = 35.0
-	pdf.SetFont("Arial", "B", 16)
-	g.drawColoredBox(pdf, boxX, boxY, boxWidth, boxHeight, voteR, voteG, voteB, "AI Vote Recommendation", fmt.Sprintf("AI VOTE: %s", strings.ToUpper(aiVote)))
-	pdf.SetY(boxY + boxHeight + 15)
+	pdf.SetTextColor(voteR, voteG, voteB)
+	g.cellFormat(pdf, 0, 12, fmt.Sprintf("AI Vote: %s", strings.ToUpper(aiVote)), "", 0, "L", false, 0, "")
+	pdf.Ln(12)
+	pdf.SetTextColor(0, 0, 0)
 
-	// Overall Verdict - Large prominent box
-	boxY = pdf.GetY()
+	// Overall Verdict
+	pdf.SetFont("Arial", "B", 12)
+	pdf.CellFormat(0, 10, "Overall Recommendation", "", 0, "L", false, 0, "")
+	pdf.Ln(8)
+	pdf.SetFont("Arial", "B", 14)
 	var verdictR, verdictG, verdictB int
 	switch strings.ToLower(data.Recommendations.Verdict) {
 	case "approve":
-		verdictR, verdictG, verdictB = 200, 255, 200 // Brighter green
+		verdictR, verdictG, verdictB = 0, 150, 0 // Green text
 	case "deny":
-		verdictR, verdictG, verdictB = 255, 200, 200 // Brighter red
+		verdictR, verdictG, verdictB = 200, 0, 0 // Red text
 	case "modify":
-		verdictR, verdictG, verdictB = 255, 235, 200 // Brighter orange
+		verdictR, verdictG, verdictB = 200, 150, 0 // Orange text
 	default:
-		verdictR, verdictG, verdictB = 240, 240, 240 // Gray
+		verdictR, verdictG, verdictB = 0, 0, 0 // Black text
 	}
-	boxHeight = 35.0
-	pdf.SetFont("Arial", "B", 16)
-	g.drawColoredBox(pdf, boxX, boxY, boxWidth, boxHeight, verdictR, verdictG, verdictB, "Overall Recommendation", fmt.Sprintf("VERDICT: %s", strings.ToUpper(data.Recommendations.Verdict)))
-	pdf.SetY(boxY + boxHeight + 10)
+	pdf.SetTextColor(verdictR, verdictG, verdictB)
+	g.cellFormat(pdf, 0, 12, fmt.Sprintf("Verdict: %s", strings.ToUpper(data.Recommendations.Verdict)), "", 0, "L", false, 0, "")
+	pdf.Ln(12)
+	pdf.SetTextColor(0, 0, 0)
 
 	// Confidence
 	pdf.SetFont("Arial", "B", 11)
-	pdf.SetTextColor(0, 0, 0)
 	g.cellFormat(pdf, 0, 10, fmt.Sprintf("Confidence Level: %s", strings.ToUpper(data.Recommendations.Confidence)), "", 0, "L", false, 0, "")
 	pdf.Ln(15)
 
