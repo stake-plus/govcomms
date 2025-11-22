@@ -375,7 +375,9 @@ type SummaryData struct {
 	ValidClaims       []string      `json:"validClaims"`
 	UnverifiedClaims  []string      `json:"unverifiedClaims"`
 	InvalidClaims     []string      `json:"invalidClaims"`
-	TeamMembers       []TeamSummary `json:"teamMembers"`
+	TeamMembers       []TeamSummary  `json:"teamMembers"`
+	ProviderCompany   string        `json:"providerCompany"`
+	AIModel           string        `json:"aiModel"`
 	GeneratedAt       time.Time     `json:"generatedAt"`
 }
 

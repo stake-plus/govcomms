@@ -418,24 +418,32 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 		return
 	}
 
-	// Update message to show we're processing research
-	sendStyledWebhookEdit(s, i.Interaction, "Refresh", fmt.Sprintf("✅ Refreshed content for %s referendum #%d\n\n⏳ Processing claims and team analysis...", network.Name, threadInfo.RefID))
+	// Send plain text status update
+	if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, fmt.Sprintf("✅ Refreshed content for %s referendum #%d\n\n⏳ Processing claims and team analysis...", network.Name, threadInfo.RefID)); err != nil {
+		log.Printf("question: failed to send status update: %v", err)
+	}
 
 	// Run claims and teams analysis (wait for completion)
 	if err := m.runSilentResearch(network.Name, uint32(threadInfo.RefID), threadInfo.RefDBID, threadInfo.NetworkID); err != nil {
 		log.Printf("question: research failed: %v", err)
-		sendStyledWebhookEdit(s, i.Interaction, "Refresh", fmt.Sprintf("✅ Refreshed content for %s referendum #%d\n\n⚠️ Research processing failed.", network.Name, threadInfo.RefID))
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, fmt.Sprintf("✅ Refreshed content for %s referendum #%d\n\n⚠️ Research processing failed.", network.Name, threadInfo.RefID)); err != nil {
+			log.Printf("question: failed to send error update: %v", err)
+		}
 		return
 	}
 
-	// Update message to show we're generating summary
-	sendStyledWebhookEdit(s, i.Interaction, "Refresh", fmt.Sprintf("✅ Refreshed content for %s referendum #%d\n\n✅ Research completed\n\n⏳ Generating summary...", network.Name, threadInfo.RefID))
+	// Send status update
+	if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, fmt.Sprintf("✅ Refreshed content for %s referendum #%d\n\n✅ Research completed\n\n⏳ Generating summary...", network.Name, threadInfo.RefID)); err != nil {
+		log.Printf("question: failed to send status update: %v", err)
+	}
 
 	// Generate and save summary
 	summary, err := m.generateSummary(network.Name, uint32(threadInfo.RefID), threadInfo.RefDBID, threadInfo.NetworkID)
 	if err != nil {
 		log.Printf("question: summary generation failed: %v", err)
-		sendStyledWebhookEdit(s, i.Interaction, "Refresh", fmt.Sprintf("✅ Refreshed content for %s referendum #%d\n\n✅ Research completed\n\n⚠️ Summary generation failed.", network.Name, threadInfo.RefID))
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, fmt.Sprintf("✅ Refreshed content for %s referendum #%d\n\n✅ Research completed\n\n⚠️ Summary generation failed.", network.Name, threadInfo.RefID)); err != nil {
+			log.Printf("question: failed to send error update: %v", err)
+		}
 		return
 	}
 
@@ -460,7 +468,9 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 
 	if len(summaryEmbeds) == 0 {
 		log.Printf("question: no embeds generated for summary")
-		sendStyledWebhookEdit(s, i.Interaction, "Refresh", "Summary generated but formatting failed.")
+		if _, err := shareddiscord.SendMessageNoEmbed(s, i.ChannelID, "Summary generated but formatting failed."); err != nil {
+			log.Printf("question: failed to send error message: %v", err)
+		}
 		return
 	}
 
@@ -582,7 +592,7 @@ func buildQuestionResponseBody(providerInfo aicore.ProviderInfo, model, question
 	if providerWebsite == "" {
 		providerWebsite = "unknown"
 	}
-	return fmt.Sprintf("Provider: %s    Model: %s\n\nQuestion: %s\n\nAnswer:\n\n%s",
+	return fmt.Sprintf("Provider: %s Model: %s\n\nQuestion: %s\n\nAnswer:\n\n%s",
 		providerCompany, model, questionText, answer)
 }
 
@@ -860,6 +870,17 @@ func (m *Module) generateSummary(network string, refID uint32, refDBID uint64, n
 		return nil, fmt.Errorf("create AI client: %w", err)
 	}
 
+	// Get provider info for summary
+	providerInfo, _ := aicore.GetProviderInfo(factoryCfg.Provider)
+	providerCompany := providerInfo.Company
+	if providerCompany == "" {
+		providerCompany = "unknown"
+	}
+	modelName := aicore.ResolveModelName(factoryCfg.Provider, factoryCfg.Model)
+	if modelName == "" {
+		modelName = "unknown"
+	}
+
 	log.Printf("question: generating summary for %s #%d", network, refID)
 
 	// Generate summary using AI
@@ -975,6 +996,8 @@ Proposal Data:
 		UnverifiedClaims:  unverifiedClaims,
 		InvalidClaims:     invalidClaims,
 		TeamMembers:       teamSummaries,
+		ProviderCompany:   providerCompany,
+		AIModel:           modelName,
 		GeneratedAt:       time.Now().UTC(),
 	}
 
@@ -1301,6 +1324,10 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 	teamContent := teamContentBuilder.String()
 	teamText := teamPrefix + teamContent
 
+	// Add provider info at the end
+	providerInfoText := fmt.Sprintf("\n\n---\n\n**Provider:** %s\n**AI Model:** %s", summary.ProviderCompany, summary.AIModel)
+	
+	// Check if we can add provider info to the last team embed without exceeding limit
 	if len(teamText) > maxChars {
 		chunks := splitLongText(teamPrefix, teamContent, maxChars)
 		for i, chunk := range chunks {
@@ -1308,16 +1335,54 @@ func (m *Module) formatSummary(summary *cache.SummaryData, channelTitle string) 
 			if i > 0 {
 				title += " (continued)"
 			}
+			description := chunk
+			// Add provider info to the last chunk
+			if i == len(chunks)-1 {
+				if len(description)+len(providerInfoText) <= maxChars {
+					description += providerInfoText
+				} else {
+					// Provider info is too long, add it as a separate embed
+					embeds = append(embeds, SummaryEmbed{
+						Title:       title,
+						Description: chunk,
+						Color:       0x3B82F6,
+					})
+					embeds = append(embeds, SummaryEmbed{
+						Title:       "Summary Information",
+						Description: providerInfoText,
+						Color:       0x3B82F6,
+					})
+					return embeds
+				}
+			}
 			embeds = append(embeds, SummaryEmbed{
 				Title:       title,
-				Description: chunk,
-				Color:       0x3B82F6, // Amber/Orange
+				Description: description,
+				Color:       0x3B82F6,
 			})
 		}
 	} else {
+		// Single team embed - add provider info if it fits
+		finalText := teamText
+		if len(finalText)+len(providerInfoText) <= maxChars {
+			finalText += providerInfoText
+		} else {
+			// Provider info doesn't fit, add as separate embed
+			embeds = append(embeds, SummaryEmbed{
+				Title:       "Team Background and Skill Summary ⚡",
+				Description: teamText,
+				Color:       0x3B82F6,
+			})
+			embeds = append(embeds, SummaryEmbed{
+				Title:       "Summary Information",
+				Description: providerInfoText,
+				Color:       0x3B82F6,
+			})
+			return embeds
+		}
 		embeds = append(embeds, SummaryEmbed{
 			Title:       "Team Background and Skill Summary ⚡",
-			Description: teamText,
+			Description: finalText,
 			Color:       0x3B82F6,
 		})
 	}
