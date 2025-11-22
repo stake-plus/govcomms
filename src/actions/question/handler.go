@@ -446,7 +446,45 @@ func (m *Module) handleRefreshSlash(s *discordgo.Session, i *discordgo.Interacti
 
 	// Format and send summary
 	summaryText := m.formatSummary(summary)
-	sendStyledWebhookEdit(s, i.Interaction, "Refresh", summaryText)
+	log.Printf("question: formatted summary for %s #%d (length: %d)", network.Name, threadInfo.RefID, len(summaryText))
+
+	// Use BuildStyledMessages to handle long messages
+	payloads := shareddiscord.BuildStyledMessages("Refresh", summaryText, "")
+	if len(payloads) == 0 {
+		log.Printf("question: no payloads generated for summary")
+		sendStyledWebhookEdit(s, i.Interaction, "Refresh", "Summary generated but formatting failed.")
+		return
+	}
+
+	// Edit the interaction with the first message
+	first := payloads[0]
+	edit := &discordgo.WebhookEdit{
+		Content: &first.Content,
+	}
+	if len(first.Components) > 0 {
+		edit.Components = &first.Components
+	}
+	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, edit); err != nil {
+		log.Printf("question: summary send failed: %v", err)
+		return
+	}
+
+	// Send follow-up messages if needed
+	for idx := 1; idx < len(payloads); idx++ {
+		payload := payloads[idx]
+		msg := &discordgo.MessageSend{
+			Content: payload.Content,
+		}
+		if len(payload.Components) > 0 {
+			msg.Components = payload.Components
+		}
+		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, i.ChannelID, msg); err != nil {
+			log.Printf("question: summary follow-up send failed: %v", err)
+			return
+		}
+	}
+
+	log.Printf("question: summary successfully sent for %s #%d", network.Name, threadInfo.RefID)
 }
 
 func (m *Module) sendLongMessageSlash(s *discordgo.Session, interaction *discordgo.Interaction, question string, message string, providerInfo aicore.ProviderInfo, model string) {
@@ -736,18 +774,33 @@ func (m *Module) generateSummary(network string, refID uint32, refDBID uint64, n
 	summaryContext.WriteString(proposalContent)
 	summaryContext.WriteString("\n\n")
 
-	// Add claims data
+	// Add claims data with full details
 	if entry.Claims != nil && len(entry.Claims.Results) > 0 {
-		summaryContext.WriteString("Verified Claims:\n")
+		summaryContext.WriteString("Verified Claims (with URLs and evidence):\n")
 		for _, claim := range entry.Claims.Results {
 			summaryContext.WriteString(fmt.Sprintf("- [%s] %s\n", claim.Status, claim.Claim))
+			if claim.Category != "" {
+				summaryContext.WriteString(fmt.Sprintf("  Category: %s\n", claim.Category))
+			}
+			if claim.Context != "" {
+				summaryContext.WriteString(fmt.Sprintf("  Context: %s\n", claim.Context))
+			}
+			if len(claim.URLs) > 0 {
+				summaryContext.WriteString(fmt.Sprintf("  URLs from proposal: %s\n", strings.Join(claim.URLs, ", ")))
+			}
+			if claim.Evidence != "" {
+				summaryContext.WriteString(fmt.Sprintf("  Verification Evidence: %s\n", claim.Evidence))
+			}
+			if len(claim.SourceURLs) > 0 {
+				summaryContext.WriteString(fmt.Sprintf("  Verification Sources: %s\n", strings.Join(claim.SourceURLs, ", ")))
+			}
+			summaryContext.WriteString("\n")
 		}
-		summaryContext.WriteString("\n")
 	}
 
-	// Add team data
+	// Add team data with full details including URLs
 	if entry.TeamMembers != nil && len(entry.TeamMembers.Members) > 0 {
-		summaryContext.WriteString("Team Members:\n")
+		summaryContext.WriteString("Team Members (with all profile URLs and analysis):\n")
 		for _, member := range entry.TeamMembers.Members {
 			isReal := "Unknown"
 			hasSkills := "Unknown"
@@ -766,8 +819,26 @@ func (m *Module) generateSummary(network string, refID uint32, refDBID uint64, n
 				}
 			}
 			summaryContext.WriteString(fmt.Sprintf("- %s (%s) - Is Real: %s, Has Skills: %s\n", member.Name, member.Role, isReal, hasSkills))
+			if member.Capability != "" {
+				summaryContext.WriteString(fmt.Sprintf("  Capability Assessment: %s\n", member.Capability))
+			}
+			if len(member.GitHub) > 0 {
+				summaryContext.WriteString(fmt.Sprintf("  GitHub: %s\n", strings.Join(member.GitHub, ", ")))
+			}
+			if len(member.Twitter) > 0 {
+				summaryContext.WriteString(fmt.Sprintf("  Twitter: %s\n", strings.Join(member.Twitter, ", ")))
+			}
+			if len(member.LinkedIn) > 0 {
+				summaryContext.WriteString(fmt.Sprintf("  LinkedIn: %s\n", strings.Join(member.LinkedIn, ", ")))
+			}
+			if len(member.Other) > 0 {
+				summaryContext.WriteString(fmt.Sprintf("  Other URLs: %s\n", strings.Join(member.Other, ", ")))
+			}
+			if len(member.VerifiedURLs) > 0 {
+				summaryContext.WriteString(fmt.Sprintf("  Verified URLs: %s\n", strings.Join(member.VerifiedURLs, ", ")))
+			}
+			summaryContext.WriteString("\n")
 		}
-		summaryContext.WriteString("\n")
 	}
 
 	// Load AI config
@@ -778,6 +849,8 @@ func (m *Module) generateSummary(network string, refID uint32, refDBID uint64, n
 		return nil, fmt.Errorf("create AI client: %w", err)
 	}
 
+	log.Printf("question: generating summary for %s #%d", network, refID)
+
 	// Generate summary using AI
 	prompt := fmt.Sprintf(`Generate a comprehensive summary for this blockchain governance proposal.
 
@@ -785,7 +858,7 @@ Requirements:
 1. Background Context: Write 1 paragraph (maximum 4 sentences) explaining the background and context of this proposal.
 2. Summary: Write 1 paragraph (maximum 4 sentences) summarizing what this proposal aims to achieve.
 
-For each team member listed, provide a 2-sentence description of their history and background based on the information available.
+For each team member listed, provide a 2-sentence description of their history and background. Use the URLs, capability assessments, and verification information provided to write accurate descriptions.
 
 Format your response as JSON:
 {
@@ -802,10 +875,13 @@ Proposal Data:
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	log.Printf("question: calling AI to generate summary for %s #%d", network, refID)
 	response, err := aiClient.Respond(ctx, prompt, nil, aicore.Options{})
 	if err != nil {
+		log.Printf("question: AI summary generation failed for %s #%d: %v", network, refID, err)
 		return nil, fmt.Errorf("AI response: %w", err)
 	}
+	log.Printf("question: received AI summary response for %s #%d (length: %d)", network, refID, len(response))
 
 	// Parse AI response (extract JSON)
 	var aiResponse struct {
@@ -820,13 +896,16 @@ Proposal Data:
 	if startIdx >= 0 && endIdx > startIdx {
 		jsonStr := response[startIdx : endIdx+1]
 		if err := json.Unmarshal([]byte(jsonStr), &aiResponse); err != nil {
-			log.Printf("question: failed to parse AI summary response: %v", err)
+			log.Printf("question: failed to parse AI summary response for %s #%d: %v\nResponse: %s", network, refID, err, response[:min(500, len(response))])
 			// Fallback: use simple text extraction
 			aiResponse.BackgroundContext = "Background context generation failed."
 			aiResponse.Summary = "Summary generation failed."
 			aiResponse.TeamHistories = make(map[string]string)
+		} else {
+			log.Printf("question: successfully parsed AI summary response for %s #%d", network, refID)
 		}
 	} else {
+		log.Printf("question: no JSON found in AI summary response for %s #%d\nResponse: %s", network, refID, response[:min(500, len(response))])
 		aiResponse.BackgroundContext = "Background context generation failed."
 		aiResponse.Summary = "Summary generation failed."
 		aiResponse.TeamHistories = make(map[string]string)
@@ -875,7 +954,7 @@ Proposal Data:
 		}
 	}
 
-	return &cache.SummaryData{
+	summaryData := &cache.SummaryData{
 		Network:           network,
 		RefID:             refID,
 		Title:             title,
@@ -886,7 +965,19 @@ Proposal Data:
 		InvalidClaims:     invalidClaims,
 		TeamMembers:       teamSummaries,
 		GeneratedAt:       time.Now().UTC(),
-	}, nil
+	}
+
+	log.Printf("question: summary generated for %s #%d: %d valid claims, %d unverified, %d invalid, %d team members",
+		network, refID, len(validClaims), len(unverifiedClaims), len(invalidClaims), len(teamSummaries))
+
+	return summaryData, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // formatSummary formats the summary data for Discord display.
@@ -1006,5 +1097,39 @@ func (m *Module) handleSummarySlash(s *discordgo.Session, i *discordgo.Interacti
 
 	// Format and send summary
 	summaryText := m.formatSummary(entry.Summary)
-	sendStyledWebhookEdit(s, i.Interaction, "Summary", summaryText)
+
+	// Use BuildStyledMessages to handle long messages
+	payloads := shareddiscord.BuildStyledMessages("Summary", summaryText, "")
+	if len(payloads) == 0 {
+		sendStyledWebhookEdit(s, i.Interaction, "Summary", "Summary formatting failed.")
+		return
+	}
+
+	// Edit the interaction with the first message
+	first := payloads[0]
+	edit := &discordgo.WebhookEdit{
+		Content: &first.Content,
+	}
+	if len(first.Components) > 0 {
+		edit.Components = &first.Components
+	}
+	if _, err := shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, edit); err != nil {
+		log.Printf("question: summary send failed: %v", err)
+		return
+	}
+
+	// Send follow-up messages if needed
+	for idx := 1; idx < len(payloads); idx++ {
+		payload := payloads[idx]
+		msg := &discordgo.MessageSend{
+			Content: payload.Content,
+		}
+		if len(payload.Components) > 0 {
+			msg.Components = payload.Components
+		}
+		if _, err := shareddiscord.SendComplexMessageNoEmbed(s, i.ChannelID, msg); err != nil {
+			log.Printf("question: summary follow-up send failed: %v", err)
+			return
+		}
+	}
 }
