@@ -39,11 +39,13 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 		return nil, fmt.Errorf("deepseek: API key not configured")
 	}
 
+	model := selectDeepSeekModel(cfg.Model)
+
 	return &client{
 		apiKey:     cfg.DeepSeekKey,
 		httpClient: webclient.NewDefault(240 * time.Second),
 		defaults: core.Options{
-			Model:               valueOrDefault(cfg.Model, defaultModel),
+			Model:               model,
 			Temperature:         orFloat(cfg.Temperature, defaultTemperature),
 			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, defaultMaxTokens),
 			SystemPrompt:        cfg.SystemPrompt,
@@ -734,6 +736,18 @@ func valueOrDefault(val, def string) string {
 		return val
 	}
 	return def
+}
+
+func selectDeepSeekModel(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return defaultModel
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "deepseek") {
+		return trimmed
+	}
+	return defaultModel
 }
 
 func orInt(v, def int) int {

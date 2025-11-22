@@ -51,13 +51,6 @@ Focus on facts from the proposal and avoid speculation.
 If information is not available in the provided content, clearly state that.`)
 
 	aiModel := GetSetting("ai_model", "AI_MODEL", "")
-	if aiModel == "" {
-		if aiProvider == "sonnet45" {
-			aiModel = "claude-sonnet-4-5"
-		} else {
-			aiModel = "gpt-5.1"
-		}
-	}
 	aiEnableWeb := shareddata.GetSetting("ai_enable_web_search") == "1"
 	aiEnableDeep := shareddata.GetSetting("ai_enable_deep_search") == "1"
 
