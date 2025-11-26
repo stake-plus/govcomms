@@ -115,7 +115,7 @@ func (g *Generator) drawStatusIcon(pdf *gofpdf.Fpdf, x, y float64, status string
 	pageHeight := 297.0 // A4 height in mm
 	bottomMargin := 20.0
 	maxY := pageHeight - bottomMargin
-	
+
 	// If the icon would be too close to the bottom, add a new page
 	if y+iconSize > maxY-5 {
 		pdf.AddPage()
@@ -132,9 +132,11 @@ func (g *Generator) drawStatusIcon(pdf *gofpdf.Fpdf, x, y float64, status string
 	pdf.CellFormat(4, 6, iconText, "", 0, "C", false, 0, "")
 	pdf.SetTextColor(0, 0, 0)
 
-	// Get the actual Y position after drawing (in case gofpdf adjusted it)
+	// Get the actual Y position after drawing
+	// If we added a page, use the Y we set; otherwise use the current Y
 	actualY := pdf.GetY()
-	if actualY < y {
+	// If the Y position changed significantly (page break), use the icon's Y position
+	if actualY < y-5 || actualY > y+iconSize+5 {
 		actualY = y
 	}
 
