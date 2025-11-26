@@ -79,7 +79,8 @@ func (g *Generator) multiCell(pdf *gofpdf.Fpdf, w, h float64, txt, borderStr, al
 }
 
 // drawStatusIcon draws a colored status icon box and returns the x position after the icon
-func (g *Generator) drawStatusIcon(pdf *gofpdf.Fpdf, x, y float64, status string) float64 {
+// It also returns the actual Y position after drawing (in case a page break occurred)
+func (g *Generator) drawStatusIcon(pdf *gofpdf.Fpdf, x, y float64, status string) (float64, float64) {
 	iconSize := 8.0
 	var fillColor [3]int
 	var borderColor [3]int
@@ -109,6 +110,18 @@ func (g *Generator) drawStatusIcon(pdf *gofpdf.Fpdf, x, y float64, status string
 		iconText = "?"
 	}
 
+	// Check if we need a new page before drawing
+	// Use same constants as other functions: A4 height = 297mm, bottom margin = 20mm
+	pageHeight := 297.0 // A4 height in mm
+	bottomMargin := 20.0
+	maxY := pageHeight - bottomMargin
+	
+	// If the icon would be too close to the bottom, add a new page
+	if y+iconSize > maxY-5 {
+		pdf.AddPage()
+		y = 20.0 // Top margin
+	}
+
 	pdf.SetFillColor(fillColor[0], fillColor[1], fillColor[2])
 	pdf.Rect(x, y, iconSize, iconSize, "F")
 	pdf.SetDrawColor(borderColor[0], borderColor[1], borderColor[2])
@@ -119,7 +132,13 @@ func (g *Generator) drawStatusIcon(pdf *gofpdf.Fpdf, x, y float64, status string
 	pdf.CellFormat(4, 6, iconText, "", 0, "C", false, 0, "")
 	pdf.SetTextColor(0, 0, 0)
 
-	return x + iconSize + 3
+	// Get the actual Y position after drawing (in case gofpdf adjusted it)
+	actualY := pdf.GetY()
+	if actualY < y {
+		actualY = y
+	}
+
+	return x + iconSize + 3, actualY
 }
 
 // drawStyledContentBox draws a styled box for content sections (like team member info)
@@ -949,17 +968,17 @@ func (g *Generator) addTeamPages(pdf *gofpdf.Fpdf, data *ReportData) {
 		currentY := pdf.GetY()
 		if member.IsReal != nil {
 			if *member.IsReal {
-				iconX := g.drawStatusIcon(pdf, 15, currentY, "verified")
-				pdf.SetXY(iconX, currentY)
+				iconX, actualY := g.drawStatusIcon(pdf, 15, currentY, "verified")
+				pdf.SetXY(iconX, actualY)
 				g.cellFormat(pdf, 0, 7, "Verified Real Person", "", 0, "L", false, 0, "")
 			} else {
-				iconX := g.drawStatusIcon(pdf, 15, currentY, "not_verified")
-				pdf.SetXY(iconX, currentY)
+				iconX, actualY := g.drawStatusIcon(pdf, 15, currentY, "not_verified")
+				pdf.SetXY(iconX, actualY)
 				g.cellFormat(pdf, 0, 7, "Not Verified", "", 0, "L", false, 0, "")
 			}
 		} else {
-			iconX := g.drawStatusIcon(pdf, 15, currentY, "unknown")
-			pdf.SetXY(iconX, currentY)
+			iconX, actualY := g.drawStatusIcon(pdf, 15, currentY, "unknown")
+			pdf.SetXY(iconX, actualY)
 			g.cellFormat(pdf, 0, 7, "Unknown", "", 0, "L", false, 0, "")
 		}
 		pdf.Ln(6)
@@ -967,17 +986,17 @@ func (g *Generator) addTeamPages(pdf *gofpdf.Fpdf, data *ReportData) {
 		currentY = pdf.GetY()
 		if member.HasStatedSkills != nil {
 			if *member.HasStatedSkills {
-				iconX := g.drawStatusIcon(pdf, 15, currentY, "verified")
-				pdf.SetXY(iconX, currentY)
+				iconX, actualY := g.drawStatusIcon(pdf, 15, currentY, "verified")
+				pdf.SetXY(iconX, actualY)
 				g.cellFormat(pdf, 0, 7, "Skills Verified", "", 0, "L", false, 0, "")
 			} else {
-				iconX := g.drawStatusIcon(pdf, 15, currentY, "warning")
-				pdf.SetXY(iconX, currentY)
+				iconX, actualY := g.drawStatusIcon(pdf, 15, currentY, "warning")
+				pdf.SetXY(iconX, actualY)
 				g.cellFormat(pdf, 0, 7, "Skills Unverified", "", 0, "L", false, 0, "")
 			}
 		} else {
-			iconX := g.drawStatusIcon(pdf, 15, currentY, "unknown")
-			pdf.SetXY(iconX, currentY)
+			iconX, actualY := g.drawStatusIcon(pdf, 15, currentY, "unknown")
+			pdf.SetXY(iconX, actualY)
 			g.cellFormat(pdf, 0, 7, "Unknown", "", 0, "L", false, 0, "")
 		}
 		pdf.Ln(10)
@@ -1136,8 +1155,8 @@ func (g *Generator) addClaimsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	// Valid Claims
 	if len(valid) > 0 {
 		currentY := pdf.GetY()
-		iconX := g.drawStatusIcon(pdf, 15, currentY, "valid")
-		pdf.SetXY(iconX, currentY)
+		iconX, actualY := g.drawStatusIcon(pdf, 15, currentY, "valid")
+		pdf.SetXY(iconX, actualY)
 		pdf.SetFont("Arial", "B", 12)
 		pdf.SetTextColor(0, 150, 0)
 		g.cellFormat(pdf, 0, 10, fmt.Sprintf("Valid Claims (%d)", len(valid)), "", 0, "L", false, 0, "")
@@ -1171,8 +1190,8 @@ func (g *Generator) addClaimsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	// Invalid Claims
 	if len(invalid) > 0 {
 		currentY := pdf.GetY()
-		iconX := g.drawStatusIcon(pdf, 15, currentY, "invalid")
-		pdf.SetXY(iconX, currentY)
+		iconX, actualY := g.drawStatusIcon(pdf, 15, currentY, "invalid")
+		pdf.SetXY(iconX, actualY)
 		pdf.SetFont("Arial", "B", 12)
 		pdf.SetTextColor(200, 0, 0)
 		g.cellFormat(pdf, 0, 10, fmt.Sprintf("Invalid Claims (%d)", len(invalid)), "", 0, "L", false, 0, "")
@@ -1206,8 +1225,8 @@ func (g *Generator) addClaimsPage(pdf *gofpdf.Fpdf, data *ReportData) {
 	// Unknown Claims
 	if len(unknown) > 0 {
 		currentY := pdf.GetY()
-		iconX := g.drawStatusIcon(pdf, 15, currentY, "unverified")
-		pdf.SetXY(iconX, currentY)
+		iconX, actualY := g.drawStatusIcon(pdf, 15, currentY, "unverified")
+		pdf.SetXY(iconX, actualY)
 		pdf.SetFont("Arial", "B", 12)
 		pdf.SetTextColor(150, 150, 0)
 		g.cellFormat(pdf, 0, 10, fmt.Sprintf("Unverified Claims (%d)", len(unknown)), "", 0, "L", false, 0, "")
