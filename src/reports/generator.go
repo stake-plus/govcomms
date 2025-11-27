@@ -30,13 +30,29 @@ func sanitizeTextForPDF(text string) string {
 			result.WriteString("-")
 		case '\u2014': // em dash
 			result.WriteString("--")
+		case '\u2011': // non-breaking hyphen
+			result.WriteString("-")
+		case '\u2012': // figure dash
+			result.WriteString("-")
+		case '\u2015': // horizontal bar
+			result.WriteString("--")
+		case '\u2212': // minus sign
+			result.WriteString("-")
 		case '\u2018': // left single quotation mark
 			result.WriteString("'")
 		case '\u2019': // right single quotation mark
 			result.WriteString("'")
+		case '\u201A': // single low-9 quotation mark
+			result.WriteString(",")
+		case '\u201B': // single high-reversed-9 quotation mark
+			result.WriteString("'")
 		case '\u201C': // left double quotation mark
 			result.WriteString("\"")
 		case '\u201D': // right double quotation mark
+			result.WriteString("\"")
+		case '\u201E': // double low-9 quotation mark
+			result.WriteString("\"")
+		case '\u201F': // double high-reversed-9 quotation mark
 			result.WriteString("\"")
 		case '\u2026': // horizontal ellipsis
 			result.WriteString("...")
