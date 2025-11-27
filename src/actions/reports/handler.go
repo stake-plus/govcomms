@@ -116,6 +116,17 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 	mcpCfg := sharedconfig.LoadMCPConfig(h.DB)
 	if mcpCfg.Enabled {
 		mcpTool = mcp.NewReferendaTool(mcpCfg.Listen, mcpCfg.AuthToken)
+		if mcpTool != nil {
+			networkSlug := strings.ToLower(strings.TrimSpace(network))
+			if mcpTool.Defaults == nil {
+				mcpTool.Defaults = map[string]any{}
+			}
+			mcpTool.Defaults["network"] = networkSlug
+			mcpTool.Defaults["refId"] = refID
+			if _, ok := mcpTool.Defaults["resource"]; !ok {
+				mcpTool.Defaults["resource"] = "metadata"
+			}
+		}
 	}
 
 	// Generate additional analysis sections in parallel

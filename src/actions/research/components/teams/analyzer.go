@@ -267,11 +267,11 @@ func (a *Analyzer) parseTeamAnalysisResponse(member TeamMember, response string)
 // getProposalInstruction returns instructions for how to get proposal content
 func (a *Analyzer) getProposalInstruction(network string, refID uint32, hasMCP bool) string {
 	if hasMCP {
-		networkSlug := strings.ToLower(strings.TrimSpace(network))
-		return fmt.Sprintf(`First, use the fetch_referendum_data tool to retrieve the full proposal content:
-- Call with {"network": "%s", "refId": %d, "resource": "content"}
-- Review the proposal content returned by the tool
-- Then extract team members from that content`, networkSlug, refID)
+		slug := strings.ToLower(strings.TrimSpace(network))
+		return fmt.Sprintf(`Use the fetch_referendum_data tool to retrieve metadata and full proposal content before extracting team members.
+Metadata example: {"network":"%s","refId":%d,"resource":"metadata"}
+Content example: {"network":"%s","refId":%d,"resource":"content"}
+Request attachments when metadata lists files. Avoid repeating tool calls after you have the information you need.`, slug, refID, slug, refID)
 	}
-	return fmt.Sprintf("Network: %s, Referendum ID: %d\n\n[Note: Proposal content should be provided via MCP tool when available]", network, refID)
+	return fmt.Sprintf("Network: %s, Referendum ID: %d", network, refID)
 }
