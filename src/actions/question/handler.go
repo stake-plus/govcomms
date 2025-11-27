@@ -734,10 +734,10 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 		providerCompany = "unknown"
 	}
 
-	// Get proposal content
-	proposalContent, err := m.cacheManager.GetProposalContent(network, refID)
-	if err != nil {
-		return fmt.Errorf("get proposal content: %w", err)
+	// Create MCP tool if MCP is enabled
+	var mcpTool *aicore.Tool
+	if m.mcpEnabled {
+		mcpTool = m.buildMCPTool(strings.ToLower(network), refID)
 	}
 
 	// Create AI clients for claims and teams
@@ -782,7 +782,7 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 			return
 		default:
 		}
-		topClaims, totalClaims, err := claimsAnalyzer.ExtractTopClaims(ctx, proposalContent)
+		topClaims, totalClaims, err := claimsAnalyzer.ExtractTopClaims(ctx, network, refID, mcpTool)
 		if err != nil {
 			result.claimsErr = fmt.Errorf("extract claims: %w", err)
 			return
@@ -852,7 +852,7 @@ func (m *Module) runSilentResearch(network string, refID uint32, refDBID uint64,
 			return
 		default:
 		}
-		members, err := teamsAnalyzer.ExtractTeamMembers(ctx, proposalContent)
+		members, err := teamsAnalyzer.ExtractTeamMembers(ctx, network, refID, mcpTool)
 		if err != nil {
 			result.teamsErr = fmt.Errorf("extract team members: %w", err)
 			return

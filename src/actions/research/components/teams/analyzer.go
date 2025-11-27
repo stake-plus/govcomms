@@ -20,10 +20,10 @@ func NewAnalyzer(client aicore.Client) (*Analyzer, error) {
 	return &Analyzer{client: client}, nil
 }
 
-func (a *Analyzer) ExtractTeamMembers(ctx context.Context, proposalContent string) ([]TeamMember, error) {
-	maxContentLength := 10000
-	if len(proposalContent) > maxContentLength {
-		proposalContent = proposalContent[:maxContentLength] + "\n\n[Content truncated]"
+func (a *Analyzer) ExtractTeamMembers(ctx context.Context, network string, refID uint32, mcpTool *aicore.Tool) ([]TeamMember, error) {
+	var tools []aicore.Tool
+	if mcpTool != nil {
+		tools = append(tools, *mcpTool)
 	}
 
 	prompt := fmt.Sprintf(`Extract team members from this proposal. Focus on finding ALL their verifiable online profiles.
@@ -39,6 +39,8 @@ Look for:
 Extract URLs exactly as they appear. If only usernames are mentioned, construct likely URLs.
 A person might have multiple profiles (e.g., personal and org GitHub accounts).
 
+%s
+
 Respond with JSON array:
 [
   {
@@ -51,12 +53,9 @@ Respond with JSON array:
   }
 ]
 
-Include empty arrays for missing profile types. Only include team members with at least a name and role.
+Include empty arrays for missing profile types. Only include team members with at least a name and role.`, a.getProposalInstruction(network, refID, mcpTool != nil))
 
-Proposal:
-%s`, proposalContent)
-
-	responseText, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	responseText, err := a.client.Respond(ctx, prompt, tools, aicore.Options{})
 	if err != nil {
 		return nil, err
 	}
@@ -263,4 +262,16 @@ func (a *Analyzer) parseTeamAnalysisResponse(member TeamMember, response string)
 	}
 
 	return result
+}
+
+// getProposalInstruction returns instructions for how to get proposal content
+func (a *Analyzer) getProposalInstruction(network string, refID uint32, hasMCP bool) string {
+	if hasMCP {
+		networkSlug := strings.ToLower(strings.TrimSpace(network))
+		return fmt.Sprintf(`First, use the fetch_referendum_data tool to retrieve the full proposal content:
+- Call with {"network": "%s", "refId": %d, "resource": "content"}
+- Review the proposal content returned by the tool
+- Then extract team members from that content`, networkSlug, refID)
+	}
+	return fmt.Sprintf("Network: %s, Referendum ID: %d\n\n[Note: Proposal content should be provided via MCP tool when available]", network, refID)
 }

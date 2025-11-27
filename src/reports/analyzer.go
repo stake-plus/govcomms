@@ -26,7 +26,12 @@ func NewAnalyzer(client aicore.Client) (*Analyzer, error) {
 }
 
 // AnalyzeFinancials extracts and analyzes financial information
-func (a *Analyzer) AnalyzeFinancials(ctx context.Context, proposalContent string, summary *cache.SummaryData) (*FinancialAnalysis, error) {
+func (a *Analyzer) AnalyzeFinancials(ctx context.Context, network string, refID uint32, mcpTool *aicore.Tool, summary *cache.SummaryData) (*FinancialAnalysis, error) {
+	var tools []aicore.Tool
+	if mcpTool != nil {
+		tools = append(tools, *mcpTool)
+	}
+
 	prompt := fmt.Sprintf(`Analyze the financial aspects of this blockchain governance proposal.
 
 Extract and analyze:
@@ -35,6 +40,8 @@ Extract and analyze:
 3. Payment milestones and deliverables
 4. Expected ROI or value proposition
 5. Any financial concerns or red flags
+
+%s
 
 Respond with JSON:
 {
@@ -56,12 +63,9 @@ Respond with JSON:
   ],
   "roi": "Expected value or return on investment",
   "concerns": ["List any financial concerns"]
-}
+}`, a.getProposalInstruction(network, refID, mcpTool != nil))
 
-Proposal Content:
-%s`, proposalContent)
-
-	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	response, err := a.client.Respond(ctx, prompt, tools, aicore.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("AI response: %w", err)
 	}
@@ -82,10 +86,15 @@ Proposal Content:
 }
 
 // AnalyzeRisks performs risk assessment
-func (a *Analyzer) AnalyzeRisks(ctx context.Context, proposalContent string, summary *cache.SummaryData, claims *cache.ClaimsData, teams *cache.TeamsData) (*RiskAnalysis, error) {
+func (a *Analyzer) AnalyzeRisks(ctx context.Context, network string, refID uint32, mcpTool *aicore.Tool, summary *cache.SummaryData, claims *cache.ClaimsData, teams *cache.TeamsData) (*RiskAnalysis, error) {
+	var tools []aicore.Tool
+	if mcpTool != nil {
+		tools = append(tools, *mcpTool)
+	}
+
 	var contextBuilder strings.Builder
-	contextBuilder.WriteString("Proposal Content:\n")
-	contextBuilder.WriteString(proposalContent)
+	contextBuilder.WriteString(a.getProposalInstruction(network, refID, mcpTool != nil))
+	contextBuilder.WriteString("\n\n")
 	
 	if summary != nil {
 		contextBuilder.WriteString("\n\nSummary:\n")
@@ -147,7 +156,7 @@ Respond with JSON:
 Context:
 %s`, contextBuilder.String())
 
-	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	response, err := a.client.Respond(ctx, prompt, tools, aicore.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("AI response: %w", err)
 	}
@@ -180,7 +189,12 @@ Context:
 }
 
 // AnalyzeTimeline assesses timeline feasibility
-func (a *Analyzer) AnalyzeTimeline(ctx context.Context, proposalContent string) (*TimelineAnalysis, error) {
+func (a *Analyzer) AnalyzeTimeline(ctx context.Context, network string, refID uint32, mcpTool *aicore.Tool) (*TimelineAnalysis, error) {
+	var tools []aicore.Tool
+	if mcpTool != nil {
+		tools = append(tools, *mcpTool)
+	}
+
 	prompt := fmt.Sprintf(`Analyze the proposed timeline for this blockchain governance proposal.
 
 Extract:
@@ -189,18 +203,17 @@ Extract:
 3. Identify concerns about timeline
 4. Provide recommendations
 
+%s
+
 Respond with JSON:
 {
   "proposedTimeline": "Summary of proposed timeline",
   "feasibility": "Realistic/Unrealistic/Ambitious",
   "concerns": ["List timeline concerns"],
   "recommendations": ["Suggestions for timeline adjustments"]
-}
+}`, a.getProposalInstruction(network, refID, mcpTool != nil))
 
-Proposal:
-%s`, proposalContent)
-
-	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	response, err := a.client.Respond(ctx, prompt, tools, aicore.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("AI response: %w", err)
 	}
@@ -220,7 +233,12 @@ Proposal:
 }
 
 // AnalyzeGovernance assesses governance impact
-func (a *Analyzer) AnalyzeGovernance(ctx context.Context, proposalContent string, network string) (*GovernanceAnalysis, error) {
+func (a *Analyzer) AnalyzeGovernance(ctx context.Context, network string, refID uint32, mcpTool *aicore.Tool) (*GovernanceAnalysis, error) {
+	var tools []aicore.Tool
+	if mcpTool != nil {
+		tools = append(tools, *mcpTool)
+	}
+
 	prompt := fmt.Sprintf(`Analyze the governance impact of this proposal on the %s network.
 
 Assess:
@@ -230,6 +248,8 @@ Assess:
 4. Similar precedents or comparable proposals
 5. Governance concerns
 
+%s
+
 Respond with JSON:
 {
   "impact": "Low/Medium/High",
@@ -237,12 +257,9 @@ Respond with JSON:
   "networkEffect": "How this affects the network",
   "precedents": ["Similar past proposals or examples"],
   "concerns": ["Governance-related concerns"]
-}
+}`, network, a.getProposalInstruction(network, refID, mcpTool != nil))
 
-Proposal:
-%s`, network, proposalContent)
-
-	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	response, err := a.client.Respond(ctx, prompt, tools, aicore.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("AI response: %w", err)
 	}
@@ -262,10 +279,15 @@ Proposal:
 }
 
 // AnalyzePositive identifies positive aspects
-func (a *Analyzer) AnalyzePositive(ctx context.Context, proposalContent string, summary *cache.SummaryData) (*PositiveAnalysis, error) {
+func (a *Analyzer) AnalyzePositive(ctx context.Context, network string, refID uint32, mcpTool *aicore.Tool, summary *cache.SummaryData) (*PositiveAnalysis, error) {
+	var tools []aicore.Tool
+	if mcpTool != nil {
+		tools = append(tools, *mcpTool)
+	}
+
 	var contextBuilder strings.Builder
-	contextBuilder.WriteString("Proposal Content:\n")
-	contextBuilder.WriteString(proposalContent)
+	contextBuilder.WriteString(a.getProposalInstruction(network, refID, mcpTool != nil))
+	contextBuilder.WriteString("\n\n")
 	
 	if summary != nil {
 		contextBuilder.WriteString("\n\nSummary:\n")
@@ -297,7 +319,7 @@ Respond with JSON:
 Context:
 %s`, contextBuilder.String())
 
-	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	response, err := a.client.Respond(ctx, prompt, tools, aicore.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("AI response: %w", err)
 	}
@@ -316,10 +338,15 @@ Context:
 }
 
 // AnalyzeSteelMan performs steel manning (critical analysis)
-func (a *Analyzer) AnalyzeSteelMan(ctx context.Context, proposalContent string, summary *cache.SummaryData, claims *cache.ClaimsData, teams *cache.TeamsData) (*SteelManAnalysis, error) {
+func (a *Analyzer) AnalyzeSteelMan(ctx context.Context, network string, refID uint32, mcpTool *aicore.Tool, summary *cache.SummaryData, claims *cache.ClaimsData, teams *cache.TeamsData) (*SteelManAnalysis, error) {
+	var tools []aicore.Tool
+	if mcpTool != nil {
+		tools = append(tools, *mcpTool)
+	}
+
 	var contextBuilder strings.Builder
-	contextBuilder.WriteString("Proposal Content:\n")
-	contextBuilder.WriteString(proposalContent)
+	contextBuilder.WriteString(a.getProposalInstruction(network, refID, mcpTool != nil))
+	contextBuilder.WriteString("\n\n")
 	
 	if summary != nil {
 		contextBuilder.WriteString("\n\nSummary:\n")
@@ -365,7 +392,7 @@ Respond with JSON:
 Context:
 %s`, contextBuilder.String())
 
-	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	response, err := a.client.Respond(ctx, prompt, tools, aicore.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("AI response: %w", err)
 	}
@@ -384,9 +411,15 @@ Context:
 }
 
 // GenerateRecommendations creates final recommendations
-func (a *Analyzer) GenerateRecommendations(ctx context.Context, proposalContent string, summary *cache.SummaryData, financials *FinancialAnalysis, risks *RiskAnalysis, positive *PositiveAnalysis, steelMan *SteelManAnalysis) (*Recommendations, error) {
+func (a *Analyzer) GenerateRecommendations(ctx context.Context, network string, refID uint32, mcpTool *aicore.Tool, summary *cache.SummaryData, financials *FinancialAnalysis, risks *RiskAnalysis, positive *PositiveAnalysis, steelMan *SteelManAnalysis) (*Recommendations, error) {
+	var tools []aicore.Tool
+	if mcpTool != nil {
+		tools = append(tools, *mcpTool)
+	}
+
 	var contextBuilder strings.Builder
-	contextBuilder.WriteString("Proposal Summary:\n")
+	contextBuilder.WriteString(a.getProposalInstruction(network, refID, mcpTool != nil))
+	contextBuilder.WriteString("\n\nProposal Summary:\n")
 	if summary != nil {
 		contextBuilder.WriteString(summary.Summary)
 	}
@@ -434,7 +467,7 @@ Respond with JSON:
 Analysis Context:
 %s`, contextBuilder.String())
 
-	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	response, err := a.client.Respond(ctx, prompt, tools, aicore.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("AI response: %w", err)
 	}
@@ -456,7 +489,12 @@ Analysis Context:
 }
 
 // GenerateEnhancedContent creates enhanced background context, summary, and financials
-func (a *Analyzer) GenerateEnhancedContent(ctx context.Context, proposalContent string, summary *cache.SummaryData, teams *cache.TeamsData, financials *FinancialAnalysis) (*EnhancedContent, error) {
+func (a *Analyzer) GenerateEnhancedContent(ctx context.Context, network string, refID uint32, mcpTool *aicore.Tool, summary *cache.SummaryData, teams *cache.TeamsData, financials *FinancialAnalysis) (*EnhancedContent, error) {
+	var tools []aicore.Tool
+	if mcpTool != nil {
+		tools = append(tools, *mcpTool)
+	}
+
 	prompt := fmt.Sprintf(`Generate enhanced content for a comprehensive referendum report. Provide:
 
 1. Background Context (exactly 2 paragraphs, no more):
@@ -472,17 +510,16 @@ func (a *Analyzer) GenerateEnhancedContent(ctx context.Context, proposalContent 
    - How much they want in the future (if any)
    - If there will be any other associated or side projects
 
+%s
+
 Respond with JSON:
 {
   "backgroundContext": "Two paragraphs about people and idea background",
   "referendaSummary": "Two paragraphs about what we're voting on",
   "financialsDetail": "Two paragraphs about current ask, future asks, side projects"
-}
+}`, a.getProposalInstruction(network, refID, mcpTool != nil))
 
-Proposal Content:
-%s`, proposalContent)
-
-	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	response, err := a.client.Respond(ctx, prompt, tools, aicore.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("AI response: %w", err)
 	}
@@ -506,6 +543,8 @@ Proposal Content:
 
 // GenerateSectionNotes creates green/red box content for a section
 func (a *Analyzer) GenerateSectionNotes(ctx context.Context, sectionName string, sectionContent string, positiveAnalysis *PositiveAnalysis, steelManAnalysis *SteelManAnalysis) (*SectionNotes, error) {
+	var tools []aicore.Tool
+	// Note: GenerateSectionNotes doesn't need proposal content, so no MCP tool needed
 	prompt := fmt.Sprintf(`Analyze this section of a referendum report and identify noteworthy positive aspects and concerns.
 
 Section: %s
@@ -521,7 +560,7 @@ Respond with JSON:
 
 Do not include empty boxes. Only include items that are truly noteworthy.`, sectionName, sectionContent)
 
-	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	response, err := a.client.Respond(ctx, prompt, tools, aicore.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("AI response: %w", err)
 	}
@@ -539,7 +578,11 @@ Do not include empty boxes. Only include items that are truly noteworthy.`, sect
 }
 
 // GenerateTeamMemberDetails creates enhanced team member information
-func (a *Analyzer) GenerateTeamMemberDetails(ctx context.Context, member cache.TeamMemberData, proposalContent string) (*TeamMemberDetails, error) {
+func (a *Analyzer) GenerateTeamMemberDetails(ctx context.Context, member cache.TeamMemberData, network string, refID uint32, mcpTool *aicore.Tool) (*TeamMemberDetails, error) {
+	var tools []aicore.Tool
+	if mcpTool != nil {
+		tools = append(tools, *mcpTool)
+	}
 	var socialHandles strings.Builder
 	socialHandles.WriteString("GitHub: ")
 	if len(member.GitHub) > 0 {
@@ -601,13 +644,12 @@ Respond with JSON:
   "concerns": ["Concerns or worries about this team member"]
 }
 
-Proposal Context:
 %s`, member.Name, member.Role, member.Capability, socialHandles.String(),
 		member.IsReal != nil && *member.IsReal,
 		member.HasStatedSkills != nil && *member.HasStatedSkills,
-		proposalContent)
+		a.getProposalInstruction(network, refID, mcpTool != nil))
 
-	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	response, err := a.client.Respond(ctx, prompt, tools, aicore.Options{})
 	if err != nil {
 		return nil, fmt.Errorf("AI response: %w", err)
 	}
@@ -635,7 +677,12 @@ Proposal Context:
 }
 
 // EnhanceRecommendations adds idea quality, team capability, and AI vote
-func (a *Analyzer) EnhanceRecommendations(ctx context.Context, recommendations *Recommendations, proposalContent string, teams *cache.TeamsData, positive *PositiveAnalysis, steelMan *SteelManAnalysis) error {
+func (a *Analyzer) EnhanceRecommendations(ctx context.Context, recommendations *Recommendations, network string, refID uint32, mcpTool *aicore.Tool, teams *cache.TeamsData, positive *PositiveAnalysis, steelMan *SteelManAnalysis) error {
+	var tools []aicore.Tool
+	if mcpTool != nil {
+		tools = append(tools, *mcpTool)
+	}
+
 	prompt := fmt.Sprintf(`Based on the analysis, determine:
 
 1. Idea Quality: Is the idea itself good? (Good/Bad/Uncertain)
@@ -644,6 +691,8 @@ func (a *Analyzer) EnhanceRecommendations(ctx context.Context, recommendations *
 
 Current Verdict: %s
 Reasoning: %s
+
+%s
 
 Consider:
 - The proposal's merits
@@ -657,11 +706,9 @@ Respond with JSON:
   "ideaQuality": "Good/Bad/Uncertain",
   "teamCapability": "Can deliver/Cannot deliver/Uncertain",
   "aiVote": "Aye/Nay/Abstain"
-}
+}`, recommendations.Verdict, recommendations.Reasoning, a.getProposalInstruction(network, refID, mcpTool != nil))
 
-Proposal: %s`, recommendations.Verdict, recommendations.Reasoning, proposalContent)
-
-	response, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	response, err := a.client.Respond(ctx, prompt, tools, aicore.Options{})
 	if err != nil {
 		return fmt.Errorf("AI response: %w", err)
 	}
@@ -771,5 +818,17 @@ func (a *Analyzer) cleanJSONString(jsonStr string) string {
 	}
 	
 	return result.String()
+}
+
+// getProposalInstruction returns instructions for how to get proposal content
+func (a *Analyzer) getProposalInstruction(network string, refID uint32, hasMCP bool) string {
+	if hasMCP {
+		networkSlug := strings.ToLower(strings.TrimSpace(network))
+		return fmt.Sprintf(`First, use the fetch_referendum_data tool to retrieve the full proposal content:
+- Call with {"network": "%s", "refId": %d, "resource": "content"}
+- Review the proposal content returned by the tool
+- Then perform the analysis based on that content`, networkSlug, refID)
+	}
+	return fmt.Sprintf("Network: %s, Referendum ID: %d\n\n[Note: Proposal content should be provided via MCP tool when available]", network, refID)
 }
 

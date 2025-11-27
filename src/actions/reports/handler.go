@@ -9,12 +9,13 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/stake-plus/govcomms/src/reports"
 	aicore "github.com/stake-plus/govcomms/src/ai/core"
 	cache "github.com/stake-plus/govcomms/src/cache"
 	sharedconfig "github.com/stake-plus/govcomms/src/config"
 	shareddiscord "github.com/stake-plus/govcomms/src/discord"
+	"github.com/stake-plus/govcomms/src/mcp"
 	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
+	"github.com/stake-plus/govcomms/src/reports"
 	"gorm.io/gorm"
 )
 
@@ -46,12 +47,12 @@ func NewHandler(cfg *sharedconfig.ReportsConfig, db *gorm.DB, networkManager *sh
 // GenerateReport generates a PDF report for a referendum
 func (h *Handler) GenerateReport(s *discordgo.Session, channelID string, network string, refID uint32, refDBID uint64) {
 	log.Printf("reports: GenerateReport called for %s #%d", network, refID)
-	
+
 	if h.cacheManager == nil {
 		log.Printf("reports: cache manager is nil, cannot generate report")
 		return
 	}
-	
+
 	// Get cache entry
 	entry, err := h.cacheManager.EnsureEntry(network, refID)
 	if err != nil {
@@ -110,8 +111,15 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 		return
 	}
 
+	// Create MCP tool if MCP is enabled
+	var mcpTool *aicore.Tool
+	mcpCfg := sharedconfig.LoadMCPConfig(h.DB)
+	if mcpCfg.Enabled {
+		mcpTool = mcp.NewReferendaTool(mcpCfg.Listen, mcpCfg.AuthToken)
+	}
+
 	// Generate additional analysis sections in parallel
-		type analysisResult struct {
+	type analysisResult struct {
 		financials      *reports.FinancialAnalysis
 		risks           *reports.RiskAnalysis
 		timeline        *reports.TimelineAnalysis
@@ -127,42 +135,42 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 	go func() {
 		var result analysisResult
 		defer func() { resultCh <- result }()
-		result.financials, result.err = analyzer.AnalyzeFinancials(ctx, proposalContent, entry.Summary)
+		result.financials, result.err = analyzer.AnalyzeFinancials(ctx, network, refID, mcpTool, entry.Summary)
 	}()
 
 	// Risks
 	go func() {
 		var result analysisResult
 		defer func() { resultCh <- result }()
-		result.risks, result.err = analyzer.AnalyzeRisks(ctx, proposalContent, entry.Summary, entry.Claims, entry.TeamMembers)
+		result.risks, result.err = analyzer.AnalyzeRisks(ctx, network, refID, mcpTool, entry.Summary, entry.Claims, entry.TeamMembers)
 	}()
 
 	// Timeline
 	go func() {
 		var result analysisResult
 		defer func() { resultCh <- result }()
-		result.timeline, result.err = analyzer.AnalyzeTimeline(ctx, proposalContent)
+		result.timeline, result.err = analyzer.AnalyzeTimeline(ctx, network, refID, mcpTool)
 	}()
 
 	// Governance
 	go func() {
 		var result analysisResult
 		defer func() { resultCh <- result }()
-		result.governance, result.err = analyzer.AnalyzeGovernance(ctx, proposalContent, network)
+		result.governance, result.err = analyzer.AnalyzeGovernance(ctx, network, refID, mcpTool)
 	}()
 
 	// Positive
 	go func() {
 		var result analysisResult
 		defer func() { resultCh <- result }()
-		result.positive, result.err = analyzer.AnalyzePositive(ctx, proposalContent, entry.Summary)
+		result.positive, result.err = analyzer.AnalyzePositive(ctx, network, refID, mcpTool, entry.Summary)
 	}()
 
 	// Steel Man
 	go func() {
 		var result analysisResult
 		defer func() { resultCh <- result }()
-		result.steelMan, result.err = analyzer.AnalyzeSteelMan(ctx, proposalContent, entry.Summary, entry.Claims, entry.TeamMembers)
+		result.steelMan, result.err = analyzer.AnalyzeSteelMan(ctx, network, refID, mcpTool, entry.Summary, entry.Claims, entry.TeamMembers)
 	}()
 
 	// Collect results
@@ -199,19 +207,19 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 
 	// Generate recommendations
 	if finalResult.positive != nil && finalResult.steelMan != nil {
-		finalResult.recommendations, _ = analyzer.GenerateRecommendations(ctx, proposalContent, entry.Summary,
+		finalResult.recommendations, _ = analyzer.GenerateRecommendations(ctx, network, refID, mcpTool, entry.Summary,
 			finalResult.financials, finalResult.risks, finalResult.positive, finalResult.steelMan)
 		// Enhance recommendations with idea quality, team capability, AI vote
 		if finalResult.recommendations != nil {
-			analyzer.EnhanceRecommendations(ctx, finalResult.recommendations, proposalContent, entry.TeamMembers, finalResult.positive, finalResult.steelMan)
+			analyzer.EnhanceRecommendations(ctx, finalResult.recommendations, network, refID, mcpTool, entry.TeamMembers, finalResult.positive, finalResult.steelMan)
 		}
 	}
 
 	// Generate enhanced content
-	enhancedContent, _ := analyzer.GenerateEnhancedContent(ctx, proposalContent, entry.Summary, entry.TeamMembers, finalResult.financials)
-	
+	enhancedContent, _ := analyzer.GenerateEnhancedContent(ctx, network, refID, mcpTool, entry.Summary, entry.TeamMembers, finalResult.financials)
+
 	// Generate section notes (green/red boxes)
-	backgroundNotes, _ := analyzer.GenerateSectionNotes(ctx, "Background Context", 
+	backgroundNotes, _ := analyzer.GenerateSectionNotes(ctx, "Background Context",
 		func() string {
 			if enhancedContent != nil {
 				return enhancedContent.BackgroundContext
@@ -221,7 +229,7 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 			}
 			return ""
 		}(), finalResult.positive, finalResult.steelMan)
-	
+
 	summaryNotes, _ := analyzer.GenerateSectionNotes(ctx, "Referenda Summary",
 		func() string {
 			if enhancedContent != nil {
@@ -232,7 +240,7 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 			}
 			return ""
 		}(), finalResult.positive, finalResult.steelMan)
-	
+
 	financialsNotes, _ := analyzer.GenerateSectionNotes(ctx, "Project Financials",
 		func() string {
 			if enhancedContent != nil {
@@ -245,7 +253,7 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 	teamDetailsMap := make(map[string]*reports.TeamMemberDetails)
 	if entry.TeamMembers != nil {
 		for _, member := range entry.TeamMembers.Members {
-			details, err := analyzer.GenerateTeamMemberDetails(ctx, member, proposalContent)
+			details, err := analyzer.GenerateTeamMemberDetails(ctx, member, network, refID, mcpTool)
 			if err == nil && details != nil {
 				teamDetailsMap[member.Name] = details
 			}
@@ -391,11 +399,10 @@ func (h *Handler) HandleReportSlash(s *discordgo.Session, i *discordgo.Interacti
 
 	// Generate and send PDF
 	go h.generateAndSendPDF(s, i.ChannelID, network.Name, uint32(threadInfo.RefID), threadInfo.RefDBID, entry)
-	
+
 	// Send initial response
 	formatted := shareddiscord.FormatStyledBlock("Report", fmt.Sprintf("Generating PDF report for %s referendum #%d...", network.Name, threadInfo.RefID))
 	shareddiscord.InteractionResponseEditNoEmbed(s, i.Interaction, &discordgo.WebhookEdit{
 		Content: &formatted,
 	})
 }
-

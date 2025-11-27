@@ -20,11 +20,10 @@ func NewAnalyzer(client aicore.Client) (*Analyzer, error) {
 	return &Analyzer{client: client}, nil
 }
 
-func (a *Analyzer) ExtractTopClaims(ctx context.Context, proposalContent string) ([]Claim, int, error) {
-	// Truncate content if too long
-	maxContentLength := 10000
-	if len(proposalContent) > maxContentLength {
-		proposalContent = proposalContent[:maxContentLength] + "\n\n[Content truncated for analysis]"
+func (a *Analyzer) ExtractTopClaims(ctx context.Context, network string, refID uint32, mcpTool *aicore.Tool) ([]Claim, int, error) {
+	var tools []aicore.Tool
+	if mcpTool != nil {
+		tools = append(tools, *mcpTool)
 	}
 
 	prompt := fmt.Sprintf(`Analyze this blockchain governance proposal and extract HISTORICAL/BACKGROUND claims that can be verified online.
@@ -54,6 +53,8 @@ Count total verifiable HISTORICAL claims, then order them based on significance 
 
 SELECT THE 10 MOST SIGNIFICANT AND IMPORTANT CLAIMS TO VERIFY.
 
+%s
+
 Respond with JSON:
 {
   "total_claims": 25,
@@ -77,12 +78,9 @@ Respond with JSON:
       "context": "Past community building activities"
     }
   ]
-}
+}`, a.getProposalInstruction(network, refID, mcpTool != nil))
 
-Proposal:
-%s`, proposalContent)
-
-	responseText, err := a.client.Respond(ctx, prompt, nil, aicore.Options{})
+	responseText, err := a.client.Respond(ctx, prompt, tools, aicore.Options{})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -276,4 +274,16 @@ func (a *Analyzer) parseVerificationResponse(response string) (VerificationStatu
 	}
 
 	return status, evidence, sourceURLs
+}
+
+// getProposalInstruction returns instructions for how to get proposal content
+func (a *Analyzer) getProposalInstruction(network string, refID uint32, hasMCP bool) string {
+	if hasMCP {
+		networkSlug := strings.ToLower(strings.TrimSpace(network))
+		return fmt.Sprintf(`First, use the fetch_referendum_data tool to retrieve the full proposal content:
+- Call with {"network": "%s", "refId": %d, "resource": "content"}
+- Review the proposal content returned by the tool
+- Then extract claims from that content`, networkSlug, refID)
+	}
+	return fmt.Sprintf("Network: %s, Referendum ID: %d\n\n[Note: Proposal content should be provided via MCP tool when available]", network, refID)
 }
