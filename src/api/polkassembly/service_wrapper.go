@@ -9,6 +9,7 @@ import (
 	"time"
 
 	polkassemblyapi "github.com/polkadot-go/polkassembly-api"
+	shareddata "github.com/stake-plus/govcomms/src/data"
 	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 )
 
@@ -156,7 +157,23 @@ func (s *ServiceWrapper) PostFirstMessage(network string, refID int, message, li
 		return "", fmt.Errorf("polkassembly: no client configured for network %s", network)
 	}
 
-	content := fmt.Sprintf("%s\n\n[Continue discussion with the DAO](%s)", message, link)
+	// Get intro and outro from database settings
+	intro := shareddata.GetSetting("polkassembly_intro")
+	outro := shareddata.GetSetting("polkassembly_outro")
+
+	// Format the feedback message in a blockquote to make it stand out
+	quotedMessage := fmt.Sprintf("> %s", strings.ReplaceAll(message, "\n", "\n> "))
+
+	// Build content: intro + quoted message + outro
+	var parts []string
+	if intro != "" {
+		parts = append(parts, intro)
+	}
+	parts = append(parts, quotedMessage)
+	if outro != "" {
+		parts = append(parts, outro)
+	}
+	content := strings.Join(parts, "\n\n")
 
 	s.logger.Printf("polkassembly: PostFirstMessage called for %s ref #%d", key, refID)
 
