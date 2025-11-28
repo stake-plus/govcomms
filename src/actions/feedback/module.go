@@ -99,8 +99,8 @@ func NewModule(cfg *sharedconfig.FeedbackConfig, db *gorm.DB) (*Module, error) {
 		NetworkManager: networkManager,
 		RefManager:     refManager,
 		Deps: Dependencies{
-			EnsureThreadMapping:   module.ensureThreadMapping,
-			PostFeedbackMessage:   module.postFeedbackMessage,
+			EnsureThreadMapping:     module.ensureThreadMapping,
+			PostFeedbackMessage:     module.postFeedbackMessage,
 			PostPolkassemblyMessage: module.postPolkassemblyMessage,
 		},
 	}
@@ -502,7 +502,6 @@ func (b *Module) announcePolkassemblyReply(threadID string, network *sharedgov.N
 	}
 }
 
-
 // postPolkassemblyMessage posts a message to Polkassembly immediately and returns the comment ID
 func (b *Module) postPolkassemblyMessage(network *sharedgov.Network, ref *sharedgov.Ref, message string) (string, error) {
 	if b.polkassembly == nil {
@@ -537,4 +536,3 @@ func (b *Module) postPolkassemblyMessage(network *sharedgov.Network, ref *shared
 	log.Printf("feedback: successfully posted to polkassembly (comment ID: %s) for %s ref #%d", commentID, network.Name, ref.RefID)
 	return commentID, nil
 }
-
