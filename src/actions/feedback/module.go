@@ -7,7 +7,6 @@ import (
 	"log"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -33,7 +32,6 @@ type Module struct {
 	polkassembly   *sharedpolkassembly.Service
 	runtimeCtx     context.Context
 	cancel         context.CancelFunc
-	polkassemblyMu sync.Mutex
 }
 
 const polkassemblyReplyColor = 0xF39C12
@@ -101,9 +99,9 @@ func NewModule(cfg *sharedconfig.FeedbackConfig, db *gorm.DB) (*Module, error) {
 		NetworkManager: networkManager,
 		RefManager:     refManager,
 		Deps: Dependencies{
-			EnsureThreadMapping:              module.ensureThreadMapping,
-			PostFeedbackMessage:              module.postFeedbackMessage,
-			SchedulePolkassemblyFirstMessage: module.schedulePolkassemblyFirstMessage,
+			EnsureThreadMapping:   module.ensureThreadMapping,
+			PostFeedbackMessage:   module.postFeedbackMessage,
+			PostPolkassemblyMessage: module.postPolkassemblyMessage,
 		},
 	}
 
@@ -388,8 +386,6 @@ func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 		return fmt.Errorf("no network configured for id %d", ref.NetworkID)
 	}
 
-	b.ensurePolkassemblyFirstMessage(network, ref)
-
 	messages, err := data.GetPolkassemblyMessages(b.db, ref.ID)
 	if err != nil {
 		return err
@@ -506,55 +502,20 @@ func (b *Module) announcePolkassemblyReply(threadID string, network *sharedgov.N
 	}
 }
 
-const polkassemblyRetryAttempts = 5
-const polkassemblyRetryDelay = 5 * time.Minute
 
-func (b *Module) schedulePolkassemblyFirstMessage(network *sharedgov.Network, ref *sharedgov.Ref) {
-	if b.polkassembly == nil || network == nil || ref == nil {
-		return
+// postPolkassemblyMessage posts a message to Polkassembly immediately and returns the comment ID
+func (b *Module) postPolkassemblyMessage(network *sharedgov.Network, ref *sharedgov.Ref, message string) (string, error) {
+	if b.polkassembly == nil {
+		return "", fmt.Errorf("polkassembly service is not configured")
+	}
+	if network == nil {
+		return "", fmt.Errorf("network is nil")
+	}
+	if ref == nil {
+		return "", fmt.Errorf("ref is nil")
 	}
 
-	go func() {
-		b.tryPostFirstMessageWithRetry(network, ref, 0)
-	}()
-}
-
-func (b *Module) ensurePolkassemblyFirstMessage(network *sharedgov.Network, ref *sharedgov.Ref) {
-	if b.polkassembly == nil || network == nil || ref == nil {
-		return
-	}
-
-	if err := b.postFirstMessageIfNeeded(network, ref); err != nil {
-		log.Printf("feedback: polkassembly post failed: %v", err)
-	}
-}
-
-func (b *Module) tryPostFirstMessageWithRetry(network *sharedgov.Network, ref *sharedgov.Ref, attempt int) {
-	if err := b.postFirstMessageIfNeeded(network, ref); err != nil {
-		log.Printf("feedback: polkassembly post failed (attempt %d): %v", attempt+1, err)
-		if attempt+1 < polkassemblyRetryAttempts {
-			time.AfterFunc(polkassemblyRetryDelay, func() {
-				b.tryPostFirstMessageWithRetry(network, ref, attempt+1)
-			})
-		}
-	}
-}
-
-func (b *Module) postFirstMessageIfNeeded(network *sharedgov.Network, ref *sharedgov.Ref) error {
-	b.polkassemblyMu.Lock()
-	defer b.polkassemblyMu.Unlock()
-
-	firstMsg, err := data.GetFirstFeedbackMessage(b.db, ref.ID)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil
-		}
-		return fmt.Errorf("load first feedback message: %w", err)
-	}
-
-	if firstMsg.PolkassemblyCommentID != nil && *firstMsg.PolkassemblyCommentID != "" {
-		return nil
-	}
+	log.Printf("feedback: posting message to polkassembly for %s ref #%d", network.Name, ref.RefID)
 
 	gcURL := shareddata.GetSetting("gc_url")
 	if gcURL == "" {
@@ -563,19 +524,17 @@ func (b *Module) postFirstMessageIfNeeded(network *sharedgov.Network, ref *share
 	gcURL = strings.TrimRight(gcURL, "/")
 	link := fmt.Sprintf("%s/%s/%d", gcURL, strings.ToLower(network.Name), ref.RefID)
 
-	commentID, err := b.polkassembly.PostFirstMessage(network.Name, int(ref.RefID), firstMsg.Body, link)
+	commentID, err := b.polkassembly.PostFirstMessage(network.Name, int(ref.RefID), message, link)
 	if err != nil {
-		return fmt.Errorf("post first message failed: %w", err)
+		log.Printf("feedback: PostFirstMessage failed: %v", err)
+		return "", fmt.Errorf("post to polkassembly failed: %w", err)
 	}
 
 	if commentID == "" {
-		return fmt.Errorf("post first message succeeded but no comment ID returned")
+		return "", fmt.Errorf("post succeeded but no comment ID returned")
 	}
 
-	if err := data.UpdateFeedbackMessagePolkassembly(b.db, firstMsg.ID, commentID, nil, ""); err != nil {
-		return fmt.Errorf("update feedback message polkassembly id: %w", err)
-	}
-
-	log.Printf("feedback: successfully posted and saved polkassembly comment %s for %s ref #%d", commentID, network.Name, ref.RefID)
-	return nil
+	log.Printf("feedback: successfully posted to polkassembly (comment ID: %s) for %s ref #%d", commentID, network.Name, ref.RefID)
+	return commentID, nil
 }
+
