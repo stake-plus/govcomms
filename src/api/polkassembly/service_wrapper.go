@@ -100,7 +100,7 @@ func (s *ServiceWrapper) ListComments(network string, postID int) ([]Comment, er
 	}
 
 	// Use reference API to get comments
-	comments, err := client.GetPostCommentsByType(postID, "referendums_v2")
+	comments, err := client.GetPostCommentsByType(postID, "ReferendumV2")
 	if err != nil {
 		return nil, fmt.Errorf("get comments: %w", err)
 	}
@@ -161,7 +161,7 @@ func (s *ServiceWrapper) PostFirstMessage(network string, refID int, message, li
 	s.logger.Printf("polkassembly: PostFirstMessage called for %s ref #%d", key, refID)
 
 	// Use reference API to add comment
-	comment, err := client.AddComment("referendums_v2", refID, polkassemblyapi.AddCommentRequest{
+	comment, err := client.AddComment("ReferendumV2", refID, polkassemblyapi.AddCommentRequest{
 		Content: content,
 	})
 	if err != nil {
