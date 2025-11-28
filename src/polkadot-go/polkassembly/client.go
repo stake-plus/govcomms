@@ -337,18 +337,21 @@ func (c *Client) PostComment(content string, postID int, network string) (string
 			return "", fmt.Errorf("post comment failed: %w", err)
 		}
 
+		// Log the full response for debugging
+		log.Printf("polkassembly: addPostComment response: %s", string(resp))
+
 		var commentResp struct {
 			Comment struct {
-				ID int `json:"id"`
+				ID interface{} `json:"id"` // Can be int or string
 			} `json:"comment"`
-			ID int `json:"id"`
+			ID interface{} `json:"id"` // Can be int or string
 		}
 		if err := json.Unmarshal(resp, &commentResp); err == nil {
-			if commentResp.Comment.ID != 0 {
-				return strconv.Itoa(commentResp.Comment.ID), nil
+			if id := extractIDValue(commentResp.Comment.ID); id != "" {
+				return id, nil
 			}
-			if commentResp.ID != 0 {
-				return strconv.Itoa(commentResp.ID), nil
+			if id := extractIDValue(commentResp.ID); id != "" {
+				return id, nil
 			}
 		}
 
@@ -655,6 +658,10 @@ func findID(v interface{}) string {
 }
 
 func numberToString(v interface{}) string {
+	return extractIDValue(v)
+}
+
+func extractIDValue(v interface{}) string {
 	switch val := v.(type) {
 	case string:
 		val = strings.TrimSpace(val)
@@ -668,6 +675,10 @@ func numberToString(v interface{}) string {
 	case int:
 		if val > 0 {
 			return strconv.Itoa(val)
+		}
+	case int64:
+		if val > 0 {
+			return strconv.FormatInt(val, 10)
 		}
 	}
 	return ""

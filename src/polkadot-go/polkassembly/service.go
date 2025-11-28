@@ -29,7 +29,7 @@ func NewService(cfg ServiceConfig, networks map[uint8]*sharedgov.Network) (*Serv
 		cfg.Logger = log.Default()
 	}
 	if cfg.Endpoint == "" {
-		cfg.Endpoint = "https://api.polkassembly.io/api/v1"
+		cfg.Endpoint = "https://api.polkassembly.io/api/v2"
 	}
 
 	svc := &Service{
