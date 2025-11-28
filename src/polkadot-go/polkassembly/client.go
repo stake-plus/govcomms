@@ -173,13 +173,24 @@ func (c *Client) Signup(network string) error {
 
 	resp, err := c.postWithStatus("/auth/actions/addressSignupStart", signupStartReq, headers)
 	if err != nil {
-		if httpErr, ok := err.(*HTTPError); ok && httpErr.StatusCode == http.StatusUnauthorized {
-			var errResp struct {
-				Message string `json:"message"`
+		var httpErr *HTTPError
+		if errors.As(err, &httpErr) {
+			// Handle "account already exists" case
+			if httpErr.StatusCode == http.StatusUnauthorized {
+				var errResp struct {
+					Message string `json:"message"`
+				}
+				if json.Unmarshal(httpErr.Body, &errResp) == nil {
+					if errResp.Message == "There is already an account associated with this address, you cannot sign-up with this address." {
+						return c.Login()
+					}
+				}
 			}
-			if json.Unmarshal(httpErr.Body, &errResp) == nil {
-				if errResp.Message == "There is already an account associated with this address, you cannot sign-up with this address." {
-					return c.Login()
+			// Handle server errors (5xx) - might be transient, try login as fallback
+			if httpErr.StatusCode >= 500 && httpErr.StatusCode < 600 {
+				// Try login as fallback for server errors
+				if loginErr := c.Login(); loginErr == nil {
+					return nil
 				}
 			}
 		}
