@@ -108,11 +108,10 @@ func (s *Service) PostFirstMessage(network string, refID int, message, link stri
 		return "", fmt.Errorf("polkassembly: post comment failed for %s ref %d: %w", network, refID, err)
 	}
 
-	if commentID != "" {
-		s.logger.Printf("polkassembly: posted comment %s for %s ref #%d", commentID, key, refID)
-	} else {
-		s.logger.Printf("polkassembly: posted comment for %s ref #%d (no id returned)", key, refID)
+	if commentID == "" {
+		return "", fmt.Errorf("polkassembly: post comment succeeded but no comment ID returned for %s ref #%d", key, refID)
 	}
 
+	s.logger.Printf("polkassembly: posted comment %s for %s ref #%d", commentID, key, refID)
 	return commentID, nil
 }

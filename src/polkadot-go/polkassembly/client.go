@@ -252,9 +252,11 @@ func (c *Client) PostComment(content string, postID int, network string) (string
 		if loginData == nil {
 			return "", fmt.Errorf("post comment: authentication missing after signup")
 		}
+		// After signup, wait a moment for the profile to be created
+		time.Sleep(1 * time.Second)
 	}
 
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < 3; attempt++ {
 		headers := map[string]string{
 			"Content-Type":  "application/json",
 			"Authorization": fmt.Sprintf("Bearer %s", loginData.Token),
@@ -263,7 +265,26 @@ func (c *Client) PostComment(content string, postID int, network string) (string
 
 		userID, err := c.fetchUserID(targetNetwork)
 		if err != nil {
+			// If profile doesn't exist yet after signup, wait and retry
+			if attempt < 2 && strings.Contains(err.Error(), "profile not found") {
+				log.Printf("polkassembly: profile not found, waiting and retrying (attempt %d)", attempt+1)
+				time.Sleep(2 * time.Second)
+				// Re-authenticate in case token expired
+				if reauthErr := c.Login(); reauthErr != nil {
+					log.Printf("polkassembly: reauthentication failed: %v", reauthErr)
+				} else {
+					loginData = c.getLoginData()
+					if loginData == nil {
+						return "", fmt.Errorf("post comment: authentication missing after retry")
+					}
+				}
+				continue
+			}
 			return "", fmt.Errorf("fetch user ID: %w", err)
+		}
+
+		if userID == 0 {
+			return "", fmt.Errorf("fetch user ID: user_id is 0")
 		}
 
 		body := map[string]interface{}{
@@ -479,7 +500,14 @@ func (c *Client) fetchUserID(network string) (int, error) {
 			return 0, fmt.Errorf("read response: %w", readErr)
 		}
 
+		if resp.StatusCode == http.StatusNotFound {
+			// User profile doesn't exist yet - this can happen right after signup
+			// Return an error so caller can handle it appropriately
+			return 0, fmt.Errorf("user profile not found - may need to complete signup")
+		}
+
 		if resp.StatusCode != http.StatusOK {
+			log.Printf("polkassembly: fetch profile unexpected status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 			return 0, fmt.Errorf("unexpected status: %d", resp.StatusCode)
 		}
 
@@ -487,7 +515,12 @@ func (c *Client) fetchUserID(network string) (int, error) {
 			UserID int `json:"user_id"`
 		}
 		if err := json.Unmarshal(body, &profile); err != nil {
+			log.Printf("polkassembly: failed to parse profile response: %v, body: %s", err, strings.TrimSpace(string(body)))
 			return 0, fmt.Errorf("parse profile: %w", err)
+		}
+
+		if profile.UserID == 0 {
+			return 0, fmt.Errorf("user_id is 0 in profile response")
 		}
 
 		return profile.UserID, nil

@@ -565,14 +565,17 @@ func (b *Module) postFirstMessageIfNeeded(network *sharedgov.Network, ref *share
 
 	commentID, err := b.polkassembly.PostFirstMessage(network.Name, int(ref.RefID), firstMsg.Body, link)
 	if err != nil {
-		return err
+		return fmt.Errorf("post first message failed: %w", err)
 	}
 
-	if commentID != "" {
-		if err := data.UpdateFeedbackMessagePolkassembly(b.db, firstMsg.ID, commentID, nil, ""); err != nil {
-			return fmt.Errorf("update feedback message polkassembly id: %w", err)
-		}
+	if commentID == "" {
+		return fmt.Errorf("post first message succeeded but no comment ID returned")
 	}
 
+	if err := data.UpdateFeedbackMessagePolkassembly(b.db, firstMsg.ID, commentID, nil, ""); err != nil {
+		return fmt.Errorf("update feedback message polkassembly id: %w", err)
+	}
+
+	log.Printf("feedback: successfully posted and saved polkassembly comment %s for %s ref #%d", commentID, network.Name, ref.RefID)
 	return nil
 }
