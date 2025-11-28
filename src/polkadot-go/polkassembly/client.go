@@ -458,7 +458,7 @@ func (c *Client) fetchUserID(network string) (int, error) {
 	}
 
 	currentNetwork := c.getNetwork()
-	if currentNetwork == "" && loginData != nil && strings.TrimSpace(loginData.Network) != "" {
+	if currentNetwork == "" && strings.TrimSpace(loginData.Network) != "" {
 		c.setNetwork(loginData.Network)
 		currentNetwork = c.getNetwork()
 	}
