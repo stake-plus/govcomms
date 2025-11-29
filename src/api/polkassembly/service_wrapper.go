@@ -3,7 +3,6 @@ package polkassembly
 import (
 	"fmt"
 	"log"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -89,6 +88,7 @@ func NewServiceWrapper(cfg ServiceConfig, networks map[uint8]*sharedgov.Network)
 }
 
 // ListComments retrieves all comments for a referendum post.
+// Uses the polkassembly-api library to fetch comments and flattens nested replies.
 func (s *ServiceWrapper) ListComments(network string, postID int) ([]Comment, error) {
 	key := strings.ToLower(network)
 
@@ -100,53 +100,19 @@ func (s *ServiceWrapper) ListComments(network string, postID int) ([]Comment, er
 		return nil, fmt.Errorf("polkassembly: no client configured for network %s", network)
 	}
 
-	// Try GetPostComments first - it might return all comments including replies in a flat structure
-	// If that doesn't work, fall back to GetPostCommentsByType
-	var comments []polkassemblyapi.Comment
-	var err error
-
-	// First try GetPostComments which might return a flat list
-	comments, err = client.GetPostComments(postID)
+	// Get comments using the library
+	comments, err := client.GetPostCommentsByType(postID, "ReferendumV2")
 	if err != nil {
-		s.logger.Printf("polkassembly: GetPostComments failed, trying GetPostCommentsByType: %v", err)
-		// Fall back to GetPostCommentsByType
-		comments, err = client.GetPostCommentsByType(postID, "ReferendumV2")
-		if err != nil {
-			return nil, fmt.Errorf("get comments: %w", err)
-		}
+		return nil, fmt.Errorf("get comments: %w", err)
 	}
 
 	s.logger.Printf("polkassembly: API returned %d top-level comments for post %d", len(comments), postID)
 
-	// Log first few comments to see structure
-	for i, c := range comments {
-		if i >= 3 {
-			break
-		}
-		s.logger.Printf("polkassembly: sample comment[%d]: ID=%q, Username=%q, Replies=%d, Content type=%T",
-			i, c.ID, c.Username, len(c.Replies), c.Content)
-	}
-
-	// Convert to our Comment type, flattening replies
+	// Convert to our Comment type, flattening nested replies
 	result := make([]Comment, 0)
 	var flattenComments func([]polkassemblyapi.Comment, *string)
 	flattenComments = func(comments []polkassemblyapi.Comment, parentID *string) {
 		for _, c := range comments {
-			// Log the raw comment structure to debug
-			s.logger.Printf("polkassembly: raw comment ID=%q, Replies count=%d, IsDeleted=%v", c.ID, len(c.Replies), c.IsDeleted)
-
-			// Use reflection to check for hidden fields like parent_id
-			commentType := reflect.TypeOf(c)
-			commentValue := reflect.ValueOf(c)
-			for i := 0; i < commentType.NumField(); i++ {
-				field := commentType.Field(i)
-				fieldValue := commentValue.Field(i)
-				jsonTag := field.Tag.Get("json")
-				if strings.Contains(jsonTag, "parent") || strings.Contains(strings.ToLower(field.Name), "parent") {
-					s.logger.Printf("polkassembly: found potential parent field: %s (json:%s) = %v", field.Name, jsonTag, fieldValue.Interface())
-				}
-			}
-
 			comment := Comment{}
 			// Store ID as string (API returns string IDs)
 			comment.ID = c.ID
@@ -168,22 +134,14 @@ func (s *ServiceWrapper) ListComments(network string, postID int) ([]Comment, er
 			comment.User.Username = c.Username
 			result = append(result, comment)
 
-			// Log for debugging
-			if parentID != nil {
-				s.logger.Printf("polkassembly: flattened reply %q with parent %q (has %d nested replies)", comment.ID, *parentID, len(c.Replies))
-			} else {
-				s.logger.Printf("polkassembly: flattened top-level comment %q (has %d replies)", comment.ID, len(c.Replies))
-			}
-
 			// Recursively flatten replies
 			if len(c.Replies) > 0 {
 				parentIDVal := comment.ID
-				s.logger.Printf("polkassembly: processing %d replies to comment %q", len(c.Replies), comment.ID)
 				flattenComments(c.Replies, &parentIDVal)
 			}
 		}
 	}
-	s.logger.Printf("polkassembly: flattening %d top-level comments for post %d", len(comments), postID)
+
 	flattenComments(comments, nil)
 	s.logger.Printf("polkassembly: flattened to %d total comments (including replies)", len(result))
 
