@@ -108,44 +108,35 @@ func (s *ServiceWrapper) ListComments(network string, postID int) ([]Comment, er
 
 	s.logger.Printf("polkassembly: API returned %d top-level comments for post %d", len(comments), postID)
 
-	// Debug: Check if any comments have replies and log the structure
-	totalReplies := 0
-	for i, c := range comments {
+	// Check if API returns flat list with ParentID or nested Replies
+	hasNestedReplies := false
+	hasParentID := false
+	for _, c := range comments {
 		if len(c.Replies) > 0 {
-			s.logger.Printf("polkassembly: comment[%d] %q has %d replies", i, c.ID, len(c.Replies))
-			totalReplies += len(c.Replies)
-			// Log first reply structure
-			if len(c.Replies) > 0 {
-				firstReply := c.Replies[0]
-				s.logger.Printf("polkassembly: first reply to %q: ID=%q, Username=%q, Replies=%d",
-					c.ID, firstReply.ID, firstReply.Username, len(firstReply.Replies))
-			}
+			hasNestedReplies = true
+			break
 		}
-		// Check for our specific comment
-		if c.ID == "azvLxfHsR49Bg1gU7TjV" {
-			s.logger.Printf("polkassembly: found our comment %q with %d replies", c.ID, len(c.Replies))
-			for j, reply := range c.Replies {
-				s.logger.Printf("polkassembly: reply[%d] to %q: ID=%q", j, c.ID, reply.ID)
-				if reply.ID == "51mK77TMPsTvDEvfe9cy" {
-					s.logger.Printf("polkassembly: FOUND the reply we're looking for in nested Replies!")
-				}
-			}
+		if c.ParentID != nil && *c.ParentID != "" {
+			hasParentID = true
+			break
 		}
 	}
-	s.logger.Printf("polkassembly: total nested replies found: %d", totalReplies)
 
-	// Convert to our Comment type, flattening nested replies
+	s.logger.Printf("polkassembly: API structure - nested replies: %v, flat list with parent_id: %v", hasNestedReplies, hasParentID)
+
+	// Convert to our Comment type
 	result := make([]Comment, 0)
-	var flattenComments func([]polkassemblyapi.Comment, *string)
-	flattenComments = func(comments []polkassemblyapi.Comment, parentID *string) {
+
+	if hasParentID {
+		// API returns flat list with parent_id - use ParentID directly
+		s.logger.Printf("polkassembly: processing flat list with parent_id fields")
 		for _, c := range comments {
 			comment := Comment{}
-			// Store ID as string (API returns string IDs)
 			comment.ID = c.ID
-			// Set parent ID if this is a reply
-			if parentID != nil {
-				parentIDVal := *parentID
-				comment.ParentID = &parentIDVal
+			// Use ParentID from API if present
+			if c.ParentID != nil && *c.ParentID != "" {
+				comment.ParentID = c.ParentID
+				s.logger.Printf("polkassembly: comment %q is a reply to %q", comment.ID, *comment.ParentID)
 			}
 			// Convert Content from interface{} to string
 			if contentStr, ok := c.Content.(string); ok {
@@ -159,17 +150,44 @@ func (s *ServiceWrapper) ListComments(network string, postID int) ([]Comment, er
 			comment.User.ID = c.UserID
 			comment.User.Username = c.Username
 			result = append(result, comment)
+		}
+	} else {
+		// API returns nested Replies - flatten them
+		s.logger.Printf("polkassembly: processing nested replies structure")
+		var flattenComments func([]polkassemblyapi.Comment, *string)
+		flattenComments = func(comments []polkassemblyapi.Comment, parentID *string) {
+			for _, c := range comments {
+				comment := Comment{}
+				comment.ID = c.ID
+				// Set parent ID if this is a reply
+				if parentID != nil {
+					parentIDVal := *parentID
+					comment.ParentID = &parentIDVal
+				}
+				// Convert Content from interface{} to string
+				if contentStr, ok := c.Content.(string); ok {
+					comment.Content = contentStr
+				} else if contentStr := fmt.Sprintf("%v", c.Content); contentStr != "" {
+					comment.Content = contentStr
+				}
+				// Convert CreatedAt from time.Time to string
+				comment.CreatedAt = c.CreatedAt.Format(time.RFC3339)
+				// Set user info
+				comment.User.ID = c.UserID
+				comment.User.Username = c.Username
+				result = append(result, comment)
 
-			// Recursively flatten replies
-			if len(c.Replies) > 0 {
-				parentIDVal := comment.ID
-				flattenComments(c.Replies, &parentIDVal)
+				// Recursively flatten replies
+				if len(c.Replies) > 0 {
+					parentIDVal := comment.ID
+					flattenComments(c.Replies, &parentIDVal)
+				}
 			}
 		}
+		flattenComments(comments, nil)
 	}
 
-	flattenComments(comments, nil)
-	s.logger.Printf("polkassembly: flattened to %d total comments (including replies)", len(result))
+	s.logger.Printf("polkassembly: converted to %d total comments", len(result))
 
 	return result, nil
 }
