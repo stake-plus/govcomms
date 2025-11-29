@@ -108,6 +108,32 @@ func (s *ServiceWrapper) ListComments(network string, postID int) ([]Comment, er
 
 	s.logger.Printf("polkassembly: API returned %d top-level comments for post %d", len(comments), postID)
 
+	// Debug: Check if any comments have replies and log the structure
+	totalReplies := 0
+	for i, c := range comments {
+		if len(c.Replies) > 0 {
+			s.logger.Printf("polkassembly: comment[%d] %q has %d replies", i, c.ID, len(c.Replies))
+			totalReplies += len(c.Replies)
+			// Log first reply structure
+			if len(c.Replies) > 0 {
+				firstReply := c.Replies[0]
+				s.logger.Printf("polkassembly: first reply to %q: ID=%q, Username=%q, Replies=%d",
+					c.ID, firstReply.ID, firstReply.Username, len(firstReply.Replies))
+			}
+		}
+		// Check for our specific comment
+		if c.ID == "azvLxfHsR49Bg1gU7TjV" {
+			s.logger.Printf("polkassembly: found our comment %q with %d replies", c.ID, len(c.Replies))
+			for j, reply := range c.Replies {
+				s.logger.Printf("polkassembly: reply[%d] to %q: ID=%q", j, c.ID, reply.ID)
+				if reply.ID == "51mK77TMPsTvDEvfe9cy" {
+					s.logger.Printf("polkassembly: FOUND the reply we're looking for in nested Replies!")
+				}
+			}
+		}
+	}
+	s.logger.Printf("polkassembly: total nested replies found: %d", totalReplies)
+
 	// Convert to our Comment type, flattening nested replies
 	result := make([]Comment, 0)
 	var flattenComments func([]polkassemblyapi.Comment, *string)
