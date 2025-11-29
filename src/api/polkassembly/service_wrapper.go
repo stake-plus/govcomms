@@ -105,6 +105,8 @@ func (s *ServiceWrapper) ListComments(network string, postID int) ([]Comment, er
 		return nil, fmt.Errorf("get comments: %w", err)
 	}
 
+	s.logger.Printf("polkassembly: API returned %d top-level comments for post %d", len(comments), postID)
+
 	// Convert to our Comment type, flattening replies
 	result := make([]Comment, 0)
 	var flattenComments func([]polkassemblyapi.Comment, *string)
@@ -130,14 +132,25 @@ func (s *ServiceWrapper) ListComments(network string, postID int) ([]Comment, er
 			comment.User.ID = c.UserID
 			comment.User.Username = c.Username
 			result = append(result, comment)
+
+			// Log for debugging
+			if parentID != nil {
+				s.logger.Printf("polkassembly: flattened reply %q with parent %q (has %d nested replies)", comment.ID, *parentID, len(c.Replies))
+			} else {
+				s.logger.Printf("polkassembly: flattened top-level comment %q (has %d replies)", comment.ID, len(c.Replies))
+			}
+
 			// Recursively flatten replies
 			if len(c.Replies) > 0 {
 				parentIDVal := comment.ID
+				s.logger.Printf("polkassembly: processing %d replies to comment %q", len(c.Replies), comment.ID)
 				flattenComments(c.Replies, &parentIDVal)
 			}
 		}
 	}
+	s.logger.Printf("polkassembly: flattening %d top-level comments for post %d", len(comments), postID)
 	flattenComments(comments, nil)
+	s.logger.Printf("polkassembly: flattened to %d total comments (including replies)", len(result))
 
 	return result, nil
 }
