@@ -340,8 +340,11 @@ func (b *Module) startPolkassemblyMonitor(ctx context.Context) {
 	defer ticker.Stop()
 
 	// Run immediately on start
+	log.Printf("feedback: running initial Polkassembly reply check...")
 	if err := b.refreshPolkassemblyCheck(); err != nil {
-		log.Printf("feedback: polkassembly monitor error: %v", err)
+		log.Printf("feedback: polkassembly monitor error on initial check: %v", err)
+	} else {
+		log.Printf("feedback: initial Polkassembly reply check completed")
 	}
 
 	for {
@@ -363,16 +366,53 @@ func (b *Module) refreshPolkassemblyCheck() error {
 		return nil
 	}
 
+	log.Printf("feedback: refreshPolkassemblyCheck starting")
 	const batchSize = 50
 	cutoff := time.Now().Add(-12 * time.Hour)
 
+	// First, get refs that haven't been checked recently
 	var refs []sharedgov.Ref
 	if err := b.db.Where("last_reply_check IS NULL OR last_reply_check < ?", cutoff).
 		Limit(batchSize).Find(&refs).Error; err != nil {
+		log.Printf("feedback: refreshPolkassemblyCheck failed to query refs: %v", err)
 		return err
 	}
 
+	log.Printf("feedback: refreshPolkassemblyCheck found %d referenda to check (cutoff: %v)", len(refs), cutoff)
+
+	// Also check referenda that have polkassembly messages but might have been checked recently
+	// This ensures we catch new replies even if the ref was checked recently
+	var refsWithMessages []sharedgov.Ref
+	if err := b.db.Table("refs").
+		Joins("INNER JOIN ref_messages ON refs.id = ref_messages.ref_id").
+		Where("ref_messages.polkassembly_comment_id IS NOT NULL AND ref_messages.polkassembly_comment_id <> ''").
+		Where("refs.finalized = ?", false).
+		Group("refs.id").
+		Limit(batchSize).
+		Find(&refsWithMessages).Error; err != nil {
+		log.Printf("feedback: refreshPolkassemblyCheck failed to query refs with messages: %v", err)
+	} else {
+		log.Printf("feedback: refreshPolkassemblyCheck found %d referenda with polkassembly messages", len(refsWithMessages))
+		// Add refs with messages that aren't already in the list
+		refMap := make(map[uint64]bool)
+		for _, ref := range refs {
+			refMap[ref.ID] = true
+		}
+		for _, ref := range refsWithMessages {
+			if !refMap[ref.ID] {
+				refs = append(refs, ref)
+			}
+		}
+		log.Printf("feedback: refreshPolkassemblyCheck total referenda to check: %d", len(refs))
+	}
+
+	if len(refs) == 0 {
+		log.Printf("feedback: refreshPolkassemblyCheck - no referenda need checking")
+		return nil
+	}
+
 	for _, ref := range refs {
+		log.Printf("feedback: checking for replies to ref %d (network ID: %d)", ref.RefID, ref.NetworkID)
 		if err := b.processPolkassemblyReplies(&ref); err != nil {
 			log.Printf("feedback: polkassembly reply sync failed for ref %d: %v", ref.RefID, err)
 			continue
@@ -383,9 +423,12 @@ func (b *Module) refreshPolkassemblyCheck() error {
 			Where("id = ?", ref.ID).
 			Update("last_reply_check", checkTime).Error; err != nil {
 			log.Printf("feedback: failed to update last_reply_check for ref %d: %v", ref.ID, err)
+		} else {
+			log.Printf("feedback: updated last_reply_check for ref %d", ref.RefID)
 		}
 	}
 
+	log.Printf("feedback: refreshPolkassemblyCheck completed")
 	return nil
 }
 
@@ -404,11 +447,14 @@ func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 
 	messages, err := data.GetPolkassemblyMessages(b.db, ref.ID)
 	if err != nil {
+		log.Printf("feedback: failed to get polkassembly messages for ref %d: %v", ref.ID, err)
 		return err
 	}
 	if len(messages) == 0 {
+		log.Printf("feedback: no polkassembly messages found for ref %d (no feedback posted yet)", ref.RefID)
 		return nil
 	}
+	log.Printf("feedback: found %d polkassembly messages for ref %d", len(messages), ref.RefID)
 
 	knownIDs := make(map[string]struct{}, len(messages))
 	parentCommentIDs := make(map[int]struct{}, len(messages))
