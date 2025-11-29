@@ -396,24 +396,46 @@ func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 
 	knownIDs := make(map[string]struct{}, len(messages))
 	parentCommentIDs := make(map[int]struct{}, len(messages))
+	parentCommentIDStrings := make(map[string]struct{}, len(messages))
 	for _, msg := range messages {
 		if msg.PolkassemblyCommentID == nil || *msg.PolkassemblyCommentID == "" {
 			continue
 		}
 		id := *msg.PolkassemblyCommentID
 		knownIDs[id] = struct{}{}
+		parentCommentIDStrings[id] = struct{}{}
 		if parsed, err := strconv.Atoi(id); err == nil {
 			parentCommentIDs[parsed] = struct{}{}
 		}
 	}
 
-	if len(parentCommentIDs) == 0 {
+	if len(parentCommentIDs) == 0 && len(parentCommentIDStrings) == 0 {
+		log.Printf("feedback: no parent comment IDs found for ref %d (network %s)", ref.RefID, network.Name)
 		return nil
 	}
+
+	log.Printf("feedback: checking for replies to %d parent comments (ref %d, network %s)", len(parentCommentIDStrings), ref.RefID, network.Name)
 
 	comments, err := b.polkassembly.ListComments(network.Name, int(ref.RefID))
 	if err != nil {
 		return err
+	}
+
+	log.Printf("feedback: found %d total comments for ref %d", len(comments), ref.RefID)
+
+	// Build a map of comment numeric ID (as string) to the comment
+	// This helps us match our stored string IDs to the numeric IDs returned by the API
+	matchedCount := 0
+	for _, comment := range comments {
+		idStr := strconv.Itoa(comment.ID)
+		if _, ok := parentCommentIDStrings[idStr]; ok {
+			// Found a match - this comment's numeric ID (as string) matches our stored string ID
+			parentCommentIDs[comment.ID] = struct{}{}
+			matchedCount++
+		}
+	}
+	if matchedCount > 0 {
+		log.Printf("feedback: matched %d stored comment IDs to numeric IDs from API", matchedCount)
 	}
 
 	threadInfo, err := b.refManager.GetThreadInfo(network.ID, uint32(ref.RefID))
@@ -425,8 +447,14 @@ func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 		if comment.ParentID == nil {
 			continue
 		}
+		// Check if this reply's parent matches any of our comment IDs
+		// Try numeric match first
 		if _, ok := parentCommentIDs[*comment.ParentID]; !ok {
-			continue
+			// Also check if the parent ID (as string) matches any of our stored string IDs
+			parentIDStr := strconv.Itoa(*comment.ParentID)
+			if _, ok := parentCommentIDStrings[parentIDStr]; !ok {
+				continue
+			}
 		}
 
 		idStr := strconv.Itoa(comment.ID)
@@ -459,6 +487,7 @@ func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 		knownIDs[idStr] = struct{}{}
 		parentCommentIDs[comment.ID] = struct{}{}
 
+		log.Printf("feedback: found new reply (ID: %d, ParentID: %d) from %s for ref %d", comment.ID, *comment.ParentID, comment.User.Username, ref.RefID)
 		b.announcePolkassemblyReply(threadInfo.ThreadID, network, ref, comment)
 
 	}
