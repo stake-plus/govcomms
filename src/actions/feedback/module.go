@@ -574,7 +574,7 @@ func (b *Module) announcePolkassemblyReply(threadID string, network *sharedgov.N
 	// Comment ID is now a string, so use it directly in the URL
 	networkNameForURL := strings.ToLower(network.Name)
 	log.Printf("feedback: constructing URL with network name: %q (from network.Name: %q)", networkNameForURL, network.Name)
-	embed.URL = fmt.Sprintf("https://%s.polkassembly.io/referenda/%d?commentId=%s",
+	embed.URL = fmt.Sprintf("https://%s.polkassembly.io/referenda/%d#comment-%s",
 		networkNameForURL, ref.RefID, comment.ID)
 
 	if _, err := shareddiscord.SendComplexMessageNoEmbed(b.session, threadID, &discordgo.MessageSend{
