@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"time"
 
@@ -457,7 +456,6 @@ func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 	log.Printf("feedback: found %d polkassembly messages for ref %d", len(messages), ref.RefID)
 
 	knownIDs := make(map[string]struct{}, len(messages))
-	parentCommentIDs := make(map[int]struct{}, len(messages))
 	parentCommentIDStrings := make(map[string]struct{}, len(messages))
 	for _, msg := range messages {
 		if msg.PolkassemblyCommentID == nil || *msg.PolkassemblyCommentID == "" {
@@ -466,23 +464,16 @@ func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 		id := *msg.PolkassemblyCommentID
 		knownIDs[id] = struct{}{}
 		parentCommentIDStrings[id] = struct{}{}
-		log.Printf("feedback: stored comment ID for ref %d: %q (type: string)", ref.RefID, id)
-		if parsed, err := strconv.Atoi(id); err == nil {
-			parentCommentIDs[parsed] = struct{}{}
-			log.Printf("feedback: stored comment ID %q parsed as integer: %d", id, parsed)
-		} else {
-			log.Printf("feedback: stored comment ID %q cannot be parsed as integer: %v", id, err)
-		}
+		log.Printf("feedback: stored comment ID for ref %d: %q", ref.RefID, id)
 	}
 
-	if len(parentCommentIDs) == 0 && len(parentCommentIDStrings) == 0 {
+	if len(parentCommentIDStrings) == 0 {
 		log.Printf("feedback: no parent comment IDs found for ref %d (network %s)", ref.RefID, network.Name)
 		return nil
 	}
 
 	log.Printf("feedback: checking for replies to %d parent comments (ref %d, network %s)", len(parentCommentIDStrings), ref.RefID, network.Name)
-	log.Printf("feedback: parent comment IDs (numeric): %v", parentCommentIDs)
-	log.Printf("feedback: parent comment IDs (string): %v", parentCommentIDStrings)
+	log.Printf("feedback: parent comment IDs: %v", parentCommentIDStrings)
 
 	comments, err := b.polkassembly.ListComments(network.Name, int(ref.RefID))
 	if err != nil {
@@ -491,21 +482,6 @@ func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 
 	log.Printf("feedback: found %d total comments for ref %d", len(comments), ref.RefID)
 
-	// Build a map of comment numeric ID (as string) to the comment
-	// This helps us match our stored string IDs to the numeric IDs returned by the API
-	matchedCount := 0
-	for _, comment := range comments {
-		idStr := strconv.Itoa(comment.ID)
-		if _, ok := parentCommentIDStrings[idStr]; ok {
-			// Found a match - this comment's numeric ID (as string) matches our stored string ID
-			parentCommentIDs[comment.ID] = struct{}{}
-			matchedCount++
-		}
-	}
-	if matchedCount > 0 {
-		log.Printf("feedback: matched %d stored comment IDs to numeric IDs from API", matchedCount)
-	}
-
 	threadInfo, err := b.refManager.GetThreadInfo(network.ID, uint32(ref.RefID))
 	if err != nil {
 		return fmt.Errorf("thread mapping not found for network %d ref %d", network.ID, ref.RefID)
@@ -513,31 +489,26 @@ func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 
 	for _, comment := range comments {
 		if comment.ParentID == nil {
-			log.Printf("feedback: comment %d has no ParentID (top-level comment)", comment.ID)
+			log.Printf("feedback: comment %q has no ParentID (top-level comment)", comment.ID)
 			continue
 		}
 		
-		parentIDStr := strconv.Itoa(*comment.ParentID)
-		log.Printf("feedback: checking comment %d with ParentID %d (string: %q)", comment.ID, *comment.ParentID, parentIDStr)
+		log.Printf("feedback: checking comment %q with ParentID %q", comment.ID, *comment.ParentID)
 		
-		// Check if this reply's parent matches any of our comment IDs
-		// Try numeric match first
+		// Check if this reply's parent matches any of our stored comment IDs (now both are strings)
 		matched := false
-		if _, ok := parentCommentIDs[*comment.ParentID]; ok {
-			log.Printf("feedback: comment %d matched by numeric ParentID %d", comment.ID, *comment.ParentID)
-			matched = true
-		} else if _, ok := parentCommentIDStrings[parentIDStr]; ok {
-			log.Printf("feedback: comment %d matched by string ParentID %q", comment.ID, parentIDStr)
+		if _, ok := parentCommentIDStrings[*comment.ParentID]; ok {
+			log.Printf("feedback: comment %q matched by ParentID %q", comment.ID, *comment.ParentID)
 			matched = true
 		}
 		
 		if !matched {
-			log.Printf("feedback: comment %d ParentID %d does not match any stored comment IDs", comment.ID, *comment.ParentID)
+			log.Printf("feedback: comment %q ParentID %q does not match any stored comment IDs", comment.ID, *comment.ParentID)
 			continue
 		}
 
-		idStr := strconv.Itoa(comment.ID)
-		if _, exists := knownIDs[idStr]; exists {
+		if _, exists := knownIDs[comment.ID]; exists {
+			log.Printf("feedback: comment %q already known, skipping", comment.ID)
 			continue
 		}
 
@@ -555,18 +526,18 @@ func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 			comment.Content,
 			userID,
 			comment.User.Username,
-			idStr,
+			comment.ID,
 			createdAt,
 		)
 		if err != nil {
-			log.Printf("feedback: failed to store polkassembly reply %d: %v", comment.ID, err)
+			log.Printf("feedback: failed to store polkassembly reply %q: %v", comment.ID, err)
 			continue
 		}
 
-		knownIDs[idStr] = struct{}{}
-		parentCommentIDs[comment.ID] = struct{}{}
+		knownIDs[comment.ID] = struct{}{}
+		parentCommentIDStrings[comment.ID] = struct{}{}
 
-		log.Printf("feedback: found new reply (ID: %d, ParentID: %d) from %s for ref %d", comment.ID, *comment.ParentID, comment.User.Username, ref.RefID)
+		log.Printf("feedback: found new reply (ID: %q, ParentID: %q) from %s for ref %d", comment.ID, *comment.ParentID, comment.User.Username, ref.RefID)
 		b.announcePolkassemblyReply(threadInfo.ThreadID, network, ref, comment)
 
 	}
@@ -600,7 +571,8 @@ func (b *Module) announcePolkassemblyReply(threadID string, network *sharedgov.N
 		embed.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	}
 
-	embed.URL = fmt.Sprintf("https://%s.polkassembly.io/referendum/%d?commentId=%d",
+	// Comment ID is now a string, so use it directly in the URL
+	embed.URL = fmt.Sprintf("https://%s.polkassembly.io/referendum/%d?commentId=%s",
 		strings.ToLower(network.Name), ref.RefID, comment.ID)
 
 	if _, err := shareddiscord.SendComplexMessageNoEmbed(b.session, threadID, &discordgo.MessageSend{

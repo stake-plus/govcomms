@@ -3,7 +3,6 @@ package polkassembly
 import (
 	"fmt"
 	"log"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,10 +15,10 @@ import (
 // Comment represents a comment returned by the Polkassembly API.
 // This is our internal type that we convert from the reference API's Comment type.
 type Comment struct {
-	ID        int    `json:"id"`
-	ParentID  *int   `json:"parent_id"`
-	Content   string `json:"content"`
-	CreatedAt string `json:"created_at"`
+	ID        string  `json:"id"`        // Store as string since API returns string IDs
+	ParentID  *string `json:"parent_id"` // Store as string to match ID format
+	Content   string  `json:"content"`
+	CreatedAt string  `json:"created_at"`
 	User      struct {
 		ID       int    `json:"id"`
 		Username string `json:"username"`
@@ -108,17 +107,16 @@ func (s *ServiceWrapper) ListComments(network string, postID int) ([]Comment, er
 
 	// Convert to our Comment type, flattening replies
 	result := make([]Comment, 0)
-	var flattenComments func([]polkassemblyapi.Comment, *int)
-	flattenComments = func(comments []polkassemblyapi.Comment, parentID *int) {
+	var flattenComments func([]polkassemblyapi.Comment, *string)
+	flattenComments = func(comments []polkassemblyapi.Comment, parentID *string) {
 		for _, c := range comments {
 			comment := Comment{}
-			// Parse ID from string to int
-			if id, err := strconv.Atoi(c.ID); err == nil {
-				comment.ID = id
-			}
+			// Store ID as string (API returns string IDs)
+			comment.ID = c.ID
 			// Set parent ID if this is a reply
 			if parentID != nil {
-				comment.ParentID = parentID
+				parentIDVal := *parentID
+				comment.ParentID = &parentIDVal
 			}
 			// Convert Content from interface{} to string
 			if contentStr, ok := c.Content.(string); ok {
