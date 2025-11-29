@@ -466,8 +466,12 @@ func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 		id := *msg.PolkassemblyCommentID
 		knownIDs[id] = struct{}{}
 		parentCommentIDStrings[id] = struct{}{}
+		log.Printf("feedback: stored comment ID for ref %d: %q (type: string)", ref.RefID, id)
 		if parsed, err := strconv.Atoi(id); err == nil {
 			parentCommentIDs[parsed] = struct{}{}
+			log.Printf("feedback: stored comment ID %q parsed as integer: %d", id, parsed)
+		} else {
+			log.Printf("feedback: stored comment ID %q cannot be parsed as integer: %v", id, err)
 		}
 	}
 
@@ -477,6 +481,8 @@ func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 	}
 
 	log.Printf("feedback: checking for replies to %d parent comments (ref %d, network %s)", len(parentCommentIDStrings), ref.RefID, network.Name)
+	log.Printf("feedback: parent comment IDs (numeric): %v", parentCommentIDs)
+	log.Printf("feedback: parent comment IDs (string): %v", parentCommentIDStrings)
 
 	comments, err := b.polkassembly.ListComments(network.Name, int(ref.RefID))
 	if err != nil {
@@ -507,16 +513,27 @@ func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 
 	for _, comment := range comments {
 		if comment.ParentID == nil {
+			log.Printf("feedback: comment %d has no ParentID (top-level comment)", comment.ID)
 			continue
 		}
+		
+		parentIDStr := strconv.Itoa(*comment.ParentID)
+		log.Printf("feedback: checking comment %d with ParentID %d (string: %q)", comment.ID, *comment.ParentID, parentIDStr)
+		
 		// Check if this reply's parent matches any of our comment IDs
 		// Try numeric match first
-		if _, ok := parentCommentIDs[*comment.ParentID]; !ok {
-			// Also check if the parent ID (as string) matches any of our stored string IDs
-			parentIDStr := strconv.Itoa(*comment.ParentID)
-			if _, ok := parentCommentIDStrings[parentIDStr]; !ok {
-				continue
-			}
+		matched := false
+		if _, ok := parentCommentIDs[*comment.ParentID]; ok {
+			log.Printf("feedback: comment %d matched by numeric ParentID %d", comment.ID, *comment.ParentID)
+			matched = true
+		} else if _, ok := parentCommentIDStrings[parentIDStr]; ok {
+			log.Printf("feedback: comment %d matched by string ParentID %q", comment.ID, parentIDStr)
+			matched = true
+		}
+		
+		if !matched {
+			log.Printf("feedback: comment %d ParentID %d does not match any stored comment IDs", comment.ID, *comment.ParentID)
+			continue
 		}
 
 		idStr := strconv.Itoa(comment.ID)
