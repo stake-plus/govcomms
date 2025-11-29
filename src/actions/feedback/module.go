@@ -81,7 +81,10 @@ func NewModule(cfg *sharedconfig.FeedbackConfig, db *gorm.DB) (*Module, error) {
 			log.Printf("feedback: polkassembly service disabled: %v", svcErr)
 		} else {
 			paService = service
+			log.Printf("feedback: polkassembly service initialized successfully")
 		}
+	} else {
+		log.Printf("feedback: polkassembly service NOT initialized - networkManager is nil")
 	}
 
 	module := &Module{
@@ -186,6 +189,7 @@ func (b *Module) Start(ctx context.Context) error {
 
 	go b.startReferendumSync(runtimeCtx)
 	go b.startPolkassemblyMonitor(runtimeCtx)
+	log.Printf("feedback: started Polkassembly reply monitor (checks every 15 minutes)")
 
 	return nil
 }
@@ -326,24 +330,36 @@ func (b *Module) syncActiveThreads(ctx context.Context) error {
 }
 
 func (b *Module) startPolkassemblyMonitor(ctx context.Context) {
+	if b.polkassembly == nil {
+		log.Printf("feedback: Polkassembly reply monitor NOT started - polkassembly service is nil")
+		return
+	}
+
+	log.Printf("feedback: Polkassembly reply monitor started (will check for replies every 15 minutes)")
 	ticker := time.NewTicker(15 * time.Minute)
 	defer ticker.Stop()
 
-	for {
-		if err := b.refreshPolkassemblyCheck(); err != nil {
-			log.Printf("feedback: polkassembly monitor error: %v", err)
-		}
+	// Run immediately on start
+	if err := b.refreshPolkassemblyCheck(); err != nil {
+		log.Printf("feedback: polkassembly monitor error: %v", err)
+	}
 
+	for {
 		select {
 		case <-ctx.Done():
+			log.Printf("feedback: Polkassembly reply monitor stopped")
 			return
 		case <-ticker.C:
+			if err := b.refreshPolkassemblyCheck(); err != nil {
+				log.Printf("feedback: polkassembly monitor error: %v", err)
+			}
 		}
 	}
 }
 
 func (b *Module) refreshPolkassemblyCheck() error {
 	if b.polkassembly == nil {
+		log.Printf("feedback: refreshPolkassemblyCheck skipped - polkassembly service is nil")
 		return nil
 	}
 
