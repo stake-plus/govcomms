@@ -492,16 +492,16 @@ func (b *Module) processPolkassemblyReplies(ref *sharedgov.Ref) error {
 			log.Printf("feedback: comment %q has no ParentID (top-level comment)", comment.ID)
 			continue
 		}
-		
+
 		log.Printf("feedback: checking comment %q with ParentID %q", comment.ID, *comment.ParentID)
-		
+
 		// Check if this reply's parent matches any of our stored comment IDs (now both are strings)
 		matched := false
 		if _, ok := parentCommentIDStrings[*comment.ParentID]; ok {
 			log.Printf("feedback: comment %q matched by ParentID %q", comment.ID, *comment.ParentID)
 			matched = true
 		}
-		
+
 		if !matched {
 			log.Printf("feedback: comment %q ParentID %q does not match any stored comment IDs", comment.ID, *comment.ParentID)
 			continue
@@ -572,8 +572,10 @@ func (b *Module) announcePolkassemblyReply(threadID string, network *sharedgov.N
 	}
 
 	// Comment ID is now a string, so use it directly in the URL
+	networkNameForURL := strings.ToLower(network.Name)
+	log.Printf("feedback: constructing URL with network name: %q (from network.Name: %q)", networkNameForURL, network.Name)
 	embed.URL = fmt.Sprintf("https://%s.polkassembly.io/referendum/%d?commentId=%s",
-		strings.ToLower(network.Name), ref.RefID, comment.ID)
+		networkNameForURL, ref.RefID, comment.ID)
 
 	if _, err := shareddiscord.SendComplexMessageNoEmbed(b.session, threadID, &discordgo.MessageSend{
 		Embeds: []*discordgo.MessageEmbed{embed},
