@@ -108,36 +108,27 @@ func (s *ServiceWrapper) ListComments(network string, postID int) ([]Comment, er
 
 	s.logger.Printf("polkassembly: API returned %d top-level comments for post %d", len(comments), postID)
 
-	// Check if API returns flat list with ParentID or nested Replies
-	hasNestedReplies := false
-	hasParentID := false
-	for _, c := range comments {
-		if len(c.Replies) > 0 {
-			hasNestedReplies = true
-			break
-		}
-		if c.ParentID != nil && *c.ParentID != "" {
-			hasParentID = true
-			break
-		}
-	}
-
-	s.logger.Printf("polkassembly: API structure - nested replies: %v, flat list with parent_id: %v", hasNestedReplies, hasParentID)
-
-	// Convert to our Comment type
+	// API returns nested replies in "children" field (not "replies")
+	// Flatten the nested structure
+	s.logger.Printf("polkassembly: processing nested replies structure (checking both Replies and Children fields)")
 	result := make([]Comment, 0)
-
-	if hasParentID {
-		// API returns flat list with parent_id - use ParentID directly
-		s.logger.Printf("polkassembly: processing flat list with parent_id fields")
+	var flattenComments func([]polkassemblyapi.Comment, *string)
+	flattenComments = func(comments []polkassemblyapi.Comment, parentID *string) {
 		for _, c := range comments {
 			comment := Comment{}
 			comment.ID = c.ID
-			// Use ParentID from API if present
-			if c.ParentID != nil && *c.ParentID != "" {
+
+			// Check for parent ID from ParentCommentID (API field) or ParentID (legacy)
+			if c.ParentCommentID != nil && *c.ParentCommentID != "" {
+				comment.ParentID = c.ParentCommentID
+			} else if c.ParentID != nil && *c.ParentID != "" {
 				comment.ParentID = c.ParentID
-				s.logger.Printf("polkassembly: comment %q is a reply to %q", comment.ID, *comment.ParentID)
+			} else if parentID != nil {
+				// Set from recursive call context
+				parentIDVal := *parentID
+				comment.ParentID = &parentIDVal
 			}
+
 			// Convert Content from interface{} to string
 			if contentStr, ok := c.Content.(string); ok {
 				comment.Content = contentStr
@@ -150,42 +141,20 @@ func (s *ServiceWrapper) ListComments(network string, postID int) ([]Comment, er
 			comment.User.ID = c.UserID
 			comment.User.Username = c.Username
 			result = append(result, comment)
-		}
-	} else {
-		// API returns nested Replies - flatten them
-		s.logger.Printf("polkassembly: processing nested replies structure")
-		var flattenComments func([]polkassemblyapi.Comment, *string)
-		flattenComments = func(comments []polkassemblyapi.Comment, parentID *string) {
-			for _, c := range comments {
-				comment := Comment{}
-				comment.ID = c.ID
-				// Set parent ID if this is a reply
-				if parentID != nil {
-					parentIDVal := *parentID
-					comment.ParentID = &parentIDVal
-				}
-				// Convert Content from interface{} to string
-				if contentStr, ok := c.Content.(string); ok {
-					comment.Content = contentStr
-				} else if contentStr := fmt.Sprintf("%v", c.Content); contentStr != "" {
-					comment.Content = contentStr
-				}
-				// Convert CreatedAt from time.Time to string
-				comment.CreatedAt = c.CreatedAt.Format(time.RFC3339)
-				// Set user info
-				comment.User.ID = c.UserID
-				comment.User.Username = c.Username
-				result = append(result, comment)
 
-				// Recursively flatten replies
-				if len(c.Replies) > 0 {
-					parentIDVal := comment.ID
-					flattenComments(c.Replies, &parentIDVal)
-				}
+			// Recursively flatten replies - check both Children (API field) and Replies (legacy)
+			repliesToProcess := c.Children
+			if len(repliesToProcess) == 0 {
+				repliesToProcess = c.Replies
+			}
+			if len(repliesToProcess) > 0 {
+				parentIDVal := comment.ID
+				flattenComments(repliesToProcess, &parentIDVal)
 			}
 		}
-		flattenComments(comments, nil)
 	}
+
+	flattenComments(comments, nil)
 
 	s.logger.Printf("polkassembly: converted to %d total comments", len(result))
 
