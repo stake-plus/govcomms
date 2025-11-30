@@ -8,7 +8,7 @@ import (
 	"unicode"
 
 	"github.com/jung-kurt/gofpdf/v2"
-	"github.com/stake-plus/govcomms/src/actions/research/components/claims"
+	"github.com/stake-plus/govcomms/src/actions/research/claims"
 	"github.com/stake-plus/govcomms/src/data/cache"
 	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 )

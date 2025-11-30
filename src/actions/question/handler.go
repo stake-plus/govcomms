@@ -10,8 +10,8 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/core"
-	"github.com/stake-plus/govcomms/src/actions/research/components/claims"
-	"github.com/stake-plus/govcomms/src/actions/research/components/teams"
+	"github.com/stake-plus/govcomms/src/actions/research/claims"
+	"github.com/stake-plus/govcomms/src/actions/research/teams"
 	aicore "github.com/stake-plus/govcomms/src/api/ai/core"
 	shareddiscord "github.com/stake-plus/govcomms/src/api/discord"
 	cache "github.com/stake-plus/govcomms/src/data/cache"
