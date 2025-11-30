@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	aicore "github.com/stake-plus/govcomms/src/ai/core"
+	aicore "github.com/stake-plus/govcomms/src/api/ai/core"
 )
 
 type Analyzer struct{ client aicore.Client }

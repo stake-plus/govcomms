@@ -9,13 +9,12 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	aicore "github.com/stake-plus/govcomms/src/ai/core"
-	cache "github.com/stake-plus/govcomms/src/cache"
-	sharedconfig "github.com/stake-plus/govcomms/src/config"
-	shareddiscord "github.com/stake-plus/govcomms/src/discord"
-	"github.com/stake-plus/govcomms/src/mcp"
+	aicore "github.com/stake-plus/govcomms/src/api/ai/core"
+	shareddiscord "github.com/stake-plus/govcomms/src/api/discord"
+	cache "github.com/stake-plus/govcomms/src/data/cache"
+	sharedconfig "github.com/stake-plus/govcomms/src/data/config"
+	"github.com/stake-plus/govcomms/src/data/mcp"
 	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
-	"github.com/stake-plus/govcomms/src/reports"
 	"gorm.io/gorm"
 )
 
@@ -105,7 +104,7 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 		return
 	}
 
-	analyzer, err := reports.NewAnalyzer(aiClient)
+	analyzer, err := NewAnalyzer(aiClient)
 	if err != nil {
 		log.Printf("reports: failed to create report analyzer: %v", err)
 		return
@@ -131,13 +130,13 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 
 	// Generate additional analysis sections in parallel
 	type analysisResult struct {
-		financials      *reports.FinancialAnalysis
-		risks           *reports.RiskAnalysis
-		timeline        *reports.TimelineAnalysis
-		governance      *reports.GovernanceAnalysis
-		positive        *reports.PositiveAnalysis
-		steelMan        *reports.SteelManAnalysis
-		recommendations *reports.Recommendations
+		financials      *FinancialAnalysis
+		risks           *RiskAnalysis
+		timeline        *TimelineAnalysis
+		governance      *GovernanceAnalysis
+		positive        *PositiveAnalysis
+		steelMan        *SteelManAnalysis
+		recommendations *Recommendations
 		err             error
 	}
 	resultCh := make(chan analysisResult, 7)
@@ -261,7 +260,7 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 		}(), finalResult.positive, finalResult.steelMan)
 
 	// Generate enhanced team member details
-	teamDetailsMap := make(map[string]*reports.TeamMemberDetails)
+	teamDetailsMap := make(map[string]*TeamMemberDetails)
 	if entry.TeamMembers != nil {
 		for _, member := range entry.TeamMembers.Members {
 			details, err := analyzer.GenerateTeamMemberDetails(ctx, member, network, refID, mcpTool)
@@ -272,7 +271,7 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 	}
 
 	// Create report data
-	reportData := &reports.ReportData{
+	reportData := &ReportData{
 		Network:              network,
 		RefID:                refID,
 		Title:                entry.Summary.Title,
@@ -297,7 +296,7 @@ func (h *Handler) generateAndSendPDF(s *discordgo.Session, channelID string, net
 	}
 
 	// Generate PDF
-	generator := reports.NewGenerator(h.Config.TempDir)
+	generator := NewGenerator(h.Config.TempDir)
 	pdfPath, err := generator.GeneratePDF(reportData)
 	if err != nil {
 		log.Printf("reports: PDF generation failed: %v", err)

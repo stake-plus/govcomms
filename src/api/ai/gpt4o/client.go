@@ -1,4 +1,4 @@
-package deepseek3
+package gpt4o
 
 import (
 	"bytes"
@@ -13,33 +13,33 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stake-plus/govcomms/src/ai/core"
+	"github.com/stake-plus/govcomms/src/api/ai/core"
 	"github.com/stake-plus/govcomms/src/api/webclient"
 )
 
 const (
-	providerKey       = "deepseek3"
-	apiURL            = "https://api.deepseek.com/chat/completions"
-	model             = "deepseek-chat"
-	maxTokensLimit    = 8192
-	temperature       = 0.7
-	topP              = 0.9
-	presencePenalty   = 0.0
-	frequencyPenalty  = 0.0
-	requestTimeout    = 240 * time.Second
-	retryAttempts     = 3
-	retryBackoff      = 2 * time.Second
-	maxToolIterations = 20
-	minTopP           = 0.01
-	maxTopP           = 1.0
-	penaltyMin        = -2.0
-	penaltyMax        = 2.0
+	providerKey        = "gpt4o"
+	chatCompletionsURL = "https://api.openai.com/v1/chat/completions"
+	model              = "gpt-4o"
+	maxTokensLimit     = 8192
+	temperature        = 1.0
+	topP               = 0.9
+	frequencyPenalty   = 0.0
+	presencePenalty    = 0.0
+	requestTimeout     = 240 * time.Second
+	retryAttempts      = 3
+	retryBackoff       = 2 * time.Second
+	maxToolIterations  = 20
+	minTopP            = 0.01
+	maxTopP            = 1.0
+	penaltyMin         = -2.0
+	penaltyMax         = 2.0
 )
 
 const (
-	extraTopPKey             = "deepseek.top_p"
-	extraPresencePenaltyKey  = "deepseek.presence_penalty"
-	extraFrequencyPenaltyKey = "deepseek.frequency_penalty"
+	extraTopPKey             = "gpt4o.top_p"
+	extraFrequencyPenaltyKey = "gpt4o.frequency_penalty"
+	extraPresencePenaltyKey  = "gpt4o.presence_penalty"
 )
 
 func init() {
@@ -56,20 +56,19 @@ type client struct {
 }
 
 func newClient(cfg core.FactoryConfig) (core.Client, error) {
-	if cfg.DeepSeekKey == "" {
-		return nil, fmt.Errorf("deepseek: API key not configured")
+	if cfg.OpenAIKey == "" {
+		return nil, fmt.Errorf("gpt4o: OpenAI API key not configured")
 	}
 
-	model := selectDeepSeekModel(cfg.Model)
 	topP := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraTopPKey, topP), minTopP, maxTopP)
 	frequencyPenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraFrequencyPenaltyKey, frequencyPenalty), penaltyMin, penaltyMax)
 	presencePenalty := core.ClampFloat(core.ExtraFloat(cfg.Extra, extraPresencePenaltyKey, presencePenalty), penaltyMin, penaltyMax)
 
 	return &client{
-		apiKey:     cfg.DeepSeekKey,
+		apiKey:     cfg.OpenAIKey,
 		httpClient: webclient.NewDefault(requestTimeout),
 		defaults: core.Options{
-			Model:               model,
+			Model:               valueOrDefault(cfg.Model, model),
 			Temperature:         orFloat(cfg.Temperature, temperature),
 			MaxCompletionTokens: orInt(cfg.MaxCompletionTokens, maxTokensLimit),
 			SystemPrompt:        cfg.SystemPrompt,
@@ -81,70 +80,26 @@ func newClient(cfg core.FactoryConfig) (core.Client, error) {
 }
 
 func (c *client) AnswerQuestion(ctx context.Context, content string, question string, opts core.Options) (string, error) {
+	// Use Chat Completions
 	merged := c.merge(opts)
-	userPrompt := fmt.Sprintf("Proposal Content:\n%s\n\nQuestion: %s\n\nProvide a precise, fact-based answer. Use browsing/search capabilities only if you need newer information than what is provided.", content, question)
-	body := c.buildRequest(merged, userPrompt, false)
-	return c.send(ctx, body)
-}
-
-func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, opts core.Options) (string, error) {
-	merged := c.merge(opts)
-	return c.respondWithChatTools(ctx, input, tools, merged)
-}
-
-func (c *client) buildRequest(opts core.Options, userPrompt string, enableWeb bool) map[string]any {
-	messages := []map[string]string{}
-	if strings.TrimSpace(opts.SystemPrompt) != "" {
-		messages = append(messages, map[string]string{
-			"role":    "system",
-			"content": opts.SystemPrompt,
-		})
+	messages := []map[string]string{
+		{"role": "system", "content": merged.SystemPrompt},
+		{"role": "user", "content": fmt.Sprintf("Proposal Content:\n%s\n\nQuestion: %s\n\nProvide a direct, concise answer.", content, question)},
 	}
-	messages = append(messages, map[string]string{
-		"role":    "user",
-		"content": userPrompt,
-	})
-
-	body := map[string]any{
-		"model":             opts.Model,
+	reqBody := map[string]interface{}{
+		"model":             merged.Model,
 		"messages":          messages,
-		"temperature":       opts.Temperature,
-		"max_tokens":        maxTokens(opts.MaxCompletionTokens),
+		"temperature":       merged.Temperature,
 		"top_p":             c.topP,
 		"frequency_penalty": c.frequencyPenalty,
 		"presence_penalty":  c.presencePenalty,
 	}
-
-	if enableWeb {
-		body["tools"] = []map[string]string{
-			{"type": "web_search"},
-		}
-		body["tool_choice"] = "auto"
+	if merged.MaxCompletionTokens > 0 {
+		reqBody["max_completion_tokens"] = merged.MaxCompletionTokens
 	}
-
-	return body
-}
-
-func (c *client) send(ctx context.Context, payload map[string]any) (string, error) {
-	body, err := c.callAPI(ctx, payload)
-	if err != nil {
-		return "", err
-	}
-	var result chatCompletionResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return "", err
-	}
-	text := result.FirstMessage()
-	if text == "" {
-		return "", fmt.Errorf("deepseek: empty response")
-	}
-	return text, nil
-}
-
-func (c *client) callAPI(ctx context.Context, payload map[string]any) ([]byte, error) {
-	bodyBytes, _ := json.Marshal(payload)
+	bodyBytes, _ := json.Marshal(reqBody)
 	_, body, err := webclient.DoWithRetry(ctx, retryAttempts, retryBackoff, func() (int, []byte, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewBuffer(bodyBytes))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatCompletionsURL, bytes.NewBuffer(bodyBytes))
 		if err != nil {
 			return 0, nil, err
 		}
@@ -165,9 +120,244 @@ func (c *client) callAPI(ctx context.Context, payload map[string]any) ([]byte, e
 		return resp.StatusCode, b, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("deepseek API error: %w", err)
+		return "", fmt.Errorf("gpt4o API error: %w", err)
 	}
-	return body, nil
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", err
+	}
+	if len(result.Choices) == 0 {
+		return "", fmt.Errorf("no response from OpenAI")
+	}
+	return result.Choices[0].Message.Content, nil
+}
+
+func (c *client) Respond(ctx context.Context, input string, tools []core.Tool, opts core.Options) (string, error) {
+	merged := c.merge(opts)
+	return c.respondWithChatTools(ctx, input, tools, merged)
+}
+
+func (c *client) merge(opts core.Options) core.Options {
+	out := c.defaults
+	if opts.Model != "" {
+		out.Model = opts.Model
+	}
+	if opts.Temperature != 0 {
+		out.Temperature = opts.Temperature
+	}
+	if opts.MaxCompletionTokens != 0 {
+		out.MaxCompletionTokens = opts.MaxCompletionTokens
+	}
+	if opts.SystemPrompt != "" {
+		out.SystemPrompt = opts.SystemPrompt
+	}
+	return out
+}
+
+func valueOrDefault(val, def string) string {
+	if val != "" {
+		return val
+	}
+	return def
+}
+func orInt(v, d int) int {
+	if v != 0 {
+		return v
+	}
+	return d
+}
+func orFloat(v, d float64) float64 {
+	if v != 0 {
+		return v
+	}
+	return d
+}
+
+func (c *client) executeToolCalls(ctx context.Context, calls []openAIToolCall, toolMap map[string]core.Tool) ([]toolOutput, error) {
+	outputs := make([]toolOutput, 0, len(calls))
+	for _, call := range calls {
+		toolDef, ok := toolMap[call.Function.Name]
+		if !ok {
+			return nil, fmt.Errorf("gpt4o: unknown tool %s", call.Function.Name)
+		}
+		args, err := decodeToolArguments(call.Function.Arguments)
+		if err != nil {
+			log.Printf("gpt4o: tool %s arg parse error: %v", call.Function.Name, err)
+			outputs = append(outputs, toolOutput{
+				ToolCallID: call.ID,
+				Output:     fmt.Sprintf(`{"error":"invalid arguments: %s"}`, sanitizeToolError(err)),
+			})
+			continue
+		}
+		rawArgs := copyArgs(args)
+		args = mergeArgs(args, toolDef.Defaults)
+		log.Printf("gpt4o: tool call %s raw=%v merged=%v", call.Function.Name, rawArgs, args)
+		result, execErr := c.dispatchTool(ctx, toolDef, args)
+		if execErr != nil {
+			log.Printf("gpt4o: tool %s error: %v", call.Function.Name, execErr)
+			result = fmt.Sprintf(`{"error":"%s"}`, sanitizeToolError(execErr))
+		}
+		log.Printf("gpt4o: tool %s output=%s", call.Function.Name, truncatePayload([]byte(result), 256))
+		outputs = append(outputs, toolOutput{
+			ToolCallID: call.ID,
+			Output:     result,
+		})
+	}
+	return outputs, nil
+}
+
+func (c *client) dispatchTool(ctx context.Context, toolDef core.Tool, args map[string]any) (string, error) {
+	switch strings.ToLower(toolDef.Type) {
+	case "mcp_referenda":
+		return c.invokeMCP(ctx, toolDef.MCP, args)
+	default:
+		return "", fmt.Errorf("unsupported tool %s", toolDef.Type)
+	}
+}
+
+func (c *client) invokeMCP(ctx context.Context, desc *core.MCPDescriptor, args map[string]any) (string, error) {
+	if desc == nil || strings.TrimSpace(desc.BaseURL) == "" {
+		return "", fmt.Errorf("mcp descriptor missing")
+	}
+	network := strings.TrimSpace(fmt.Sprint(args["network"]))
+	if network == "" {
+		return "", fmt.Errorf("network argument required")
+	}
+	refIDRaw, ok := args["refId"]
+	if !ok {
+		return "", fmt.Errorf("refId argument required")
+	}
+	refID, err := parseUint(refIDRaw)
+	if err != nil {
+		return "", fmt.Errorf("invalid refId: %w", err)
+	}
+	resource := strings.TrimSpace(fmt.Sprint(args["resource"]))
+	resource = strings.ToLower(resource)
+	fileParam := strings.TrimSpace(fmt.Sprint(args["file"]))
+	base := strings.TrimRight(desc.BaseURL, "/")
+	endpoint := fmt.Sprintf("%s/v1/referenda/%s/%d", base, url.PathEscape(network), refID)
+	if resource != "" && resource != "metadata" {
+		endpoint += "/" + url.PathEscape(resource)
+	}
+	if resource == "attachments" && fileParam != "" {
+		query := url.Values{}
+		query.Set("file", fileParam)
+		endpoint += "?" + query.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/json")
+	if desc.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+desc.AuthToken)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("mcp: status %d: %s", resp.StatusCode, string(body))
+	}
+	return string(body), nil
+}
+
+func parseUint(value any) (uint64, error) {
+	switch v := value.(type) {
+	case float64:
+		return uint64(v), nil
+	case uint64:
+		return v, nil
+	case uint32:
+		return uint64(v), nil
+	case uint:
+		return uint64(v), nil
+	case int:
+		return uint64(v), nil
+	case int64:
+		return uint64(v), nil
+	case string:
+		return strconv.ParseUint(v, 10, 64)
+	default:
+		return 0, fmt.Errorf("unsupported numeric type %T", value)
+	}
+}
+
+type openAIToolCall struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+type toolOutput struct {
+	ToolCallID string `json:"tool_call_id"`
+	Output     string `json:"output"`
+}
+
+func truncatePayload(b []byte, limit int) string {
+	if len(b) <= limit {
+		return string(b)
+	}
+	return string(b[:limit]) + "... (truncated)"
+}
+
+func sanitizeToolError(err error) string {
+	msg := strings.TrimSpace(err.Error())
+	if len(msg) > 200 {
+		msg = msg[:200]
+	}
+	return msg
+}
+
+func decodeToolArguments(raw string) (map[string]any, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || strings.EqualFold(trimmed, "null") {
+		return map[string]any{}, nil
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &args); err != nil {
+		return nil, err
+	}
+	return args, nil
+}
+
+func mergeArgs(args map[string]any, defaults map[string]any) map[string]any {
+	if args == nil {
+		args = map[string]any{}
+	}
+	for k, v := range defaults {
+		if _, exists := args[k]; !exists {
+			args[k] = v
+		}
+	}
+	return args
+}
+
+func copyArgs(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]any, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 func (c *client) respondWithChatTools(ctx context.Context, input string, tools []core.Tool, opts core.Options) (string, error) {
@@ -177,8 +367,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 	}
 	messages = append(messages, chatMessagePayload{Role: "user", Content: input})
 
-	enableWeb := hasWebSearch(opts, tools)
-	toolDefs, toolMap, forced := buildChatToolsPayload(tools, enableWeb)
+	toolDefs, toolMap, forced := buildChatToolsPayload(tools)
 	toolCache := make(map[string]string)
 	stallCount := 0
 	metadataFetched := false
@@ -214,10 +403,12 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			"model":             opts.Model,
 			"messages":          messages,
 			"temperature":       opts.Temperature,
-			"max_tokens":        maxTokens(opts.MaxCompletionTokens),
 			"top_p":             c.topP,
 			"frequency_penalty": c.frequencyPenalty,
 			"presence_penalty":  c.presencePenalty,
+		}
+		if opts.MaxCompletionTokens > 0 {
+			reqBody["max_completion_tokens"] = opts.MaxCompletionTokens
 		}
 
 		if !toolsDisabled && len(toolDefs) > 0 {
@@ -229,9 +420,30 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			}
 		}
 
-		body, err := c.callAPI(ctx, reqBody)
+		bodyBytes, _ := json.Marshal(reqBody)
+		_, body, err := webclient.DoWithRetry(ctx, retryAttempts, retryBackoff, func() (int, []byte, error) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatCompletionsURL, bytes.NewBuffer(bodyBytes))
+			if err != nil {
+				return 0, nil, err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+c.apiKey)
+			resp, err := c.httpClient.Do(req)
+			if err != nil {
+				return 0, nil, err
+			}
+			defer resp.Body.Close()
+			b, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return resp.StatusCode, nil, err
+			}
+			if resp.StatusCode != http.StatusOK {
+				return resp.StatusCode, b, fmt.Errorf("status %d: %s", resp.StatusCode, truncatePayload(b, 512))
+			}
+			return resp.StatusCode, b, nil
+		})
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("gpt4o chat fallback error: %w", err)
 		}
 
 		var resp chatCompletionResponse
@@ -239,7 +451,7 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			return "", err
 		}
 		if len(resp.Choices) == 0 {
-			return "", fmt.Errorf("deepseek: chat completion returned no choices")
+			return "", fmt.Errorf("gpt4o: chat completion returned no choices")
 		}
 		msg := resp.Choices[0].Message
 
@@ -353,6 +565,15 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			continue
 		}
 
+		if metadataFetched && contentFetched && !historyFetched && !historyReminderSent {
+			messages = append(messages, chatMessagePayload{
+				Role:    "user",
+				Content: "You still need the previous Q&A context. Call the tool with {\"resource\":\"history\"} before answering.",
+			})
+			historyReminderSent = true
+			continue
+		}
+
 		if !hasPendingAttachments() && len(attachmentNames) > 0 && !base64ReminderSent {
 			messages = append(messages, chatMessagePayload{
 				Role:    "user",
@@ -361,124 +582,20 @@ func (c *client) respondWithChatTools(ctx context.Context, input string, tools [
 			base64ReminderSent = true
 		}
 
-		if metadataFetched && contentFetched && !historyFetched && !historyReminderSent {
-			messages = append(messages, chatMessagePayload{
-				Role:    "user",
-				Content: "You still need the recent Q&A history. Call the tool with {\"resource\":\"history\"} before answering.",
-			})
-			historyReminderSent = true
-			continue
-		}
-
 		if metadataFetched && contentFetched && historyFetched && !hasPendingAttachments() && !finalReminderSent {
 			messages = append(messages, chatMessagePayload{
 				Role:    "user",
-				Content: "You now have metadata, the full proposal content, prior Q&A history, and any attachments you needed. Provide the final answer without calling the tool again.",
+				Content: "You now have metadata, the full proposal content, prior Q&A history, and any needed attachments. Provide the final answer without calling the tool again.",
 			})
 			finalReminderSent = true
 			toolsDisabled = true
 		}
 	}
 
-	return "", fmt.Errorf("deepseek: chat tool loop exceeded")
+	return "", fmt.Errorf("gpt4o: chat tool loop exceeded")
 }
 
-func (c *client) executeToolCalls(ctx context.Context, calls []openAIToolCall, toolMap map[string]core.Tool) ([]toolOutput, error) {
-	outputs := make([]toolOutput, 0, len(calls))
-	for _, call := range calls {
-		toolDef, ok := toolMap[call.Function.Name]
-		if !ok {
-			return nil, fmt.Errorf("deepseek3: unknown tool %s", call.Function.Name)
-		}
-		args, err := decodeToolArguments(call.Function.Arguments)
-		if err != nil {
-			log.Printf("deepseek3: tool %s arg parse error: %v", call.Function.Name, err)
-			outputs = append(outputs, toolOutput{
-				ToolCallID: call.ID,
-				Output:     fmt.Sprintf(`{"error":"invalid arguments: %s"}`, sanitizeToolError(err)),
-			})
-			continue
-		}
-		rawArgs := copyArgs(args)
-		args = mergeArgs(args, toolDef.Defaults)
-		log.Printf("deepseek3: tool call %s raw=%v merged=%v", call.Function.Name, rawArgs, args)
-		result, execErr := c.dispatchTool(ctx, toolDef, args)
-		if execErr != nil {
-			log.Printf("deepseek3: tool %s error: %v", call.Function.Name, execErr)
-			result = fmt.Sprintf(`{"error":"%s"}`, sanitizeToolError(execErr))
-		}
-		log.Printf("deepseek3: tool %s output=%s", call.Function.Name, truncatePayload([]byte(result), 256))
-		outputs = append(outputs, toolOutput{
-			ToolCallID: call.ID,
-			Output:     result,
-		})
-	}
-	return outputs, nil
-}
-
-func (c *client) dispatchTool(ctx context.Context, toolDef core.Tool, args map[string]any) (string, error) {
-	switch strings.ToLower(toolDef.Type) {
-	case "mcp_referenda":
-		return c.invokeMCP(ctx, toolDef.MCP, args)
-	default:
-		return "", fmt.Errorf("unsupported tool %s", toolDef.Type)
-	}
-}
-
-func (c *client) invokeMCP(ctx context.Context, desc *core.MCPDescriptor, args map[string]any) (string, error) {
-	if desc == nil || strings.TrimSpace(desc.BaseURL) == "" {
-		return "", fmt.Errorf("mcp descriptor missing")
-	}
-	network := strings.TrimSpace(fmt.Sprint(args["network"]))
-	if network == "" {
-		return "", fmt.Errorf("network argument required")
-	}
-	refIDRaw, ok := args["refId"]
-	if !ok {
-		return "", fmt.Errorf("refId argument required")
-	}
-	refID, err := parseUint(refIDRaw)
-	if err != nil {
-		return "", fmt.Errorf("invalid refId: %w", err)
-	}
-	resource := strings.ToLower(strings.TrimSpace(fmt.Sprint(args["resource"])))
-	fileParam := strings.TrimSpace(fmt.Sprint(args["file"]))
-	base := strings.TrimRight(desc.BaseURL, "/")
-	endpoint := fmt.Sprintf("%s/v1/referenda/%s/%d", base, url.PathEscape(network), refID)
-	if resource != "" && resource != "metadata" {
-		endpoint += "/" + url.PathEscape(resource)
-	}
-	if resource == "attachments" && fileParam != "" {
-		query := url.Values{}
-		query.Set("file", fileParam)
-		endpoint += "?" + query.Encode()
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Accept", "application/json")
-	if desc.AuthToken != "" {
-		req.Header.Set("Authorization", "Bearer "+desc.AuthToken)
-	}
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("mcp: status %d: %s", resp.StatusCode, string(body))
-	}
-	return string(body), nil
-}
-
-func buildChatToolsPayload(tools []core.Tool, includeWeb bool) ([]map[string]any, map[string]core.Tool, string) {
+func buildChatToolsPayload(tools []core.Tool) ([]map[string]any, map[string]core.Tool, string) {
 	out := []map[string]any{}
 	toolMap := map[string]core.Tool{}
 	var forced string
@@ -506,13 +623,6 @@ func buildChatToolsPayload(tools []core.Tool, includeWeb bool) ([]map[string]any
 		toolMap[name] = toolCopy
 		forced = name
 	}
-	if includeWeb && len(out) == 0 {
-		// DeepSeek's API rejects mixed tool types; only expose the native
-		// web_search capability when no custom function tools are present.
-		out = append(out, map[string]any{
-			"type": "web_search",
-		})
-	}
 	return out, toolMap, forced
 }
 
@@ -526,48 +636,6 @@ func buildChatToolChoice(forced string) any {
 			"name": forced,
 		},
 	}
-}
-
-func (c *client) merge(opts core.Options) core.Options {
-	out := c.defaults
-	if strings.TrimSpace(opts.Model) != "" {
-		out.Model = opts.Model
-	}
-	if opts.Temperature != 0 {
-		out.Temperature = opts.Temperature
-	}
-	if opts.MaxCompletionTokens != 0 {
-		out.MaxCompletionTokens = opts.MaxCompletionTokens
-	}
-	if strings.TrimSpace(opts.SystemPrompt) != "" {
-		out.SystemPrompt = opts.SystemPrompt
-	}
-	if opts.EnableWebSearch {
-		out.EnableWebSearch = true
-	}
-	return out
-}
-
-func hasWebSearch(opts core.Options, tools []core.Tool) bool {
-	if opts.EnableWebSearch {
-		return true
-	}
-	for _, tool := range tools {
-		if strings.EqualFold(tool.Type, "web_search") {
-			return true
-		}
-	}
-	return false
-}
-
-func maxTokens(requested int) int {
-	if requested <= 0 {
-		return maxTokensLimit
-	}
-	if requested > maxTokensLimit {
-		return maxTokensLimit
-	}
-	return requested
 }
 
 type chatCompletionResponse struct {
@@ -597,30 +665,6 @@ type chatMessagePayload struct {
 	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
 	Name       string         `json:"name,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
-}
-
-type openAIToolCall struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Function struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	} `json:"function"`
-}
-
-type toolOutput struct {
-	ToolCallID string `json:"tool_call_id"`
-	Output     string `json:"output"`
-}
-
-func (r chatCompletionResponse) FirstMessage() string {
-	for _, choice := range r.Choices {
-		content := strings.TrimSpace(choice.Message.Content)
-		if content != "" {
-			return content
-		}
-	}
-	return ""
 }
 
 func convertChatToolCalls(calls []chatToolCall) []openAIToolCall {
@@ -674,6 +718,10 @@ func normalizeResource(res string) string {
 	return r
 }
 
+func metadataHasAttachments(content string) bool {
+	return len(metadataAttachmentNames(content)) > 0
+}
+
 func metadataAttachmentNames(content string) []string {
 	var payload struct {
 		Attachments []struct {
@@ -707,108 +755,4 @@ func attachmentFileFromCall(call openAIToolCall) string {
 		return ""
 	}
 	return strings.TrimSpace(fmt.Sprint(obj["file"]))
-}
-
-func truncatePayload(b []byte, limit int) string {
-	if len(b) <= limit {
-		return string(b)
-	}
-	return string(b[:limit]) + "... (truncated)"
-}
-
-func sanitizeToolError(err error) string {
-	msg := strings.TrimSpace(err.Error())
-	if len(msg) > 200 {
-		msg = msg[:200]
-	}
-	return msg
-}
-
-func decodeToolArguments(raw string) (map[string]any, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" || strings.EqualFold(trimmed, "null") {
-		return map[string]any{}, nil
-	}
-	var args map[string]any
-	if err := json.Unmarshal([]byte(trimmed), &args); err != nil {
-		return nil, err
-	}
-	return args, nil
-}
-
-func mergeArgs(args map[string]any, defaults map[string]any) map[string]any {
-	if args == nil {
-		args = map[string]any{}
-	}
-	for k, v := range defaults {
-		if _, exists := args[k]; !exists {
-			args[k] = v
-		}
-	}
-	return args
-}
-
-func copyArgs(src map[string]any) map[string]any {
-	if src == nil {
-		return nil
-	}
-	dst := make(map[string]any, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
-func parseUint(value any) (uint64, error) {
-	switch v := value.(type) {
-	case float64:
-		return uint64(v), nil
-	case uint64:
-		return v, nil
-	case uint32:
-		return uint64(v), nil
-	case uint:
-		return uint64(v), nil
-	case int:
-		return uint64(v), nil
-	case int64:
-		return uint64(v), nil
-	case string:
-		return strconv.ParseUint(v, 10, 64)
-	default:
-		return 0, fmt.Errorf("unsupported numeric type %T", value)
-	}
-}
-
-func valueOrDefault(val, def string) string {
-	if strings.TrimSpace(val) != "" {
-		return val
-	}
-	return def
-}
-
-func selectDeepSeekModel(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return model
-	}
-	lower := strings.ToLower(trimmed)
-	if strings.Contains(lower, "deepseek") {
-		return trimmed
-	}
-	return model
-}
-
-func orInt(v, def int) int {
-	if v > 0 {
-		return v
-	}
-	return def
-}
-
-func orFloat(v, def float64) float64 {
-	if v != 0 {
-		return v
-	}
-	return def
 }

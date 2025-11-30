@@ -4,7 +4,7 @@ import (
 	"log"
 	"net/http"
 
-	aicore "github.com/stake-plus/govcomms/src/ai/core"
+	aicore "github.com/stake-plus/govcomms/src/api/ai/core"
 	"gorm.io/gorm"
 )
 

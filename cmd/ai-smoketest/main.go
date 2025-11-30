@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	aicore "github.com/stake-plus/govcomms/src/ai/core"
-	_ "github.com/stake-plus/govcomms/src/ai/providers"
-	sharedconfig "github.com/stake-plus/govcomms/src/config"
-	shareddata "github.com/stake-plus/govcomms/src/data"
+	aicore "github.com/stake-plus/govcomms/src/api/ai/core"
+	_ "github.com/stake-plus/govcomms/src/api/ai/providers"
+	sharedconfig "github.com/stake-plus/govcomms/src/data/config"
+	shareddata "github.com/stake-plus/govcomms/src/data/mysql"
 )
 
 var (

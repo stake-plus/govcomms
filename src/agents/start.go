@@ -10,10 +10,10 @@ import (
 	agentcore "github.com/stake-plus/govcomms/src/agents/core"
 	"github.com/stake-plus/govcomms/src/agents/grantwatch"
 	"github.com/stake-plus/govcomms/src/agents/socialpresence"
-	aicore "github.com/stake-plus/govcomms/src/ai/core"
-	_ "github.com/stake-plus/govcomms/src/ai/providers"
-	sharedconfig "github.com/stake-plus/govcomms/src/config"
-	"github.com/stake-plus/govcomms/src/webclient"
+	aicore "github.com/stake-plus/govcomms/src/api/ai/core"
+	_ "github.com/stake-plus/govcomms/src/api/ai/providers"
+	sharedconfig "github.com/stake-plus/govcomms/src/data/config"
+	"github.com/stake-plus/govcomms/src/api/webclient"
 	"gorm.io/gorm"
 )
 

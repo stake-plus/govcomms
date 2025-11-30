@@ -8,7 +8,7 @@ import (
 	feedbackmodule "github.com/stake-plus/govcomms/src/actions/feedback"
 	questionmodule "github.com/stake-plus/govcomms/src/actions/question"
 	reportsmodule "github.com/stake-plus/govcomms/src/actions/reports"
-	sharedconfig "github.com/stake-plus/govcomms/src/config"
+	sharedconfig "github.com/stake-plus/govcomms/src/data/config"
 	"gorm.io/gorm"
 )
 

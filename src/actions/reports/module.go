@@ -7,7 +7,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/core"
-	sharedconfig "github.com/stake-plus/govcomms/src/config"
+	sharedconfig "github.com/stake-plus/govcomms/src/data/config"
 	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 	"gorm.io/gorm"
 )

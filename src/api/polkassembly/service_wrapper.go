@@ -8,7 +8,7 @@ import (
 	"time"
 
 	polkassemblyapi "github.com/polkadot-go/polkassembly-api"
-	shareddata "github.com/stake-plus/govcomms/src/data"
+	shareddata "github.com/stake-plus/govcomms/src/data/mysql"
 	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 )
 

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/stake-plus/govcomms/src/ai/core"
+	"github.com/stake-plus/govcomms/src/api/ai/core"
 	"github.com/stake-plus/govcomms/src/api/webclient"
 )
 

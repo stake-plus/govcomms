@@ -8,8 +8,8 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/feedback/data"
-	sharedconfig "github.com/stake-plus/govcomms/src/config"
-	shareddiscord "github.com/stake-plus/govcomms/src/discord"
+	sharedconfig "github.com/stake-plus/govcomms/src/data/config"
+	shareddiscord "github.com/stake-plus/govcomms/src/api/discord"
 	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 	"gorm.io/gorm"
 )

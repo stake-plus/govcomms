@@ -11,10 +11,10 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/stake-plus/govcomms/src/actions/core"
 	"github.com/stake-plus/govcomms/src/actions/feedback/data"
+	shareddiscord "github.com/stake-plus/govcomms/src/api/discord"
 	sharedpolkassembly "github.com/stake-plus/govcomms/src/api/polkassembly"
-	sharedconfig "github.com/stake-plus/govcomms/src/config"
-	shareddata "github.com/stake-plus/govcomms/src/data"
-	shareddiscord "github.com/stake-plus/govcomms/src/discord"
+	sharedconfig "github.com/stake-plus/govcomms/src/data/config"
+	shareddata "github.com/stake-plus/govcomms/src/data/mysql"
 	sharedgov "github.com/stake-plus/govcomms/src/polkadot-go/governance"
 	"gorm.io/gorm"
 )

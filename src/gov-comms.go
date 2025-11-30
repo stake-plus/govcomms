@@ -12,11 +12,11 @@ import (
 
 	"github.com/stake-plus/govcomms/src/actions"
 	"github.com/stake-plus/govcomms/src/agents"
-	_ "github.com/stake-plus/govcomms/src/ai/providers"
-	cachepkg "github.com/stake-plus/govcomms/src/cache"
-	sharedconfig "github.com/stake-plus/govcomms/src/config"
-	shareddata "github.com/stake-plus/govcomms/src/data"
-	"github.com/stake-plus/govcomms/src/mcp"
+	_ "github.com/stake-plus/govcomms/src/api/ai/providers"
+	cachepkg "github.com/stake-plus/govcomms/src/data/cache"
+	sharedconfig "github.com/stake-plus/govcomms/src/data/config"
+	shareddata "github.com/stake-plus/govcomms/src/data/mysql"
+	"github.com/stake-plus/govcomms/src/data/mcp"
 	"gorm.io/gorm"
 )
 
